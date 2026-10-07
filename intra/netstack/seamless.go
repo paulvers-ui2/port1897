@@ -6,7 +6,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/celzero/firestack/intra/core"
 	"github.com/celzero/firestack/intra/log"
@@ -81,7 +80,7 @@ var errMissingSink = errors.New("magic: pcap sink is nil")
 func NewEndpoint(dev, mtu int, sink io.WriteCloser) (ep SeamlessEndpoint, err error) {
 	defer func() {
 		if err != nil {
-			_ = syscall.Close(dev)
+			closeDev(dev)
 		}
 		log.I("netstack: new endpoint(fd:%d / mtu:%d); err? %v", dev, mtu, err)
 	}()

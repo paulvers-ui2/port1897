@@ -21,6 +21,8 @@
 //     See the License for the specific language governing permissions and
 //     limitations under the License.
 
+//go:build linux
+
 package netstack
 
 import (
@@ -152,4 +154,9 @@ func clos(fd int) {
 	if fd > 0 || fd != invalidfd {
 		_ = syscall.Close(fd)
 	}
+}
+
+// closeDev closes the tun device identified by fd.
+func closeDev(fd int) {
+	_ = syscall.Close(fd)
 }

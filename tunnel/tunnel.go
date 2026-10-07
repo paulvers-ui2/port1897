@@ -32,7 +32,6 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	x "github.com/celzero/firestack/intra/backend"
@@ -40,7 +39,6 @@ import (
 	"github.com/celzero/firestack/intra/log"
 	"github.com/celzero/firestack/intra/netstack"
 	"github.com/celzero/firestack/intra/settings"
-	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 )
@@ -310,37 +308,4 @@ func (t *gtunnel) Stat() (*x.NetStat, error) {
 		}
 	}
 	return st, err
-}
-
-// copy so golang gc may not close orig fd
-func maybeDup(fd int) (int, error) {
-	if fd < 0 {
-		return 0, errInvalidTunFd
-	}
-	if settings.OwnTunFd.Load() {
-		// if OwnTunFd is true, then do not dup the fd
-		// as netstack owns the TUN fd and will not
-		// assume ownership of the TUN fd shared with it.
-		log.I("tun: assuming fd ownership %d", fd)
-		return fd, nil
-	}
-
-	// ref: github.com/mdlayher/socket/blob/9c51a391b/conn.go#L309
-	// fctnl(2) to dup the fd & set cloexec in one syscall
-	newfd, err := unix.FcntlInt(uintptr(fd), unix.F_DUPFD_CLOEXEC, 0)
-	if err == nil { // success
-		return newfd, nil
-	} else if err == unix.EINVAL { // fallback
-		// Mirror the standard library: avoid racing a fork/exec with dup
-		// so that child does not inherit socket fds unexpectedly.
-		syscall.ForkLock.RLock()
-		defer syscall.ForkLock.RUnlock()
-
-		newfd, err := unix.Dup(fd)
-		if err == nil {
-			unix.CloseOnExec(newfd)
-		}
-		return newfd, err
-	} // other errors?
-	return 0, os.NewSyscallError("fcntl", err)
 }

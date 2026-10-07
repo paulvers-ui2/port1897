@@ -27,10 +27,11 @@
 //
 // Adopted from: github.com/google/gvisor/blob/f33d034/pkg/tcpip/link/fdbased/endpoint.go
 // since fdbased isn't built when building for android (it is only built for linux).
+//go:build linux
+
 package netstack
 
 import (
-	"errors"
 	"fmt"
 	"runtime/debug"
 	"sync/atomic"
@@ -52,12 +53,10 @@ var _ stack.InjectableLinkEndpoint = (*endpoint)(nil)
 var _ stack.LinkEndpoint = (*endpoint)(nil)
 
 // placeholder FD for whenever existing FD wrapped in struct fds is closed.
-const invalidfd int = -1
 
 // wrapttl is the time to wait for the dispatcher to wrap up (close a previous FD).
 const waitttl = wrapttl
 
-var errNeedsNewEndpoint = errors.New("ns: needs new endpoint")
 
 // linkDispatcher reads packets from the link FD and dispatches them to the
 // NetworkDispatcher.
@@ -112,43 +111,6 @@ type endpoint struct {
 	writevMaxIovs int
 }
 
-// Options specify the details about the fd-based endpoint to be created.
-type Options struct {
-	// FDs is a set of FDs used to read/write packets.
-	FDs []int
-
-	// MTU is the mtu to use for this endpoint.
-	MTU uint32
-
-	// EthernetHeader if true, indicates that the endpoint should read/write
-	// ethernet frames instead of IP packets.
-	EthernetHeader bool
-
-	// Address is the link address for this endpoint. Only used if
-	// EthernetHeader is true.
-	Address tcpip.LinkAddress
-
-	// SaveRestore if true, indicates that this NIC capability set should
-	// include CapabilitySaveRestore
-	SaveRestore bool
-
-	// DisconnectOk if true, indicates that this NIC capability set should
-	// include CapabilityDisconnectOk.
-	DisconnectOk bool
-
-	// TXChecksumOffload if true, indicates that this endpoints capability
-	// set should include CapabilityTXChecksumOffload.
-	TXChecksumOffload bool
-
-	// RXChecksumOffload if true, indicates that this endpoints capability
-	// set should include CapabilityRXChecksumOffload.
-	RXChecksumOffload bool
-
-	// If MaxSyscallHeaderBytes is non-zero, it is the maximum number of bytes
-	// of struct iovec, msghdr, and mmsghdr that may be passed by each host
-	// system call.
-	MaxSyscallHeaderBytes int
-}
 
 // New creates a new fd-based endpoint.
 //
