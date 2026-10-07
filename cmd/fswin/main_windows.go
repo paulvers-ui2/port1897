@@ -84,7 +84,8 @@ func run(name string, mtu int, doh, dohips string, setdns bool, golog int32) err
 	}
 
 	b := &bridge{start: time.Now()}
-	t, err := intra.Connect(id, mtu, mtu, ifaddr4+"/24", fakedns4, dtr, b)
+	// fakedns must be ip:port; a bare ip is rejected and DNS goes unrecognized.
+	t, err := intra.Connect(id, mtu, mtu, ifaddr4+"/24", fakedns4+":53", dtr, b)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -94,13 +95,24 @@ func run(name string, mtu int, doh, dohips string, setdns bool, golog int32) err
 		return fmt.Errorf("add doh %s: %w", doh, err)
 	}
 
-	fmt.Printf("fswin: up on %q; DNS %s -> %s. Ctrl+C to stop.\n", name, fakedns4, doh)
+	fmt.Printf("fswin: up on %q; DNS %s:53 -> %s. Ctrl+C to stop.\n", name, fakedns4, doh)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
-	<-stop
-	fmt.Println("fswin: stopping")
-	return nil
+	// adapter byte counters show whether Windows sends anything our way
+	tick := time.NewTicker(15 * time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-stop:
+			fmt.Println("fswin: stopping")
+			return nil
+		case <-tick.C:
+			if st, err := t.Stat(); err == nil && st != nil {
+				b.logf("tun   %s", st.TUNSt.EpStats)
+			}
+		}
+	}
 }
 
 // configure gives the adapter its IPv4 address and, if setdns, makes Windows
