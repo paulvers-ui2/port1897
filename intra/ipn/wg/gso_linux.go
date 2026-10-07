@@ -11,6 +11,8 @@
 //
 //     Copyright (C) 2017-2023 WireGuard LLC. All Rights Reserved.
 
+//go:build linux
+
 package wg
 
 import (

@@ -10,9 +10,8 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"syscall"
 	"time"
-
-	"golang.org/x/sys/unix"
 
 	"github.com/celzero/firestack/intra/dnsx"
 	"github.com/celzero/firestack/intra/log"
@@ -108,7 +107,7 @@ func (h *icmpHandler) Ping(msg []byte, source, target netip.AddrPort) (echoed bo
 
 	// nilaway: tx.socks5 returns nil conn even if err == nil
 	if err != nil || ucnil {
-		err = core.OneErr(err, unix.ENETUNREACH)
+		err = core.OneErr(err, syscall.ENETUNREACH)
 		err = log.EE("t.icmp: egress: dial(%s); hasConn? %s(%t); err %v",
 			dst, pids, !ucnil, err)
 		return false // unhandled

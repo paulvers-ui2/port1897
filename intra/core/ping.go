@@ -20,7 +20,6 @@ import (
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
-	"golang.org/x/sys/unix"
 )
 
 var (
@@ -168,10 +167,10 @@ func setttl(c MinConn, v4 bool) (err error) {
 		ctlErr = raw.Control(func(fd uintptr) {
 			if v4 {
 				// err1 := unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_RECVTTL, 1)
-				ttlErr = unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_TTL, ttl)
+				ttlErr = setSockTTL(fd, true, ttl)
 			} else {
 				// err1 := unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_RECVHOPLIMIT, 1)
-				ttlErr = unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_UNICAST_HOPS, ttl)
+				ttlErr = setSockTTL(fd, false, ttl)
 			}
 		})
 		return JoinErr(ctlErr, ttlErr)

@@ -31,7 +31,6 @@ import (
 	"github.com/celzero/firestack/intra/settings"
 
 	"github.com/celzero/firestack/intra/log"
-	"golang.org/x/sys/unix"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 )
@@ -575,7 +574,6 @@ func (s *StdNetBind) SetMark(mark uint32) (err error) {
 	uc6, _ := s.ipv6.(core.ControlConn) // may be nil
 	var operr error
 	var raw4, raw6 syscall.RawConn
-	fwmarkIoctl := 36 /* unix.SO_MARK */
 	if uc4 != nil {
 		if raw4, err = uc4.SyscallConn(); err == nil {
 			if raw4 == nil {
@@ -583,7 +581,7 @@ func (s *StdNetBind) SetMark(mark uint32) (err error) {
 				return errNoRawConn
 			}
 			if err = raw4.Control(func(fd uintptr) {
-				operr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, fwmarkIoctl, int(mark))
+				operr = setSockMark(fd, mark)
 			}); err == nil {
 				err = operr
 			}
@@ -596,7 +594,7 @@ func (s *StdNetBind) SetMark(mark uint32) (err error) {
 				return errNoRawConn
 			}
 			if err = raw6.Control(func(fd uintptr) {
-				operr = unix.SetsockoptInt(int(fd), unix.SOL_SOCKET, fwmarkIoctl, int(mark))
+				operr = setSockMark(fd, mark)
 			}); err == nil {
 				err = operr
 			}

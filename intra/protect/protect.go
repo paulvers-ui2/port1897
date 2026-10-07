@@ -113,11 +113,11 @@ func ipbind(p Protector) func(string, string, syscall.RawConn) error {
 
 		bind6 := func(fd uintptr) error {
 			sc := &syscall.SockaddrInet6{Addr: ipaddr.As16()}
-			return syscall.Bind(int(fd), sc)
+			return bindFd(fd, sc)
 		}
 		bind4 := func(fd uintptr) error {
 			sc := &syscall.SockaddrInet4{Addr: ipaddr.As4()}
-			return syscall.Bind(int(fd), sc)
+			return bindFd(fd, sc)
 		}
 
 		return c.Control(func(fd uintptr) {

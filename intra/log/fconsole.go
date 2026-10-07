@@ -46,13 +46,6 @@ func (p *fconsole) Log(_ LogLevel, msg Logmsg) {
 	p.write(msg)
 }
 
-func setNonblock(f *os.File) error {
-	if f == nil {
-		return nil
-	}
-	return syscall.SetNonblock(int(f.Fd()), true)
-}
-
 func (f *fconsole) write(m Logmsg) error {
 	if len(m) == 0 {
 		return nil

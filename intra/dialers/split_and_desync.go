@@ -4,6 +4,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+//go:build linux
+
 package dialers
 
 import (
@@ -32,7 +34,6 @@ const (
 	desync_noop_ttl  = 3
 	desync_delta_ttl = 1
 
-	desync_cache_ttl = 30 * time.Second
 )
 
 // ttlcache stores the TTL for a given IP address for a limited time.
@@ -522,13 +523,5 @@ func (s *overwriteSplitter) WriteTo(w io.Writer) (bytes int64, err error) {
 	bytes += b
 	log.V("desync: writeto: done; sz: %d %s<=%s; dur: %s, wait: %s (%t); err: %v",
 		bytes, s.LocalAddr(), s.RemoteAddr(), core.FmtTimeAsPeriod(start), core.FmtPeriod(elapsed), waited, err)
-	return
-}
-
-func asAddrPort(a net.Addr) (n netip.AddrPort) {
-	if a == nil {
-		return
-	}
-	n, _ = netip.ParseAddrPort(a.String())
 	return
 }

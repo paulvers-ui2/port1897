@@ -51,3 +51,6 @@ require (
 
 // TODO: remove all replaces
 // replace golang.org/x/mobile v0.0.0-20250506005352-78cd7a343bde => github.com/ignoramous/mobile v0.0.0-20260119111959-bc2c8adf6210
+
+// Windows port: gotrie with a Windows mmap; see third_party/gotrie/PORT.md.
+replace github.com/celzero/gotrie => ./third_party/gotrie
