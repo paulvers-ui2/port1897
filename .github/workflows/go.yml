@@ -201,6 +201,12 @@ jobs:
     needs: [build, attestation]
     if: ${{ needs.build.result == 'success' && needs.attestation.result == 'success' && needs.build.outputs.publish == 'true' }}
     uses: ./.github/workflows/publish.yml
+    # must cover what publish.yml's job asks for
+    permissions:
+      contents: read
+      actions: read
+      attestations: read
+      packages: write
     with:
       run_id: ${{ github.run_id }}
       vcsver: ${{ needs.build.outputs.vcs-ver }}
