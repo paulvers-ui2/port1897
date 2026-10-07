@@ -27,7 +27,9 @@ jobs:
           GOOS: windows
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-        run: go build ./intra/... ./tunnel/...
+        # -checklinkname=0: core/overreach.go links to runtime internals,
+        # as in the upstream Makefile.
+        run: go build -ldflags=-checklinkname=0 ./intra/... ./tunnel/...
       - name: Vet
         if: matrix.goarch == 'amd64'
         shell: bash
