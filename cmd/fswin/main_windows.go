@@ -16,9 +16,10 @@
 // fswin.exe:
 //
 //	fswin.exe
-//	fswin.exe -full -block msedge.exe,notepad.exe
+//	fswin.exe -full -nrpt -block msedge.exe,notepad.exe
 //
-// Press Ctrl+C to stop; the adapter and its routes are removed on exit.
+// Press Ctrl+C to stop; the adapter, its routes and the NRPT rule are removed
+// on exit. If fswin is killed instead, run fswin -cleanup to restore DNS.
 package main
 
 import (
@@ -26,6 +27,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -35,6 +37,7 @@ import (
 	"github.com/celzero/firestack/intra"
 	x "github.com/celzero/firestack/intra/backend"
 	"github.com/celzero/firestack/intra/netstack"
+	"github.com/celzero/firestack/win/dnspolicy"
 	"github.com/celzero/firestack/win/ifbind"
 	"golang.zx2c4.com/wireguard/tun"
 )
@@ -50,8 +53,10 @@ type options struct {
 	doh    string
 	dohips string
 	setdns bool
-	full   bool
-	block  string
+	full    bool
+	nrpt    bool
+	cleanup bool
+	block   string
 	golog  int32
 }
 
@@ -64,6 +69,8 @@ func main() {
 	flag.StringVar(&o.dohips, "doh-ips", "1.1.1.1,1.0.0.1", "comma-separated IPs of the DoH server")
 	flag.BoolVar(&o.setdns, "set-dns", true, "point the adapter's DNS at the tunnel and give it the lowest metric")
 	flag.BoolVar(&o.full, "full", false, "route all IPv4 traffic through the tunnel, not just DNS")
+	flag.BoolVar(&o.nrpt, "nrpt", false, "send every DNS query to the tunnel with an NRPT rule, whatever other adapters use; removed on exit")
+	flag.BoolVar(&o.cleanup, "cleanup", false, "remove fswin's NRPT rule (left behind if fswin was killed) and exit")
 	flag.StringVar(&o.block, "block", "", "comma-separated programs to block (exe names like chrome.exe, or full paths); needs -full")
 	flag.IntVar(&golog, "log", 3, "firestack log level: 0 very verbose ... 5 errors, 8 none")
 	flag.Parse()
@@ -76,6 +83,14 @@ func main() {
 }
 
 func run(o options) error {
+	if o.cleanup {
+		if err := dnspolicy.Remove(); err != nil {
+			return err
+		}
+		fmt.Println("fswin: removed fswin's NRPT rule, if any")
+		return nil
+	}
+
 	intra.LogLevel(o.golog, 8 /*no console logs; Go logs go to stderr*/)
 
 	if o.block != "" && !o.full {
@@ -127,6 +142,21 @@ func run(o options) error {
 
 	if err := intra.AddDoHTransport(t, x.StrOf(x.Preferred), x.StrOf(o.doh), x.StrOf(o.dohips)); err != nil {
 		return fmt.Errorf("add doh %s: %w", o.doh, err)
+	}
+
+	if o.nrpt {
+		if others, err := dnspolicy.Others(); err == nil && len(others) > 0 {
+			fmt.Printf("fswin: warning: other catch-all DNS rules compete with -nrpt: %s; disconnect that VPN for a clean test\n",
+				strings.Join(others, "; "))
+		}
+		if err := dnspolicy.Add(netip.MustParseAddr(fakedns4)); err != nil {
+			return err
+		}
+		defer func() {
+			if err := dnspolicy.Remove(); err != nil {
+				fmt.Fprintln(os.Stderr, "fswin: remove NRPT rule (run fswin -cleanup):", err)
+			}
+		}()
 	}
 
 	mode := "DNS only"

@@ -30,17 +30,32 @@ and checks that linux and android still build.
    (it holds `fswin.exe` and the official `wintun.dll`).
 2. In an elevated terminal: `fswin.exe` (flags: `-doh`, `-doh-ips`, `-name`, `-log`).
 3. Browse; DNS queries show up as `dns ...` lines. Ctrl+C removes the adapter.
+   `fswin.exe -full -nrpt` sends all IPv4 traffic and all DNS through firestack and
+   shows the program behind each connection; add `-block chrome.exe` to block one.
 
 fswin is IPv4 only for now. Windows may still send DNS to other adapters in parallel; stopping that (NRPT and
 firewall rules) is Phase 2 work.
 
-### Known gaps for Phase 2
+## Phase 2: firewall core (in progress)
 
-- `Controller.Bind4/Bind6` (keep firestack's own sockets off the tunnel) are no-ops
-  in fswin; full-tunnel mode needs `IP_UNICAST_IF` / `IPV6_UNICAST_IF`.
+| Step | Status | Where |
+|---|---|---|
+| Full-tunnel mode; firestack's own sockets pinned to the physical interface (`IP_UNICAST_IF`), the stand-in for `VpnService.protect` | done | `win/ifbind`, `fswin -full` |
+| Connection owner: TCP/UDP table -> pid -> exe path, stable numeric uid per exe | done | `win/owner`, `fswin` |
+| Block programs by exe name | done (flag) | `fswin -block` |
+| DNS leak fix: NRPT catch-all rule to the tunnel | done (opt-in) | `win/dnspolicy`, `fswin -nrpt` / `-cleanup` |
+| Kill switch and DNS port blocking with the Windows Filtering Platform | next | |
+| Rules engine ported from the Android app, stored in SQLite | later | |
+| Windows service + named-pipe API for the UI | later | |
+
+Notes:
+- IPv4 only for now; with `-full`, IPv6 traffic still goes out directly.
+- Another VPN's catch-all NRPT rule (Proton VPN adds one) competes with `-nrpt`;
+  fswin warns about it. Disconnect the other VPN while testing.
+- If fswin is killed rather than stopped with Ctrl+C, its NRPT rule stays and DNS
+  fails until `fswin -cleanup` (or the next fswin run) removes it.
 - Errno checks such as `syscall.EADDRINUSE` in `intra/ipn/wg` do not match Winsock
   errors (`WSAEADDRINUSE`); retries keyed on them do not fire on Windows yet.
-- No process lookup: `Preflow` reports uid -1.
 
 ## Licenses
 
