@@ -29,7 +29,7 @@ jobs:
           CGO_ENABLED: "0"
         # -checklinkname=0: core/overreach.go links to runtime internals,
         # as in the upstream Makefile.
-        run: go build -ldflags=-checklinkname=0 ./intra/... ./tunnel/... ./cmd/...
+        run: go build -ldflags=-checklinkname=0 ./intra/... ./tunnel/... ./cmd/... ./win/...
       - name: Build fswin.exe
         shell: bash
         env:
@@ -53,7 +53,7 @@ jobs:
       - name: Vet
         if: matrix.goarch == 'amd64'
         shell: bash
-        run: go vet ./intra/... ./tunnel/... ./cmd/...
+        run: go vet ./intra/... ./tunnel/... ./cmd/... ./win/...
 
   # The Windows split must not break the Android build.
   linux:
@@ -65,7 +65,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build (linux/amd64)
-        run: go build -ldflags=-checklinkname=0 ./intra/... ./tunnel/... ./cmd/...
+        run: go build -ldflags=-checklinkname=0 ./intra/... ./tunnel/... ./cmd/... ./win/...
       - name: Type-check (android/arm64)
         env:
           GOOS: android

@@ -6,34 +6,36 @@
 
 //go:build windows
 
-// fswin runs firestack on a Wintun adapter in DNS-only mode and logs every
-// DNS query and connection it sees. It is a Phase 1 test tool, not the app:
-// only DNS is routed into the tunnel; all other traffic is untouched.
+// fswin runs firestack on a Wintun adapter and logs every DNS query and
+// connection it sees, with the program that made it. It is a test tool, not
+// the app. By default only DNS goes through the tunnel; with -full, all IPv4
+// traffic does, and -block can block programs by exe name.
 // IPv4 only for now: the adapter gets no IPv6 address or DNS server.
 //
 // Run from an elevated prompt, with wintun.dll (from www.wintun.net) next to
 // fswin.exe:
 //
-//	fswin.exe -doh https://cloudflare-dns.com/dns-query -doh-ips 1.1.1.1,1.0.0.1
+//	fswin.exe
+//	fswin.exe -full -block msedge.exe,notepad.exe
 //
-// Press Ctrl+C to stop; the adapter is removed on exit.
+// Press Ctrl+C to stop; the adapter and its routes are removed on exit.
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"os/signal"
-	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/celzero/firestack/intra"
 	x "github.com/celzero/firestack/intra/backend"
 	"github.com/celzero/firestack/intra/netstack"
+	"github.com/celzero/firestack/win/ifbind"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
@@ -42,60 +44,103 @@ const (
 	fakedns4 = "10.111.222.3"
 )
 
-func main() {
-	name := flag.String("name", "port1897", "Wintun adapter name")
-	mtu := flag.Int("mtu", 1500, "adapter MTU")
-	doh := flag.String("doh", "https://cloudflare-dns.com/dns-query", "DoH server URL")
-	dohips := flag.String("doh-ips", "1.1.1.1,1.0.0.1", "comma-separated IPs of the DoH server")
-	setdns := flag.Bool("set-dns", true, "point the adapter's DNS at the tunnel and give it the lowest metric")
-	golog := flag.Int("log", 3, "firestack log level: 0 very verbose ... 5 errors, 8 none")
-	flag.Parse()
+type options struct {
+	name   string
+	mtu    int
+	doh    string
+	dohips string
+	setdns bool
+	full   bool
+	block  string
+	golog  int32
+}
 
-	if err := run(*name, *mtu, *doh, *dohips, *setdns, int32(*golog)); err != nil {
+func main() {
+	var o options
+	var golog int
+	flag.StringVar(&o.name, "name", "port1897", "Wintun adapter name")
+	flag.IntVar(&o.mtu, "mtu", 1500, "adapter MTU")
+	flag.StringVar(&o.doh, "doh", "https://cloudflare-dns.com/dns-query", "DoH server URL")
+	flag.StringVar(&o.dohips, "doh-ips", "1.1.1.1,1.0.0.1", "comma-separated IPs of the DoH server")
+	flag.BoolVar(&o.setdns, "set-dns", true, "point the adapter's DNS at the tunnel and give it the lowest metric")
+	flag.BoolVar(&o.full, "full", false, "route all IPv4 traffic through the tunnel, not just DNS")
+	flag.StringVar(&o.block, "block", "", "comma-separated programs to block (exe names like chrome.exe, or full paths); needs -full")
+	flag.IntVar(&golog, "log", 3, "firestack log level: 0 very verbose ... 5 errors, 8 none")
+	flag.Parse()
+	o.golog = int32(golog)
+
+	if err := run(o); err != nil {
 		fmt.Fprintln(os.Stderr, "fswin:", err)
 		os.Exit(1)
 	}
 }
 
-func run(name string, mtu int, doh, dohips string, setdns bool, golog int32) error {
-	intra.LogLevel(golog, 8 /*no console logs; Go logs go to stderr*/)
+func run(o options) error {
+	intra.LogLevel(o.golog, 8 /*no console logs; Go logs go to stderr*/)
+
+	if o.block != "" && !o.full {
+		fmt.Println("fswin: -block only affects traffic in the tunnel; without -full that is DNS only")
+	}
 
 	tun.WintunTunnelType = "port1897"
-	dev, err := tun.CreateTUN(name, mtu)
+	dev, err := tun.CreateTUN(o.name, o.mtu)
 	if err != nil {
 		return fmt.Errorf("create wintun adapter (run as admin, wintun.dll next to the exe?): %w", err)
 	}
+	name := o.name
 	if n, err := dev.Name(); err == nil {
 		name = n
 	}
 	// netstack owns dev from here and closes it (removing the adapter) on Disconnect.
 	id := netstack.RegisterTun(dev)
 
-	if err := configure(name, setdns); err != nil {
+	if err := configure(name, o.setdns); err != nil {
 		_ = dev.Close()
 		return err
 	}
+	ifc, err := net.InterfaceByName(name)
+	if err != nil {
+		_ = dev.Close()
+		return fmt.Errorf("find adapter %s: %w", name, err)
+	}
+	binder := ifbind.New(uint32(ifc.Index))
+	phys4, _ := binder.Indexes()
+	if o.full && phys4 == 0 {
+		_ = dev.Close()
+		return errors.New("-full: no IPv4 default route outside the tunnel to send firestack's own traffic over")
+	}
 
-	ipports := withPort(dohips, "443")
-	dtr, err := intra.NewDefaultDNS(x.StrOf(x.DOH), x.StrOf(doh), x.StrOf(ipports))
+	ipports := withPort(o.dohips, "443")
+	dtr, err := intra.NewDefaultDNS(x.StrOf(x.DOH), x.StrOf(o.doh), x.StrOf(ipports))
 	if err != nil {
 		_ = dev.Close()
 		return fmt.Errorf("default dns: %w", err)
 	}
 
-	b := &bridge{start: time.Now()}
+	b := newBridge(binder, o.block)
 	// fakedns must be ip:port; a bare ip is rejected and DNS goes unrecognized.
-	t, err := intra.Connect(id, mtu, mtu, ifaddr4+"/24", fakedns4+":53", dtr, b)
+	t, err := intra.Connect(id, o.mtu, o.mtu, ifaddr4+"/24", fakedns4+":53", dtr, b)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
 	defer t.Disconnect()
 
-	if err := intra.AddDoHTransport(t, x.StrOf(x.Preferred), x.StrOf(doh), x.StrOf(dohips)); err != nil {
-		return fmt.Errorf("add doh %s: %w", doh, err)
+	if err := intra.AddDoHTransport(t, x.StrOf(x.Preferred), x.StrOf(o.doh), x.StrOf(o.dohips)); err != nil {
+		return fmt.Errorf("add doh %s: %w", o.doh, err)
 	}
 
-	fmt.Printf("fswin: up on %q; DNS %s:53 -> %s. Ctrl+C to stop.\n", name, fakedns4, doh)
+	mode := "DNS only"
+	if o.full {
+		// routes go once the tunnel can carry traffic; they vanish with the adapter
+		if err := fullTunnel(name); err != nil {
+			return err
+		}
+		mode = fmt.Sprintf("all IPv4; firestack's own traffic leaves via interface #%d", phys4)
+	}
+	fmt.Printf("fswin: up on %q (%s); DNS %s:53 -> %s. Ctrl+C to stop.\n", name, mode, fakedns4, o.doh)
+	if blocked := b.blockedList(); blocked != "" {
+		fmt.Printf("fswin: blocking %s\n", blocked)
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
@@ -129,6 +174,19 @@ func configure(name string, setdns bool) error {
 			[]string{"interface", "ipv4", "set", "interface", "interface=" + name, "metric=1"},
 		)
 	}
+	return netsh(cmds)
+}
+
+// fullTunnel sends all IPv4 traffic to the adapter with two /1 routes, which
+// beat any 0.0.0.0/0 default route without replacing it.
+func fullTunnel(name string) error {
+	return netsh([][]string{
+		{"interface", "ipv4", "add", "route", "prefix=0.0.0.0/1", "interface=" + name, "nexthop=0.0.0.0", "metric=0", "store=active"},
+		{"interface", "ipv4", "add", "route", "prefix=128.0.0.0/1", "interface=" + name, "nexthop=0.0.0.0", "metric=0", "store=active"},
+	})
+}
+
+func netsh(cmds [][]string) error {
 	for _, args := range cmds {
 		out, err := exec.Command("netsh", args...).CombinedOutput()
 		if err != nil {
@@ -148,109 +206,3 @@ func withPort(csv, port string) string {
 	}
 	return strings.Join(out, ",")
 }
-
-// bridge answers firestack's callbacks: it allows everything, sends DNS to
-// the Preferred (DoH) transport, and prints what it sees.
-type bridge struct {
-	start time.Time
-	cid   atomic.Int64
-}
-
-var _ intra.Bridge = (*bridge)(nil)
-
-func (b *bridge) logf(format string, args ...any) {
-	fmt.Printf("%8.3fs "+format+"\n", append([]any{time.Since(b.start).Seconds()}, args...)...)
-}
-
-func proto(p int32) string {
-	switch p {
-	case 1:
-		return "icmp"
-	case 6:
-		return "tcp"
-	case 17:
-		return "udp"
-	}
-	return strconv.Itoa(int(p))
-}
-
-// SocketListener
-
-func (b *bridge) Preflow(protocol, uid int32, src, dst *x.Gostr) *intra.PreMark {
-	// TODO(phase 2): find the owning process (GetExtendedTcpTable/UdpTable).
-	return &intra.PreMark{UID: "-1"}
-}
-
-func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probableDomains, blocklists *x.Gostr) *intra.Mark {
-	cid := strconv.FormatInt(b.cid.Add(1), 10)
-	b.logf("flow  #%s %s %s -> %s domains[%s] blocklists[%s]",
-		cid, proto(protocol), src.V(), dst.V(), domains.V(), blocklists.V())
-	return &intra.Mark{PIDCSV: x.Base, CID: cid, UID: strconv.Itoa(int(uid))}
-}
-
-func (b *bridge) Inflow(protocol, uid int32, src, dst *x.Gostr) *intra.Mark {
-	cid := strconv.FormatInt(b.cid.Add(1), 10)
-	b.logf("inflow #%s %s %s -> %s", cid, proto(protocol), src.V(), dst.V())
-	return &intra.Mark{PIDCSV: x.Base, CID: cid, UID: strconv.Itoa(int(uid))}
-}
-
-func (b *bridge) PostFlow(m *intra.Mark) {}
-
-func (b *bridge) OnSocketClosed(s *intra.SocketSummary) {
-	if s == nil {
-		return
-	}
-	b.logf("close #%s %s -> %s via %s rx %d tx %d %dms %s",
-		s.ID, s.Proto, s.Target, s.PID, s.Rx, s.Tx, s.Duration, s.Msg)
-}
-
-// DNSListener
-
-func (b *bridge) OnQuery(uid, domain *x.Gostr, qtyp int) *x.DNSOpts {
-	return &x.DNSOpts{TIDCSV: x.Preferred, PIDCSV: x.Base}
-}
-
-func (b *bridge) OnUpstreamAnswer(smm *x.DNSSummary, unmodifiedipcsv *x.Gostr) *x.DNSOpts {
-	return nil // keep the answer
-}
-
-func (b *bridge) OnResponse(s *x.DNSSummary) {
-	if s == nil {
-		return
-	}
-	b.logf("dns   %s (type %d) -> %s via %s %.0fms status %d %s",
-		s.QName, s.QType, s.RData, s.ID, s.Latency*1000, s.Status, s.Msg)
-}
-
-func (b *bridge) OnDNSAdded(id *x.Gostr)   { b.logf("dns transport added: %s", id.V()) }
-func (b *bridge) OnDNSRemoved(id *x.Gostr) { b.logf("dns transport removed: %s", id.V()) }
-func (b *bridge) OnDNSStopped()            { b.logf("dns stopped") }
-
-// ServerListener: fswin runs no local proxy servers; refuse anything.
-
-func (b *bridge) SvcRoute(sid, pid, network, sipport, dipport string) *x.Tab {
-	return &x.Tab{CID: sid, Block: true}
-}
-
-func (b *bridge) OnSvcComplete(*x.ServerSummary) {}
-
-// ProxyListener
-
-func (b *bridge) OnProxyAdded(id *x.Gostr)   { b.logf("proxy added: %s", id.V()) }
-func (b *bridge) OnProxyRemoved(id *x.Gostr) { b.logf("proxy removed: %s", id.V()) }
-func (b *bridge) OnProxyStopped(id *x.Gostr) { b.logf("proxy stopped: %s", id.V()) }
-func (b *bridge) OnProxiesStopped()          { b.logf("proxies stopped") }
-
-// Controller: in DNS-only mode the default route stays on the physical
-// network, so firestack's own sockets need no binding. Full-tunnel mode will
-// bind them to the physical interface with IP_UNICAST_IF / IPV6_UNICAST_IF.
-
-func (b *bridge) Bind4(who, addrport string, fd int) {}
-func (b *bridge) Bind6(who, addrport string, fd int) {}
-func (b *bridge) Protect(who string, fd int)         {}
-
-// Console: Go logs already go to stderr.
-
-func (b *bridge) Log(level int32, msg *x.Gostr) { fmt.Fprintln(os.Stderr, msg.V()) }
-func (b *bridge) LogFD(readAfterDup int) bool   { return false }
-func (b *bridge) CrashFD(readUntilEOF int) bool { return false }
