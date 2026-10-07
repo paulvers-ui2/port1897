@@ -29,8 +29,46 @@ jobs:
           CGO_ENABLED: "0"
         # -checklinkname=0: core/overreach.go links to runtime internals,
         # as in the upstream Makefile.
-        run: go build -ldflags=-checklinkname=0 ./intra/... ./tunnel/...
+        run: go build -ldflags=-checklinkname=0 ./intra/... ./tunnel/... ./cmd/...
+      - name: Build fswin.exe
+        shell: bash
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          WINTUN_SHA256: 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-checklinkname=0 -s -w" -o dist/fswin.exe ./cmd/fswin
+          curl -sSfL -o wintun.zip https://www.wintun.net/builds/wintun-0.14.1.zip
+          echo "$WINTUN_SHA256  wintun.zip" | sha256sum -c -
+          unzip -q wintun.zip
+          cp wintun/bin/${{ matrix.goarch }}/wintun.dll dist/
+          cp wintun/LICENSE.txt dist/wintun-LICENSE.txt
+          cp LICENSE dist/LICENSE.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fswin-windows-${{ matrix.goarch }}
+          path: dist/
       - name: Vet
         if: matrix.goarch == 'amd64'
         shell: bash
+        run: go vet ./intra/... ./tunnel/... ./cmd/...
+
+  # The Windows split must not break the Android build.
+  linux:
+    name: Build (linux, android)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build (linux/amd64)
+        run: go build -ldflags=-checklinkname=0 ./intra/... ./tunnel/... ./cmd/...
+      - name: Type-check (android/arm64)
+        env:
+          GOOS: android
+          GOARCH: arm64
+          CGO_ENABLED: "0"
         run: go vet ./intra/... ./tunnel/...

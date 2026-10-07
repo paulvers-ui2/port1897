@@ -5,22 +5,50 @@ This repository is a fork of [paulvers-ui/firestack](https://github.com/paulvers
 commit `05a6645`. The goal is a Windows build of the networking engine behind the
 Rethink DNS + Firewall / AuroraVPN Android apps.
 
-## Phase 1 (in progress)
+## Phase 1: Windows build and a first tunnel
 
-- Move Linux/Android-only code (`x/sys/unix`, gVisor `rawfile`/`fdbased`, `SO_MARK`,
-  UDP GSO/GRO, `TCP_USER_TIMEOUT`, the split-and-desync dialer) into `_linux.go` /
-  `_unix.go` files, with `_windows.go` counterparts, so `GOOS=windows go build` works.
-- Add a Wintun-backed `SeamlessEndpoint`.
-- Add a small command-line tool that runs DNS-only mode and logs every connection.
+Done on branch `phase1-windows`; CI builds it for windows/amd64 and windows/arm64
+and checks that linux and android still build.
 
-The Android build is meant to keep working; changes use build tags rather than edits
-to shared code, so they can be offered back upstream.
+- Linux/Android-only code is behind build tags, with Windows counterparts:
+  | Area | Linux / Android | Windows |
+  |---|---|---|
+  | Tunnel device (`intra/netstack`) | fd + gVisor `rawfile`/`fdbased` | Wintun via `golang.zx2c4.com/wireguard/tun`; `netstack.RegisterTun` hands out the id passed where Android passes the tun fd |
+  | TCP user timeout (`intra/core`) | `TCP_USER_TIMEOUT` | `TCP_MAXRT` (seconds) |
+  | Pooled-conn liveness check | `poll(2)` | skipped; age-based eviction |
+  | Unprivileged ICMP (`intra/protect`) | `SOCK_DGRAM` ICMP | raw ICMP socket (needs admin) |
+  | WireGuard sockets (`intra/ipn/wg`) | `SO_MARK`, UDP GSO/GRO, `SO_*BUFFORCE` | buffers only; no mark, no GSO |
+  | Split-and-desync dialer (`intra/dialers`) | memfd/sendfile/`MSG_ERRQUEUE` | plain dial (later phase) |
+  | Runtime secure mode (`intra/core`) | linknamed | none |
+- `github.com/celzero/gotrie` is vendored in `third_party/gotrie` with a Windows mmap.
+- `cmd/fswin`: test tool. Creates a Wintun adapter, runs firestack in DNS-only mode
+  with a DoH upstream, and prints every DNS query and connection it sees.
+
+### Trying fswin
+
+1. Download the `fswin-windows-amd64` artifact from the latest "Windows build" run
+   (it holds `fswin.exe` and the official `wintun.dll`).
+2. In an elevated terminal: `fswin.exe` (flags: `-doh`, `-doh-ips`, `-name`, `-log`).
+3. Browse; DNS queries show up as `dns ...` lines. Ctrl+C removes the adapter.
+
+Windows may still send DNS to other adapters in parallel; stopping that (NRPT and
+firewall rules) is Phase 2 work.
+
+### Known gaps for Phase 2
+
+- `Controller.Bind4/Bind6` (keep firestack's own sockets off the tunnel) are no-ops
+  in fswin; full-tunnel mode needs `IP_UNICAST_IF` / `IPV6_UNICAST_IF`.
+- Errno checks such as `syscall.EADDRINUSE` in `intra/ipn/wg` do not match Winsock
+  errors (`WSAEADDRINUSE`); retries keyed on them do not fire on Windows yet.
+- No process lookup: `Preflow` reports uid -1.
 
 ## Licenses
 
 - firestack is MPL-2.0 (see `LICENSE`). Modified files stay MPL-2.0.
-- Wintun (`wintun.dll`) is distributed under its own prebuilt-binaries license from
-  <https://www.wintun.net>; it is not committed to this repository.
+- `third_party/gotrie` is MPL-2.0 (celzero/gotrie).
+- Wintun (`wintun.dll`) is under WireGuard LLC's prebuilt-binaries license from
+  <https://www.wintun.net>. It is not committed here; CI downloads the official
+  0.14.1 zip (SHA-256 pinned) and ships the dll with its license next to fswin.exe.
 
 ## Disclaimer
 
