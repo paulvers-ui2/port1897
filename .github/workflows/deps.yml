@@ -1,0 +1,43 @@
+name: Update deps
+
+# Manual: runs `go get` for the given modules plus `go mod tidy`, and uploads
+# the resulting go.mod / go.sum as an artifact to commit by hand.
+on:
+  workflow_dispatch:
+    inputs:
+      modules:
+        description: "space-separated module@version list"
+        required: true
+        default: "golang.org/x/net@latest golang.org/x/text@latest golang.org/x/crypto@latest"
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: go get + tidy
+        env:
+          MODULES: ${{ inputs.modules }}
+        run: |
+          go get $MODULES
+          go mod tidy
+          git diff --stat go.mod go.sum
+          git diff go.mod
+      - name: Build check
+        run: |
+          go build -ldflags=-checklinkname=0 ./intra/... ./tunnel/... ./cmd/...
+          GOOS=windows go build -ldflags=-checklinkname=0 ./intra/... ./tunnel/... ./cmd/...
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gomod
+          path: |
+            go.mod
+            go.sum
