@@ -31,7 +31,7 @@ and checks that linux and android still build.
 2. In an elevated terminal: `fswin.exe` (flags: `-doh`, `-doh-ips`, `-name`, `-log`).
 3. Browse; DNS queries show up as `dns ...` lines. Ctrl+C removes the adapter.
 
-Windows may still send DNS to other adapters in parallel; stopping that (NRPT and
+fswin is IPv4 only for now. Windows may still send DNS to other adapters in parallel; stopping that (NRPT and
 firewall rules) is Phase 2 work.
 
 ### Known gaps for Phase 2

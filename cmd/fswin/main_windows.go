@@ -9,6 +9,7 @@
 // fswin runs firestack on a Wintun adapter in DNS-only mode and logs every
 // DNS query and connection it sees. It is a Phase 1 test tool, not the app:
 // only DNS is routed into the tunnel; all other traffic is untouched.
+// IPv4 only for now: the adapter gets no IPv6 address or DNS server.
 //
 // Run from an elevated prompt, with wintun.dll (from www.wintun.net) next to
 // fswin.exe:
@@ -38,9 +39,7 @@ import (
 
 const (
 	ifaddr4  = "10.111.222.1"
-	ifaddr6  = "fd66:f83a:c650::1"
 	fakedns4 = "10.111.222.3"
-	fakedns6 = "fd66:f83a:c650::3"
 )
 
 func main() {
@@ -85,8 +84,7 @@ func run(name string, mtu int, doh, dohips string, setdns bool, golog int32) err
 	}
 
 	b := &bridge{start: time.Now()}
-	t, err := intra.Connect(id, mtu, mtu,
-		ifaddr4+"/24,"+ifaddr6+"/120", fakedns4+","+fakedns6, dtr, b)
+	t, err := intra.Connect(id, mtu, mtu, ifaddr4+"/24", fakedns4, dtr, b)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -96,7 +94,7 @@ func run(name string, mtu int, doh, dohips string, setdns bool, golog int32) err
 		return fmt.Errorf("add doh %s: %w", doh, err)
 	}
 
-	fmt.Printf("fswin: up on %q; DNS %s / %s -> %s. Ctrl+C to stop.\n", name, fakedns4, fakedns6, doh)
+	fmt.Printf("fswin: up on %q; DNS %s -> %s. Ctrl+C to stop.\n", name, fakedns4, doh)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
@@ -105,20 +103,18 @@ func run(name string, mtu int, doh, dohips string, setdns bool, golog int32) err
 	return nil
 }
 
-// configure gives the adapter its addresses and, if setdns, makes Windows send
-// DNS to the tunnel. Windows may still query other adapters' DNS servers in
-// parallel; the app will need NRPT and firewall rules to stop that.
+// configure gives the adapter its IPv4 address and, if setdns, makes Windows
+// send DNS to the tunnel. Windows may still query other adapters' DNS servers
+// (including over IPv6) in parallel; the app will need NRPT and firewall
+// rules to stop that.
 func configure(name string, setdns bool) error {
 	cmds := [][]string{
 		{"interface", "ipv4", "set", "address", "name=" + name, "source=static", "address=" + ifaddr4, "mask=255.255.255.0"},
-		{"interface", "ipv6", "add", "address", "interface=" + name, "address=" + ifaddr6 + "/120"},
 	}
 	if setdns {
 		cmds = append(cmds,
 			[]string{"interface", "ipv4", "set", "dnsservers", "name=" + name, "source=static", "address=" + fakedns4, "register=none", "validate=no"},
-			[]string{"interface", "ipv6", "set", "dnsservers", "name=" + name, "source=static", "address=" + fakedns6, "register=none", "validate=no"},
 			[]string{"interface", "ipv4", "set", "interface", "interface=" + name, "metric=1"},
-			[]string{"interface", "ipv6", "set", "interface", "interface=" + name, "metric=1"},
 		)
 	}
 	for _, args := range cmds {
