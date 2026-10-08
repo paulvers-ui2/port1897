@@ -3,6 +3,11 @@ name: Cryptography BoM
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+  security-events: read
+
 jobs:
 
   # github.com/advanced-security/cbom-action
@@ -13,7 +18,7 @@ jobs:
       repositories: ${{ steps.rm.outputs.repositories }}
     steps:
       - name: 🚀 Build analysis matrix
-        uses: advanced-security/cbom-action/build-matrix@v1
+        uses: advanced-security/cbom-action/build-matrix@dfb4d675f06fb8da89535d9e553c6a936ed0cf7e # v1
         id: rm
         with:
           repositoryNameWithOwner: ${{ github.repository }}

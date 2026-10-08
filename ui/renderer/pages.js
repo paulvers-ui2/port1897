@@ -337,7 +337,8 @@ async function addCustomDns(type) {
   const ok = await dialog({ title: 'Add DNS', body: h('div', {}, name, url, type === 'doh' || type === 'rdns' ? ips : null, type === 'odoh' ? relay : null), ok: 'Add' });
   if (!ok) return;
   const e = { name: name.input.value.trim() || url.input.value.trim(), url: url.input.value.trim(), ips: ips.input.value.trim(), relay: relay.input.value.trim(), desc: 'Custom' };
-  const valid = type === 'dot' ? /^(tls:\/\/)?[a-z0-9.-]+(:\d+)?$/i.test(e.url) : type === 'dnscrypt' ? e.url.startsWith('sdns://') : type === 'proxy' ? /^(\d{1,3}\.){3}\d{1,3}:\d{1,5}$/.test(e.url) : /^https:\/\/\S+$/.test(e.url) && (!e.relay || /^https:\/\/\S+$/.test(e.relay));
+  if (type === 'dot') e.url = 'tls://' + e.url.replace(/^tls:(\/\/)?/i, '');
+  const valid = type === 'dot' ? /^tls:\/\/[a-z0-9.-]+(:\d+)?$/i.test(e.url) : type === 'dnscrypt' ? e.url.startsWith('sdns://') : type === 'proxy' ? /^(\d{1,3}\.){3}\d{1,3}:\d{1,5}$/.test(e.url) : /^https:\/\/\S+$/.test(e.url) && (!e.relay || /^https:\/\/\S+$/.test(e.relay));
   if (!valid) return toast('That address does not look right');
   const all = { ...(App.settings.customDns || {}) };
   all[type] = (all[type] || []).concat(e);

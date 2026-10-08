@@ -12,7 +12,7 @@
 
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, Notification, clipboard, net, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, Notification, clipboard, net, powerMonitor, session } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
@@ -1118,7 +1118,7 @@ function engineLogText(filter) {
 // ---------- window and tray ----------
 
 function createWindow(show = true) {
-  win = new BrowserWindow({
+  win = new BrowserWindow({ /* eng-disable AUXCLICK_JS_CHECK */ // middle-click opens are denied by setWindowOpenHandler below
     width: 1100,
     height: 820,
     minWidth: 720,
@@ -1129,7 +1129,7 @@ function createWindow(show = true) {
     icon: path.join(__dirname, 'build', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.js'), /* eng-disable PRELOAD_JS_CHECK */ // reviewed: contextBridge with a fixed list of invoke channels, no raw IPC
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -1621,7 +1621,14 @@ ipcMain.handle('app:setAutostart', (_e, on) => {
   app.setLoginItemSettings({ openAtLogin: !!on, args: ['--autostart'] });
 });
 ipcMain.handle('open:url', (_e, url) => {
-  if (/^https:\/\/[^\s]+$/.test(String(url))) shell.openExternal(String(url));
+  // only the project's GitHub pages: source, issues, the release download page
+  let u;
+  try {
+    u = new URL(String(url));
+  } catch {
+    return;
+  }
+  if (u.protocol === 'https:' && u.hostname === 'github.com') shell.openExternal(u.href); /* eng-disable OPEN_EXTERNAL_JS_CHECK */
 });
 ipcMain.handle('open:log', () => shell.openPath(logFile()));
 ipcMain.handle('open:pcapFolder', () => {
@@ -1666,6 +1673,10 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
+    // the window needs no web permissions (notifications come from the main
+    // process, the clipboard goes through IPC): refuse every request and check
+    session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+    session.defaultSession.setPermissionCheckHandler(() => false);
     loadBuckets();
     const automated = process.argv.some((a) => /^--(start|stop|resume|pause(=\d+)?)$/.test(a));
     const autostart = process.argv.includes('--autostart') || automated;

@@ -2,8 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://icons.duckduckgo.com">
+  <!-- script-src 'self' is only the app's own files; the window has no HTML sinks for untrusted data -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: https://icons.duckduckgo.com; base-uri 'none'; form-action 'none'"> <!-- eng-disable CSP_GLOBAL_CHECK -->
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>port1897</title>
   <link rel="stylesheet" href="styles.css">

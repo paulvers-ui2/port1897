@@ -167,7 +167,8 @@ func NewExtClient(d protect.RDialer) *BaseClient {
 		ForceAttemptHTTP2:     true,
 		ResponseHeaderTimeout: 15 * time.Second,
 		IdleConnTimeout:       30 * time.Second,
-		TLSClientConfig: &tls.Config{
+		// Go >= 1.18 clients default to TLS 1.2 minimum
+		TLSClientConfig: &tls.Config{ // nosemgrep: go.lang.security.audit.crypto.missing-ssl-minversion.missing-ssl-minversion
 			ClientSessionCache: core.TlsSessionCache(),
 		},
 	}

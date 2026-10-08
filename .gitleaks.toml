@@ -1,0 +1,35 @@
+# Read by the gitleaks jobs in .github/workflows/security.yml (gitleaks loads
+# .gitleaks.toml from the scanned directory). Each entry is pinned to the
+# commits and files that were reviewed, so a new commit touching these lines
+# is flagged again.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Outline/Intra self-signed test keys (O=X) in intra/doh/client_auth_test.go, a //go:build ignore test; used by no build"
+targetRules = ["private-key"]
+condition = "AND"
+commits = ["733282542904152aba5b8df40665262a35fa86ec"]
+paths = ['''^intra/doh/client_auth_test\.go$''']
+
+[[allowlists]]
+description = "Opera VPN (SurfEasy) public client login copied from github.com/Snawoot/opera-proxy defaults, plus the API hostname; not a project secret"
+targetRules = ["generic-api-key"]
+condition = "AND"
+commits = ["b51a7fa4bbeb96b9c7809fb5517c2cb8c07709db", "559a9068bde9bb58c74ed06d506e4428d7199eb8"]
+paths = ['''^intra/ipn/seasy/seapi\.go$''']
+
+[[allowlists]]
+description = "Sample WARP/Proton API responses in comments of upstream's intra/ipn/warp (deleted upstream in 091b40da and b1d57d83); public keys and an anonymous example device token"
+targetRules = ["generic-api-key"]
+condition = "AND"
+commits = ["f535924c41fe31536bcc0d5562822e3721c109cb", "fa0be6466b95290bf3d91aa7f6b84e78e90bef03"]
+paths = ['''^intra/ipn/warp/(id|proton)\.go$''']
+
+[[allowlists]]
+description = "Amnezia Free RU public vpn:// key quoted in a comment of upstream's intra/ipn/warp/agw.go (removed upstream in 399dc784); third-party key Amnezia distributes publicly, not ours to rotate"
+targetRules = ["generic-api-key"]
+condition = "AND"
+commits = ["6f65ed0a37d6b201b0b16b195aae3e31fc383521"]
+paths = ['''^intra/ipn/warp/agw\.go$''']

@@ -7,21 +7,27 @@ on:
     types: [published]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   # ── Auto-tag on push to n2 ────────────────────────────────────────────────
   auto-tag:
     name: Auto tag
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/n2'
+    permissions:
+      contents: write # github-tag-action creates the tag through the API
     outputs:
       new_tag: ${{ steps.tag.outputs.new_tag }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Bump version and push tag
         id: tag
-        uses: mathieudutour/github-tag-action@v6.2
+        uses: mathieudutour/github-tag-action@a22cf08638b34d5badda920f9daf6e72c477b07b # v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           default_bump: patch
@@ -49,13 +55,16 @@ jobs:
 
     steps:
     - name: 🥏 Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      with:
+        persist-credentials: false
 
     - name: 🐼 Setup go1.26+
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
       with:
         go-version: '>=1.26'
         check-latest: true
+        cache: false # output is published and attested; never build from a restored cache
 
     - name: 🏗️ Make
       id: make
@@ -75,7 +84,7 @@ jobs:
 
     - name: 🚀 Upload
       if: ${{ steps.test.outcome == 'success' }}
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
       with:
         name: firestack-aar-${{ github.sha }}
         path: |
@@ -98,7 +107,7 @@ jobs:
       if: ${{ steps.sbom-gen.outcome == 'success' }}
       id: sbom-upload
       continue-on-error: true
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
       with:
         name: "firestack-sbom-${{ github.sha }}"
         path: _manifest/spdx_2.2
@@ -108,7 +117,7 @@ jobs:
     - name: 📝 SBOM submission
       if: success()
       continue-on-error: true
-      uses: advanced-security/spdx-dependency-submission-action@v0.1.1
+      uses: advanced-security/spdx-dependency-submission-action@5530bab9ee4bbe66420ce8280624036c77f89746 # v0.1.1
       with:
         filePath: "_manifest/spdx_2.2/"
 
@@ -138,7 +147,7 @@ jobs:
 
     - name: 🎞 Grype report
       if: ${{ steps.sbom-gen.outcome == 'success' }}
-      uses: anchore/scan-action@v7
+      uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7
       id: gr
       with:
         sbom: "${{ github.workspace }}/_manifest/spdx_2.2/manifest.spdx.json"
@@ -148,7 +157,7 @@ jobs:
     - name: 📻 Grype to code-scanning
       if: success()
       continue-on-error: true
-      uses: github/codeql-action/upload-sarif@v4
+      uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
       with:
         sarif_file: ${{ steps.gr.outputs.sarif }}
 
@@ -187,7 +196,8 @@ jobs:
     name: 🪪 Artifact attestations
     needs: build
     if: ${{ needs.build.result == 'success' && needs.build.outputs.artifact-subjects != '' && needs.build.outputs.publish == 'true' }}
-    uses: ./.github/workflows/provenance.yml
+    # local reusable workflow: resolved from this repo at the caller's commit, not from the workspace
+    uses: ./.github/workflows/provenance.yml # zizmor: ignore[self-repository]
     permissions:
       id-token: write
       contents: write
@@ -200,7 +210,8 @@ jobs:
     name: 🚚 Publish
     needs: [build, attestation]
     if: ${{ needs.build.result == 'success' && needs.attestation.result == 'success' && needs.build.outputs.publish == 'true' }}
-    uses: ./.github/workflows/publish.yml
+    # local reusable workflow: resolved from this repo at the caller's commit, not from the workspace
+    uses: ./.github/workflows/publish.yml # zizmor: ignore[self-repository]
     # must cover what publish.yml's job asks for
     permissions:
       contents: read
@@ -212,7 +223,12 @@ jobs:
       vcsver: ${{ needs.build.outputs.vcs-ver }}
       artifact_subjects: ${{ needs.build.outputs.artifact-subjects }}
       sbom_info: ${{ needs.build.outputs.sbom-info }}
-    secrets: inherit
+    secrets:
+      OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+      OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
+      OSSRH_CELZERO_NAMESPACE: ${{ secrets.OSSRH_CELZERO_NAMESPACE }}
+      OSSRH_CELZERO_GPG_PRIVATE_KEY: ${{ secrets.OSSRH_CELZERO_GPG_PRIVATE_KEY }}
+      OSSRH_CELZERO_GPG_PASSPHRASE: ${{ secrets.OSSRH_CELZERO_GPG_PASSPHRASE }}
 
   # ── GitHub Release when auto-tag fired ───────────────────────────────────
   github-release:
@@ -220,14 +236,16 @@ jobs:
     runs-on: ubuntu-latest
     needs: [auto-tag, build]
     if: needs.auto-tag.outputs.new_tag != '' && needs.build.result == 'success'
+    permissions:
+      contents: write # create the release and upload the AARs
     steps:
       - name: Download AAR artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: firestack-aar-${{ github.sha }}
           path: dist/
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ needs.auto-tag.outputs.new_tag }}
           name: firestack ${{ needs.auto-tag.outputs.new_tag }}

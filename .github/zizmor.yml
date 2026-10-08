@@ -1,0 +1,7 @@
+# Read by the zizmor job in security.yml (--config).
+rules:
+  superfluous-actions:
+    ignore:
+      # upstream firestack release steps; softprops/action-gh-release is pinned to a commit
+      - go.yml
+      - release-aar.yml
