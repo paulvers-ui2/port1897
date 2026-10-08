@@ -421,6 +421,7 @@ function dnsDetails(e) {
       kv('Time', new Date(e.at).toLocaleString()),
       kv('Query type', e.qtype ? `${rrName(e.qtype)} (${e.qtype})` : ''),
       kv('Answer', e.answer || 'no answer'),
+      e.error ? kv('Failed', e.error) : null,
       kv('Resolver', e.via),
       kv('Latency', `${e.latencyMs} ms`),
       kv('DNSSEC', e.secure ? 'verified (AD)' : 'not verified'),

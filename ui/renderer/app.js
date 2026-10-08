@@ -172,6 +172,12 @@ function renderHome() {
   } else {
     prot.textContent = 'Not protected';
   }
+
+  // another VPN (Proton VPN, say) claiming all DNS or traffic breaks ours
+  const conflicts = (on && s.conflicts) || [];
+  const warn = $('conflict-warn');
+  warn.hidden = !conflicts.length;
+  warn.textContent = conflicts.length ? `Another VPN is connected and DNS will fail. Disconnect it, then restart protection. (${conflicts.join('; ')})` : '';
 }
 
 async function toggleEngine(wantOn) {
@@ -369,5 +375,6 @@ function demoPort() {
     setAutostart: async () => {},
     openUrl: async () => {},
     openLog: async () => {},
+    debugZip: async () => ({ ok: true }),
   };
 }

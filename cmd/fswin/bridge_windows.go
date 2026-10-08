@@ -334,6 +334,11 @@ func (b *bridge) Preflow(protocol, uid int32, src, dst *x.Gostr) *intra.PreMark 
 
 func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probableDomains, blocklists *x.Gostr) *intra.Mark {
 	cid := strconv.FormatInt(b.cid.Add(1), 10)
+	if dst.V() == fakedns4+":53" {
+		// a query to our DNS address: firestack answers it only when marked
+		// Base, whatever the exit, and it shows in the DNS log, not as a flow
+		return &intra.Mark{PIDCSV: x.Base, CID: cid, UID: strconv.Itoa(int(uid))}
+	}
 	path := b.apps.path(uid)
 	dap, _ := netip.ParseAddrPort(dst.V()) // zero if unparsable: IP rules then skip it
 	doms := splitDomains(domains.V(), probableDomains.V())
@@ -442,8 +447,10 @@ func (b *bridge) OnResponse(s *x.DNSSummary) {
 		s.QName, s.QType, s.RData, s.ID, s.Latency*1000, s.Status, s.Msg)
 	ms := int64(s.Latency * 1000)
 	b.log.dnsQueries.Add(1)
+	failure := ""
 	if s.Status != x.Complete {
 		b.log.dnsFailed.Add(1)
+		failure = dnsFailure(s)
 	} else {
 		b.log.dnsLastMs.Store(ms)
 		b.log.dnsTotalMs.Add(ms)
@@ -457,7 +464,35 @@ func (b *bridge) OnResponse(s *x.DNSSummary) {
 	}
 	b.log.add(event{Kind: "dns", Domain: strings.TrimSuffix(s.QName, "."), Answer: s.RData,
 		Via: s.ID, LatencyMs: ms, Blocked: why != "" || (s.Status == x.Complete && isUnspecifiedAnswer(s.RData)),
-		Secure: s.AD, Cached: s.Cached, Rule: why, QType: s.QType})
+		Secure: s.AD, Cached: s.Cached, Rule: why, QType: s.QType, Error: failure})
+}
+
+// dnsFailure says why a query got no answer, from firestack's summary.
+func dnsFailure(s *x.DNSSummary) string {
+	if s.Msg != "" {
+		return s.Msg
+	}
+	switch s.Status {
+	case x.SendFailed:
+		return "could not send the query to the DNS server"
+	case x.NoResponse:
+		return "the DNS server did not answer"
+	case x.BadQuery:
+		return "bad query"
+	case x.BadResponse:
+		return "bad answer from the DNS server"
+	case x.TransportError:
+		return "could not reach the DNS server"
+	case x.ClientError:
+		return "DNS client error"
+	case x.InternalError:
+		return "internal error"
+	case x.Paused:
+		return "DNS is paused"
+	case x.DEnd:
+		return "DNS stopped"
+	}
+	return fmt.Sprintf("status %d", s.Status)
 }
 
 // isUnspecifiedAnswer reports answers of 0.0.0.0 / ::, which is how

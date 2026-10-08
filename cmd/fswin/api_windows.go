@@ -41,6 +41,7 @@ type apiStatus struct {
 	Kill      bool     `json:"killSwitch"`
 	Paused    int64    `json:"pausedUntil"` // unix millis; 0 when not paused
 	Dial      string   `json:"dial"`        // anti-censorship dial strategy
+	Conflicts []string `json:"conflicts"`   // other VPNs that break ours
 }
 
 type dnsStat struct {
@@ -242,8 +243,9 @@ func statusOf(b *bridge, o options, started time.Time, exitID, dnsLabel string) 
 			BlockedApps: b.blockedApps(),
 			AppsSeen:    l.appsSeen(),
 		},
-		Traffic: trafStat{Rx: l.rx.Load(), Tx: l.tx.Load()},
-		Dial:    o.dialStrategy,
+		Traffic:   trafStat{Rx: l.rx.Load(), Tx: l.tx.Load()},
+		Dial:      o.dialStrategy,
+		Conflicts: append([]string{}, o.conflicts...),
 	}
 	if r := b.rules.Load(); r.isPaused(time.Now().UnixMilli()) {
 		st.Paused = r.paused

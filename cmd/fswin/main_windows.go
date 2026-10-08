@@ -66,6 +66,7 @@ type options struct {
 	nrpt      bool
 	cleanup   bool
 	kill      bool
+	conflicts []string // other VPNs that compete with ours, found at start
 	block     string
 	wg        string
 	warp      bool
@@ -329,11 +330,22 @@ func run(o options) error {
 		}
 	}
 
-	if o.nrpt {
-		if others, err := dnspolicy.Others(); err == nil && len(others) > 0 {
-			fmt.Printf("fswin: warning: other catch-all DNS rules compete with -nrpt: %s; disconnect that VPN for a clean test\n",
-				strings.Join(others, "; "))
+	// Another VPN that claims all DNS or all traffic breaks ours: its NRPT
+	// rule races ours for every query, and firestack's own traffic leaves
+	// through that VPN's adapter, where it may never get answers.
+	if others, err := dnspolicy.Others(); err == nil {
+		for _, r := range others {
+			o.conflicts = append(o.conflicts, "another VPN sends all DNS elsewhere: "+r)
 		}
+	}
+	if n, d, vpn := ifbind.Describe(phys4); vpn {
+		o.conflicts = append(o.conflicts, fmt.Sprintf("internet traffic leaves through another VPN's adapter: %s (%s)", n, d))
+	}
+	for _, c := range o.conflicts {
+		fmt.Printf("fswin: warning: %s; disconnect that VPN\n", c)
+	}
+
+	if o.nrpt {
 		if err := dnspolicy.Add(netip.MustParseAddr(fakedns4)); err != nil {
 			return err
 		}

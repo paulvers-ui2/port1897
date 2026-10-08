@@ -62,5 +62,6 @@ contextBridge.exposeInMainWorld('port', {
   setAutostart: call('app:setAutostart'),
   openUrl: call('open:url'),
   openLog: call('open:log'),
+  debugZip: call('debug:zip'),
   openPcapFolder: call('open:pcapFolder'),
 });
