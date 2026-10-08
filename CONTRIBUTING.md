@@ -65,28 +65,6 @@ See the roadmap in [README.md](README.md#roadmap) and the Phase 2 table in
 [PORT.md](PORT.md). Open an issue before starting something large so work is not
 duplicated.
 
-## Translations
-
-The app speaks 40 languages, taken from the Android app's translations: every
-English text that is word for word an Android string gets that string's
-translation. To translate more, add `ui/renderer/i18n/extra/<lang>.json`, a map
-from the English text (as written in `ui/renderer/*.js`) to your translation,
-for example `ui/renderer/i18n/extra/fa.json`:
-
-```json
-{ "Split tunnel": "تونل تقسیم‌شده" }
-```
-
-Then rebuild the language files with a checkout of the Android app
-([rethink-app-masque](https://github.com/paulvers-ui/rethink-app-masque)):
-
-```
-python ui/tools/i18n.py ../rethink-app-masque/app/src/main/res ui/renderer
-```
-
-Languages written right to left (Arabic, Persian, Hebrew, Urdu) switch the
-layout around; untranslated English still reads left to right.
-
 ## Security issues
 
 Do not open a public issue. Use GitHub's private

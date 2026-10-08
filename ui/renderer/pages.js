@@ -386,8 +386,31 @@ PAGES.proxy = () => {
     );
   });
 
+  const live = h('div', {});
+  const drawLive = async () => {
+    const list = App.status ? await App.port.proxies() : [];
+    live.replaceChildren(
+      list.length
+        ? card(
+            list.map((p) => {
+              const ok = p.status === 'connected' || p.status === 'up';
+              const seen = p.lastOK > 1e12 ? ` · last handshake ${Math.max(0, Math.round((Date.now() - p.lastOK) / 1000))}s ago` : '';
+              return h(
+                'div',
+                { class: 'row' },
+                dot(ok ? 'on' : p.status === 'idle' ? 'warn' : 'off'),
+                h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: p.name }), h('span', { class: 'row-sub', text: `${p.status}${seen} · ${fmtBytes(p.rx)} ▼ / ${fmtBytes(p.tx)} ▲` }))
+              );
+            })
+          )
+        : ''
+    );
+  };
+  drawLive();
+  PAGE_TICK.proxy = drawLive;
   return screen(
     'Proxy',
+    live,
     warpCard,
     card(row({ ico: 'ic_wireguard_icon', title: 'Setup WireGuard', sub: 'WireGuard as a proxy.', right: chevron(), onclick: () => App.go('wireguard') })),
     sectionLabel('Other'),
@@ -892,38 +915,12 @@ PAGES.settings = () => {
     ),
     sectionLabel('Customize'),
     card(
-      row({ ico: 'ic_other_settings', title: 'Change Language', sub: languageName(s.lang), right: chevron(), onclick: chooseLanguage }),
       row({ ico: 'ic_appearance', title: 'Appearance', sub: 'Current theme: ' + (THEMES.find((t) => t[0] === s.theme) || THEMES[0])[1], right: chevron(), onclick: chooseTheme }),
       switchRow({ ico: 'ic_tun_nw_policy', title: 'Automation', sub: 'Let scripts and the Task Scheduler control protection: port1897.exe --start, --stop, --pause=15 or --resume.', value: s.automation, onchange: (v) => save({ automation: v }, true) }),
       switchRow({ ico: 'ic_auto_start', title: 'Auto-start on power-up', sub: 'On sign-in, start the app in the tray, and start protection if it was running before shut down (asks for admin permission).', value: s.autostart, onchange: (v) => App.port.setAutostart(v).then(() => save({ autostart: v }, true)) })
     )
   );
 };
-
-function languageName(code) {
-  const l = LANGUAGES.find((x) => x[0] === code);
-  return l ? l[1] : 'English';
-}
-
-// Android: "Change Language". Texts the Android app shares are translated;
-// the rest stays English (help translate: ui/tools/i18n.py).
-async function chooseLanguage() {
-  let pick = App.settings.lang || '';
-  const opts = [['', 'English', I18N_TOTAL]].concat(LANGUAGES);
-  const body = h(
-    'div',
-    { class: 'rr-list' },
-    opts.map(([code, name, n]) => {
-      const r = h('input', { type: 'radio', name: 'lang', checked: code === pick });
-      r.addEventListener('change', () => (pick = code));
-      return h('label', { class: 'pick-row' }, r, h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: name }), code ? h('span', { class: 'row-sub', text: `${Math.round((100 * n) / I18N_TOTAL)}%` }) : null));
-    })
-  );
-  if (!(await dialog({ title: 'Change Language', body, ok: 'Save' }))) return;
-  if (pick === (App.settings.lang || '')) return;
-  await App.save({ lang: pick });
-  location.reload();
-}
 
 async function chooseTheme() {
   let pick = App.settings.theme;

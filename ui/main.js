@@ -95,7 +95,6 @@ const DEFAULTS = {
   notify: true,
   statusAlerts: true,
   theme: 'darkplus',
-  lang: '', // '' English; else a code from renderer/i18n/languages.js
   autostart: false,
   wasRunning: false,
   pcap: false, // packet capture to capture.pcap
@@ -1227,6 +1226,13 @@ ipcMain.handle('engine:pause', async (_e, minutes) => {
   await pushRules(s);
   updateTray(lastStatus, true);
   return s;
+});
+ipcMain.handle('engine:proxies', async () => {
+  try {
+    return await api('GET', '/api/proxies');
+  } catch {
+    return [];
+  }
 });
 ipcMain.handle('conns:list', async (_e, appName) => {
   try {

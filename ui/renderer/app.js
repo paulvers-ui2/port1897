@@ -93,7 +93,7 @@ const App = {
 
 function setText(id, text) {
   const el = $(id);
-  if (el) el.textContent = tr(text);
+  if (el) el.textContent = text;
 }
 
 function renderHome() {
@@ -231,8 +231,6 @@ async function main() {
 
   App.settings = await App.port.getSettings();
   App.applyTheme();
-  await loadLanguage(App.settings.lang || '');
-  translateStatic(document.body);
   await poll();
   App.render();
   setInterval(poll, 1000);
@@ -317,6 +315,7 @@ function demoPort() {
     },
     setRules: async (p) => ((s = { ...s, ...p }), { settings: { ...s }, warnings: '' }),
     pause: async (m) => ((s = { ...s, pausedUntil: m ? Date.now() + m * 60000 : 0 }), { ...s }),
+    proxies: async () => (running ? [{ id: 'masque', name: 'Cloudflare WARP (MASQUE)', status: 'connected', rx: 5e7, tx: 4e6, lastOK: Date.now() - 12000 }] : []),
     conns: async () => (running ? [{ cid: '1', app: 'chrome.exe', proto: 'tcp', dst: '104.16.0.1:443', domain: 'github.com', since: Date.now() - 5000 }] : []),
     closeConns: async () => ({ closed: running ? 1 : 0 }),
     blocklists: {

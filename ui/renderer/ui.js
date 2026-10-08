@@ -10,65 +10,21 @@
 
 'use strict';
 
-// ---------- translations ----------
-
-// Texts are written in English; i18n/<lang>.js (built by ui/tools/i18n.py
-// from the Android app's translations) maps them to the chosen language.
-let I18N = null;
-
-function i18nLoaded(_code, table) {
-  I18N = table;
-}
-
-function tr(s) {
-  if (!I18N || typeof s !== 'string') return s;
-  return I18N[s] || I18N[s.trim()] || s;
-}
-
-function loadLanguage(code) {
-  const lang = (typeof LANGUAGES !== 'undefined' ? LANGUAGES : []).find((l) => l[0] === code);
-  document.documentElement.dir = lang && lang[3] ? 'rtl' : 'ltr';
-  document.documentElement.lang = lang ? code.replace('-r', '-') : 'en';
-  if (!lang) {
-    I18N = null;
-    return Promise.resolve();
-  }
-  return new Promise((resolve) => {
-    const s = document.createElement('script');
-    s.src = `i18n/${code}.js`;
-    s.onload = resolve;
-    s.onerror = resolve; // stays English
-    document.head.append(s);
-  });
-}
-
-// Translates the static texts of index.html once.
-function translateStatic(root) {
-  if (!I18N) return;
-  const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  for (let n = walk.nextNode(); n; n = walk.nextNode()) {
-    const t = n.nodeValue.trim();
-    if (t && I18N[t]) n.nodeValue = n.nodeValue.replace(t, I18N[t]);
-  }
-}
-
-const TR_ATTRS = new Set(['placeholder', 'title', 'aria-label']);
-
 // h('div', {class: 'x', onclick: f}, child, 'text', ...)
 function h(tag, attrs, ...children) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
     if (v === undefined || v === null || v === false) continue;
     if (k === 'class') e.className = v;
-    else if (k === 'text') e.textContent = tr(v);
+    else if (k === 'text') e.textContent = v;
     else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
     else if (k === 'value') e.value = v;
     else if (k === 'checked') e.checked = !!v;
-    else e.setAttribute(k, v === true ? '' : TR_ATTRS.has(k) ? tr(v) : v);
+    else e.setAttribute(k, v === true ? '' : v);
   }
   for (const c of children.flat()) {
     if (c === null || c === undefined || c === false) continue;
-    e.append(c instanceof Node ? c : document.createTextNode(tr(String(c))));
+    e.append(c instanceof Node ? c : document.createTextNode(String(c)));
   }
   return e;
 }
@@ -228,7 +184,7 @@ function toast(text) {
     t = h('div', { id: 'toast', class: 'toast' });
     document.body.append(t);
   }
-  t.textContent = tr(text);
+  t.textContent = text;
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 2600);

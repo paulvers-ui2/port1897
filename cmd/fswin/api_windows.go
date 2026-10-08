@@ -106,6 +106,7 @@ func serveAPI(addr, tokenFile string, b *bridge, info func() apiStatus, stop fun
 	mux.HandleFunc("POST /api/block", a.block)
 	mux.HandleFunc("POST /api/rules", a.setRules)
 	mux.HandleFunc("GET /api/conns", a.conns)
+	mux.HandleFunc("GET /api/proxies", a.proxies)
 	mux.HandleFunc("POST /api/close", a.closeConns)
 	mux.HandleFunc("POST /api/stop", a.shutdown)
 
@@ -185,6 +186,11 @@ func (a *apiServer) setRules(w http.ResponseWriter, r *http.Request) {
 		res["warnings"] = err.Error() // rules that did not parse were skipped
 	}
 	writeJSON(w, res)
+}
+
+// proxies reports the exit and the per-app routes.
+func (a *apiServer) proxies(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, a.b.proxyStats())
 }
 
 // conns lists open connections, of ?app=name.exe only if given.

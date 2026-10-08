@@ -369,15 +369,3 @@ select.fld-input { width: auto; min-width: 150px; }
 .welcome-dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
 .welcome-dots span.on { background: var(--good); }
 .chips.center { justify-content: center; margin-bottom: 14px; }
-
-/* ---- right-to-left languages: each text picks its own direction, so
-   English left untranslated still reads left to right ---- */
-[dir="rtl"] .row-title,
-[dir="rtl"] .row-sub,
-[dir="rtl"] .note,
-[dir="rtl"] .desc,
-[dir="rtl"] .card-main,
-[dir="rtl"] .card-sub,
-[dir="rtl"] .card-foot,
-[dir="rtl"] .modal-title,
-[dir="rtl"] .toast { unicode-bidi: plaintext; text-align: start; }

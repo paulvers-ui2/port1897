@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('port', {
   setRules: call('rules:set'),
   pause: call('engine:pause'),
   conns: call('conns:list'),
+  proxies: call('engine:proxies'),
   closeConns: call('conns:close'),
   blocklists: {
     status: call('bl:status'),

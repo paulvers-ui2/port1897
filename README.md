@@ -38,8 +38,6 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
   domain rules; the universal rules (block UDP, ICMP, port 80, unknown or new apps,
   DNS bypass, PC locked, lockdown); allowed DNS record types; pause.
 - **Anti-censorship** (`-dial-strategy`): split TCP or the TLS ClientHello.
-- **40 languages** from the Android app's translations (Settings → Change Language),
-  right to left for Arabic, Persian, Hebrew and Urdu.
 - **Split tunnel** (`-routes`): send chosen apps through their own WireGuard config
   or proxy, the rest through the main VPN.
 - **Kill switch** (`-killswitch`): Windows Filtering Platform rules block everything

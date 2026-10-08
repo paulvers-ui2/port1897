@@ -7,9 +7,6 @@
   commit `5ab34320`, under the Apache License 2.0. Some of those icons are
   Google's Material icons, also Apache-2.0. Android vector drawables were
   converted to SVG with the "True Black Plus" theme colors.
-- **Translations** (`renderer/i18n/*.js`) are the Android app's own
-  translations (its contributors, Apache License 2.0), matched to the English
-  texts this app shares with it by `tools/i18n.py`.
 - **DNS lists, ODoH servers, DNS proxies and DNSCrypt relays** (`renderer/data.js`)
   come from the Android app's prefilled database (Apache-2.0).
 - **Electron** is MIT licensed.

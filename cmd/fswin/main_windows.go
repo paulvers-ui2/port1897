@@ -280,6 +280,7 @@ func run(o options) error {
 	}
 	defer t.Disconnect()
 	b.closer.Store(func(csv string) string { return t.CloseConns(csv) })
+	b.tun.Store(t)
 	if err := setDialer(o); err != nil {
 		return err
 	}

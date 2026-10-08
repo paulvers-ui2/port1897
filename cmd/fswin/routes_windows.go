@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/celzero/firestack/intra"
@@ -93,6 +94,87 @@ func loadRoutes(t intra.Tunnel, path string) (map[string]string, error) {
 		loaded[r.ID] = name
 	}
 	return loaded, errors.Join(errs...)
+}
+
+// proxyStat is what GET /api/proxies returns per tunnel: the exit and the
+// per-app routes, as the Android app's WireGuard and proxy screens show them.
+type proxyStat struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Addrs  string `json:"addrs,omitempty"`
+	Rx     int64  `json:"rx"`
+	Tx     int64  `json:"tx"`
+	LastOK int64  `json:"lastOK,omitempty"` // unix millis of the last handshake or good dial
+	Since  int64  `json:"since,omitempty"`
+}
+
+func proxyStatus(s int) string {
+	switch s {
+	case x.TOK:
+		return "connected"
+	case x.TUP:
+		return "up"
+	case x.TZZ:
+		return "idle"
+	case x.TNT:
+		return "not responding"
+	case x.TKO:
+		return "failing"
+	case x.TPU:
+		return "paused"
+	case x.END:
+		return "stopped"
+	}
+	return "unknown"
+}
+
+// proxyStats reports the exit and the routes; a proxy that is missing or
+// fails to report is listed as such.
+func (b *bridge) proxyStats() []proxyStat {
+	out := []proxyStat{}
+	t, ok := b.tun.Load().(intra.Tunnel)
+	if !ok || t == nil {
+		return out
+	}
+	pxs, err := t.GetProxies()
+	if err != nil {
+		return out
+	}
+	ids := map[string]string{}
+	if e := b.exitID(); e != x.Base {
+		ids[e] = exitName(e)
+	}
+	if p := b.routes.Load(); p != nil {
+		for k, v := range *p {
+			ids[k] = v
+		}
+	}
+	for id, name := range ids {
+		out = append(out, statOf(pxs, id, name))
+	}
+	slices.SortFunc(out, func(a, b proxyStat) int { return strings.Compare(a.Name, b.Name) })
+	return out
+}
+
+func statOf(pxs x.Proxies, id, name string) (st proxyStat) {
+	st = proxyStat{ID: id, Name: name, Status: "missing"}
+	defer func() {
+		if r := recover(); r != nil {
+			st.Status = "unknown"
+		}
+	}()
+	px, err := pxs.GetProxy(x.StrOf(id))
+	if err != nil || px == nil {
+		return
+	}
+	st.Status = proxyStatus(px.Status())
+	if r := px.Router(); r != nil {
+		if s := r.Stat(); s != nil {
+			st.Addrs, st.Rx, st.Tx, st.LastOK, st.Since = s.Addrs, s.Rx, s.Tx, s.LastOK, s.Since
+		}
+	}
+	return
 }
 
 // setRoutes records the routes that loaded, so flows can use them.

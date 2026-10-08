@@ -81,6 +81,7 @@ type bridge struct {
 	dnsTID atomic.Value // string: transport DNS queries go to
 
 	routes atomic.Pointer[map[string]string] // per-app routes that loaded: id -> name
+	tun    atomic.Value                      // intra.Tunnel, for proxy stats
 
 	dnsDirect bool // never send DNS through the exit
 	dnsCache  bool // "DNS booster": answer repeat lookups from the cache
