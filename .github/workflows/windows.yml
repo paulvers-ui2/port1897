@@ -39,7 +39,7 @@ jobs:
           WINTUN_SHA256: 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags="-checklinkname=0 -s -w" -o dist/fswin.exe ./cmd/fswin
+          go build -trimpath -ldflags="-checklinkname=0 -s -w -X main.version=${GITHUB_SHA:0:8}" -o dist/fswin.exe ./cmd/fswin
           curl -sSfL -o wintun.zip https://www.wintun.net/builds/wintun-0.14.1.zip
           echo "$WINTUN_SHA256  wintun.zip" | sha256sum -c -
           unzip -q wintun.zip

@@ -1,0 +1,11 @@
+name: Idea or feature request
+description: Suggest something for the Windows version.
+labels: ["idea"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like, and why?
+      description: If the Android app (Rethink) already does it, say which feature.
+    validations:
+      required: true

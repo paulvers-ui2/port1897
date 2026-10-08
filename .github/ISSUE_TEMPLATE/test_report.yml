@@ -1,0 +1,75 @@
+name: Test report
+description: Tell us how fswin ran on your PC, whether it worked or not.
+title: "Test report: "
+labels: ["test report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing! Reports from many different PCs are what this project needs most.
+        Steps are in the README under "Try it".
+  - type: input
+    id: version
+    attributes:
+      label: fswin version
+      description: Output of `fswin.exe -version`
+    validations:
+      required: true
+  - type: dropdown
+    id: windows
+    attributes:
+      label: Windows
+      options:
+        - Windows 11
+        - Windows 10
+        - Other (say below)
+    validations:
+      required: true
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Processor
+      options:
+        - x64 (Intel / AMD)
+        - ARM64 (Snapdragon and similar)
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network
+      multiple: true
+      options:
+        - Wi-Fi
+        - Ethernet
+        - Mobile hotspot / USB tethering
+        - Other
+  - type: input
+    id: others
+    attributes:
+      label: Other VPNs, firewalls or antivirus installed
+      placeholder: "e.g. Proton VPN (disconnected), Windows Defender"
+  - type: input
+    id: command
+    attributes:
+      label: Command you ran
+      placeholder: ".\fswin.exe -full -nrpt"
+    validations:
+      required: true
+  - type: checkboxes
+    id: results
+    attributes:
+      label: What worked
+      options:
+        - label: fswin started and printed "fswin: up on ..."
+        - label: Websites loaded while it ran
+        - label: "`dns ...` lines appeared"
+        - label: "`flow ...` lines showed program names"
+        - label: "-block blocked the program I chose"
+        - label: Internet was normal again after Ctrl+C
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: What went wrong, if anything, and the last lines of output. Remove anything private.
+      render: text

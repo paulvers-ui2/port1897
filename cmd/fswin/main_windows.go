@@ -42,22 +42,25 @@ import (
 	"golang.zx2c4.com/wireguard/tun"
 )
 
+// version is set at build time: -ldflags "-X main.version=<commit>".
+var version = "dev"
+
 const (
 	ifaddr4  = "10.111.222.1"
 	fakedns4 = "10.111.222.3"
 )
 
 type options struct {
-	name   string
-	mtu    int
-	doh    string
-	dohips string
-	setdns bool
+	name    string
+	mtu     int
+	doh     string
+	dohips  string
+	setdns  bool
 	full    bool
 	nrpt    bool
 	cleanup bool
 	block   string
-	golog  int32
+	golog   int32
 }
 
 func main() {
@@ -73,7 +76,12 @@ func main() {
 	flag.BoolVar(&o.cleanup, "cleanup", false, "remove fswin's NRPT rule (left behind if fswin was killed) and exit")
 	flag.StringVar(&o.block, "block", "", "comma-separated programs to block (exe names like chrome.exe, or full paths); needs -full")
 	flag.IntVar(&golog, "log", 3, "firestack log level: 0 very verbose ... 5 errors, 8 none")
+	showVersion := flag.Bool("version", false, "print the build and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("fswin", version)
+		return
+	}
 	o.golog = int32(golog)
 
 	if err := run(o); err != nil {
@@ -167,7 +175,7 @@ func run(o options) error {
 		}
 		mode = fmt.Sprintf("all IPv4; firestack's own traffic leaves via interface #%d", phys4)
 	}
-	fmt.Printf("fswin: up on %q (%s); DNS %s:53 -> %s. Ctrl+C to stop.\n", name, mode, fakedns4, o.doh)
+	fmt.Printf("fswin %s: up on %q (%s); DNS %s:53 -> %s. Ctrl+C to stop.\n", version, name, mode, fakedns4, o.doh)
 	if blocked := b.blockedList(); blocked != "" {
 		fmt.Printf("fswin: blocking %s\n", blocked)
 	}

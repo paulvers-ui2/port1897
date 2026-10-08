@@ -1,118 +1,123 @@
-# Firestack
+# port1897: firestack for Windows
 
-Firestack is a userspace TCP/UDP connection monitor, firewall, DNS resolver, and multi-hop [WireGuard](https://github.com/wireguard/wireguard-go) client for Android.
+An open-source effort to bring the engine behind the Android firewall
+[Rethink DNS + Firewall](https://github.com/celzero/rethink-app) to Windows:
+encrypted DNS, per-app firewall rules, connection logs and WireGuard, in a free
+app for everyone.
 
-Firestack is built specifically for [Rethink DNS + Firewall + VPN](https://github.com/celzero/rethink-app). [gVisor/netstack](https://github.com/google/gvisor/tree/go/pkg/tcpip) provides a SOCKS-like interface (similar to [badvpn's tun2socks](https://github.com/ambrop72/badvpn)) for TCP/UDP over a TUN device.
+> **Early test software.** It needs administrator rights and changes network
+> settings while it runs. Do not rely on it for privacy or security yet.
 
-Firestack is a hard-fork of Google's [outline-go-tun2socks](https://github.com/Jigsaw-Code/outline-go-tun2socks) project.
+This is an unofficial community project. It is not affiliated with or endorsed by
+Celzero (Rethink), Cloudflare, WireGuard LLC or Microsoft.
 
-## DNS
+## What works today
 
-Firestack supports DNS over HTTPS, DNS over TLS, Oblivious DNS over HTTPS, DNS over WireGuard / SOCKS5 / Tor, DNSCrypt, and plain old DNS upstreams.
+The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
+(x64 and ARM64). A command-line test tool, `fswin`, drives it:
 
-## WireGuard
+- **Encrypted DNS:** Windows' DNS lookups go through firestack to a DNS-over-HTTPS
+  server (Cloudflare by default).
+- **Full tunnel** (`-full`): all IPv4 traffic goes through firestack, which logs
+  every connection.
+- **Which program?** Each connection is shown with the program that made it
+  (`chrome.exe`, `discord.exe`, ...).
+- **Block programs** (`-block chrome.exe`).
+- **No DNS leaks** (`-nrpt`): a Windows DNS policy sends every lookup to the tunnel.
 
-Firestack runs WireGuard in userspace. When running *multiple* WireGuard tunnels at once, only ICMP, DNS, TCP and UDP are forwarded through them. ARP / IGMP / SCTP / RTP and other IP protocols are *not* forwarded to WireGuard tunnels.
+Not yet: an app window, a background service, saved rules, a kill switch, IPv6.
+See the [roadmap](#roadmap).
 
-Firestack supports multi-hop / multi-relay WireGuard, where multiple tunnels can be chained together, provided that the outer tunnel (hop/relay) can route to the inner tunnel's (exit) endpoint.
+## Try it
 
-[<img src="https://fossunited.org/files/fossunited-white.svg"
-     alt="FOSS United"
-     height="40">](https://fossunited.org/grants)&emsp;<a href="https://floss.fund"><img src="https://floss.fund/static/badge.svg" alt="FLOSS/fund badge" /></a>
+1. Open the latest successful
+   [Windows build](https://github.com/wowjes92jsj2oe0-star/port1897/actions/workflows/windows.yml?query=branch%3Amain+is%3Asuccess)
+   and download **fswin-windows-amd64** (or **-arm64** for ARM PCs) under *Artifacts*.
+   You need to be signed in to GitHub to download artifacts.
+2. Unzip it. It contains `fswin.exe` and `wintun.dll` (the official
+   [Wintun](https://www.wintun.net) driver from the WireGuard project).
+3. Disconnect any other VPN (Proton VPN, NordVPN, ...). They fight over the same
+   network settings.
+4. Open **Terminal (Admin)** in that folder and run:
 
-WireGuard integration was sponsored by [FOSS United](https://fossunited.org/grants); and Multi-hop / Multi-relay WireGuard by [FLOSS/fund](https://floss.fund/).
+   ```powershell
+   .\fswin.exe -full -nrpt
+   ```
 
-## Releases
+5. Browse. You will see lines like:
 
-[![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev/spec/v1.2/build-track-basics#build-l3) [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/celzero/firestack/badge)](https://securityscorecards.dev/viewer/?uri=github.com/celzero/firestack) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/11568/badge)](https://www.bestpractices.dev/projects/11568) [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/celzero/firestack)
+   ```
+   dns   example.com (type 1) -> 93.184.215.14 via Preferred 21ms ...
+   flow  #12 tcp msedge.exe 10.111.222.1:51234 -> 93.184.215.14:443 [example.com]
+   ```
 
-Firestack is released as an Android Library (`aar`) and can be integrated into
-your Android builds via [Jitpack](https://jitpack.io/#celzero/firestack) ([ref](https://github.com/celzero/rethink-app/commit/a6e2abca7)) or [Maven Central (OSSRH)](https://central.sonatype.com/artifact/com.celzero/firestack/overview).
+6. Press **Ctrl+C** to stop. Everything is undone: the network adapter, its routes
+   and the DNS rule are removed.
 
-```gradle
-    // add this to your project's build.gradle
-    allprojects {
-        repositories {
-            ...
-            // if consuming from maven central
-            // ref: central.sonatype.org/consume
-            mavenCentral()
-            ...
-            // if consuming from jitpack
-            // ref: docs.jitpack.io/android/#installing
-            maven { url 'https://jitpack.io' }
-            ...
-        }
-    }
+If `fswin` was closed some other way (window closed, crash) and websites stop
+loading, run `.\fswin.exe -cleanup` from an admin terminal to restore DNS.
 
-    // add the dep to your app's build.gradle
-    dependencies {
-        ...
-        // maven central (stripped)
-        implementation 'com.celzero:firestack:Tag@aar'
-        ...
-        // jitpack (stripped)
-        implementation 'com.github.celzero:firestack:Tag@aar'
-        // jitpack (debug symbols)
-        implementation 'com.github.celzero:firestack:Tag:debug@aar'
-        ...
-    }
-```
+Windows SmartScreen or antivirus may warn about `fswin.exe` because it is not
+code-signed yet.
 
-## API
+Please tell us how it went with a
+[test report](https://github.com/wowjes92jsj2oe0-star/port1897/issues/new?template=test_report.yml).
 
-The APIs aren't stable and hence left undocumented, but you can look at
-Rethink DNS + Firewall + VPN codebase: ([GoVpnAdapter](https://github.com/celzero/rethink-app/blob/0c931d23d7/app/src/main/java/com/celzero/bravedns/net/go/GoVpnAdapter.kt#L113-L137), [BraveVpnService](https://github.com/celzero/rethink-app/blob/0c931d23d7/app/src/main/java/com/celzero/bravedns/service/BraveVPNService.kt#L5306-L5324)) to see how to integrate with Firestack on Android.
+### Options
 
-## Build
+| Flag | Meaning |
+|---|---|
+| `-full` | Send all IPv4 traffic through the tunnel (default: DNS only) |
+| `-nrpt` | Send every DNS query to the tunnel, whatever other adapters say |
+| `-block a.exe,b.exe` | Block these programs (exe names or full paths); needs `-full` |
+| `-doh URL -doh-ips IPs` | Use another DNS-over-HTTPS server |
+| `-cleanup` | Remove a DNS rule left behind by a crashed `fswin`, then exit |
+| `-log 0..8` | firestack log detail: 0 very verbose, 3 default, 8 none |
+| `-version` | Print the build and exit |
 
-Firestack only supports Android. Instructions for other platforms are left as-is, but they may or may not work.
+## Roadmap
 
-### Prerequisites
+| Phase | What | Status |
+|---|---|---|
+| 1 | firestack builds on Windows; Wintun network adapter; `fswin` test tool | done |
+| 2 | Firewall core: program lookup, blocking, DNS leak fix, kill switch, rules engine and SQLite storage | in progress |
+| 3 | WireGuard and WARP (MASQUE) inside the service | planned |
+| 4 | App window and tray icon, installer, code signing, auto-update | planned |
 
-- macOS host (iOS, macOS)
-- make
-- Go >= 1.25
-- A C compiler (e.g.: clang, gcc)
+The design and the details of every phase are in [PORT.md](PORT.md).
 
-Firestack APIs are available only on Android builds for now. iOS and Linux support planned but nothing concrete yet.
+## How it is put together
 
-### Android
+| Path | What |
+|---|---|
+| `intra/`, `tunnel/` | firestack, the engine (from [celzero/firestack](https://github.com/celzero/firestack) via [paulvers-ui/firestack](https://github.com/paulvers-ui/firestack)). Linux-only parts sit in `_linux.go` files with `_windows.go` counterparts. |
+| `intra/netstack/wintun_windows.go` | Connects firestack's network stack to a Wintun adapter |
+| `win/` | Windows-only pieces: `ifbind` (keep firestack's own traffic out of the tunnel), `owner` (which program owns a connection), `dnspolicy` (DNS leak fix) |
+| `cmd/fswin` | The test tool |
+| `third_party/gotrie` | A patched copy of a firestack dependency, with Windows support |
 
-- [sdkmanager](https://developer.android.com/studio/command-line/sdkmanager)
-  1. Download the command line tools from [developer.android.com](https://developer.android.com/studio).
-  1. Unzip the pacakge as `~/Android/Sdk/cmdline-tools/latest/`. Make sure `sdkmanager` is located at `~/Android/Sdk/cmdline-tools/latest/bin/sdkmanager`
-- Android NDK 28+
-  ```bash
-  # Install the NDK (exact NDK version obtained from `sdkmanager --list`)
-  ~/Android/Sdk/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "ndk;28.2.13676358"
-  # Set up the environment variables:
-  export ANDROID_NDK_HOME=~/Android/Sdk/ndk/28.2.13676358 ANDROID_HOME=~/Android/Sdk
-  ```
-- [gomobile](https://pkg.go.dev/golang.org/x/mobile/cmd/gobind) (installed as needed by `make`)
+Builds run on GitHub Actions: every push builds Windows x64 and ARM64 and checks
+that the Android build still works.
 
-### Apple (iOS and macOS)
+## Help wanted
 
-- Xcode
-- [gomobile](https://pkg.go.dev/golang.org/x/mobile/cmd/gobind) (installed as needed by `make`)
+Testing on your PC is the most useful thing right now: different Windows versions,
+Wi-Fi and Ethernet, other VPNs and antivirus. Code, docs and ideas are welcome too.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-### Linux and Windows
+## Licenses
 
-We build binaries for Linux and Windows from source without any custom integrations.
-`xgo` and Docker are required to support cross-compilation.
+- firestack and the code here: [Mozilla Public License 2.0](LICENSE). Changes to
+  existing files stay MPL-2.0 and must be shared.
+- Parts derived from gVisor and the Rethink Android app: Apache-2.0; from
+  wireguard-go: MIT (noted at the top of those files).
+- `third_party/gotrie`: MPL-2.0.
+- `wintun.dll` (in the downloads, not in this repository): WireGuard LLC's
+  prebuilt-binaries license, shipped next to `wintun-LICENSE.txt`.
 
-- [Docker](https://docs.docker.com/get-docker/) (for XGO)
-- [xgo](https://github.com/crazy-max/xgo) (installed as needed by `make`)
-- [ghcr.io/crazy-max/xgo Docker image](https://github.com/crazy-max/xgo/pkgs/container/xgo) (~6.8GB pulled by `xgo`).
+## Thanks
 
-## Make
-
-```
-# creates build/intra/{tun2socks.aar,tun2socks-sources.jar}
-make clean && make intra
-
-```
-If needed, you can extract the jni files into `build/android/jni` with:
-```bash
-unzip build/android/tun2socks.aar 'jni/*' -d build/android
-```
+[Celzero](https://github.com/celzero) for firestack and Rethink,
+[paulvers-ui](https://github.com/paulvers-ui) for the AuroraVPN fork this starts
+from, the [WireGuard](https://www.wireguard.com) project for Wintun and
+wireguard-go, and Google's [gVisor](https://gvisor.dev) for the network stack.
