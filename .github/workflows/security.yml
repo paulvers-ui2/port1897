@@ -1,0 +1,317 @@
+name: Security
+
+# Free code analyzers, all reporting to the repository's Security tab (code
+# scanning) and to each job's summary. On pull requests the gating ones fail
+# only on problems the pull request adds, so firestack's existing backlog
+# does not block work; pushes to main and the weekly run report everything.
+#
+#   CodeQL          Go (linux and windows code), JavaScript, workflows
+#   golangci-lint   gosec, staticcheck, govet and bug linters, linux + windows
+#   govulncheck     known vulnerabilities reachable from the Windows code
+#   Semgrep         community security rules for Go, JS and workflows
+#   Electronegativity  Electron security settings of the app (ui/)
+#   OSV-Scanner     known vulnerabilities in Go modules and npm packages
+#   Gitleaks        secrets committed anywhere in history
+#   zizmor          GitHub Actions security (injection, pinning, tokens)
+#   PSScriptAnalyzer  PowerShell scripts (tools/)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: manual
+          - language: javascript-typescript
+            build-mode: none
+          - language: actions
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: security-extended
+      - if: matrix.language == 'go'
+        name: Build for linux and windows
+        env:
+          CGO_ENABLED: "0"
+        # the windows build is what brings cmd/fswin and win/ into the database
+        run: |
+          go build -ldflags=-checklinkname=0 ./intra/... ./tunnel/... ./cmd/... ./win/... ./tools/sim/fakedns
+          GOOS=windows go build -ldflags=-checklinkname=0 ./intra/... ./tunnel/... ./cmd/... ./win/... ./tools/sim/fakedns
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
+
+  golangci:
+    name: golangci-lint (${{ matrix.goos }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      pull-requests: read # only-new-issues reads the pull request's diff
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, windows]
+    env:
+      GOOS: ${{ matrix.goos }}
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Lint
+        id: lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        # the backlog is reported, not fatal; pull requests fail on new issues
+        continue-on-error: ${{ github.event_name != 'pull_request' }}
+        with:
+          version: v2.14.0
+          only-new-issues: ${{ github.event_name == 'pull_request' }}
+          args: >-
+            --config=.github/golangci-security.yml
+            --output.text.path=stdout
+            --output.sarif.path=golangci-${{ matrix.goos }}.sarif
+      - if: always() && hashFiles(format('golangci-{0}.sarif', matrix.goos)) != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: golangci-${{ matrix.goos }}.sarif
+          category: golangci-${{ matrix.goos }}
+
+  govulncheck:
+    name: govulncheck (windows)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      GOOS: windows
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # go.yml runs govulncheck for linux and android; the windows-only
+      # files (cmd/fswin, win/, *_windows.go) are checked only here
+      - name: Install govulncheck
+        run: GOOS= go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+      - name: Report
+        run: govulncheck -format sarif ./... > govulncheck.sarif
+      - if: always() && hashFiles('govulncheck.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: govulncheck.sarif
+          category: govulncheck-windows
+      - name: Fail on vulnerabilities the code reaches
+        run: |
+          set -o pipefail
+          govulncheck ./... | tee govulncheck.txt
+      - if: always()
+        run: |
+          { echo '## govulncheck (windows)'; echo '```'; cat govulncheck.txt 2>/dev/null | tail -80; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Scan
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          SEMGREP_SEND_METRICS: "off"
+        run: |
+          rules="--config p/default --config p/golang --config p/javascript --config p/nodejs --config p/github-actions --config p/secrets"
+          semgrep() { uvx --from semgrep==1.177.0 semgrep "$@"; }
+          # everything, for code scanning
+          semgrep scan $rules --metrics=off --exclude third_party --sarif --output semgrep.sarif --quiet || true
+          # pull requests fail on findings they add
+          if [ -n "$BASE" ]; then
+            semgrep scan $rules --metrics=off --exclude third_party --baseline-commit "$BASE" --error
+          fi
+      - if: always() && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  electron:
+    name: Electronegativity (ui)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Scan
+        run: |
+          npx --yes @doyensec/electronegativity@1.10.0 -i ui -r -o electronegativity.sarif | tee electronegativity.txt || true
+          { echo '## Electronegativity'; echo '```'; tail -120 electronegativity.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - if: always() && hashFiles('electronegativity.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: electronegativity.sarif
+          category: electronegativity
+
+  osv:
+    name: OSV-Scanner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Resolve the app's npm dependencies
+        # ui/ has no lockfile; resolve what the App workflow's npm install would
+        working-directory: ui
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Install osv-scanner
+        env:
+          OSV_SHA256: ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108
+        run: |
+          curl -sSfL -o osv-scanner https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_linux_amd64
+          echo "$OSV_SHA256  osv-scanner" | sha256sum -c -
+          chmod +x osv-scanner
+      - name: Scan
+        run: |
+          ./osv-scanner scan source -r --format sarif --output osv.sarif ./ || true
+          ./osv-scanner scan source -r --format markdown ./ > osv.md || true
+          { echo '## OSV-Scanner'; cat osv.md; } >> "$GITHUB_STEP_SUMMARY"
+      - if: always() && hashFiles('osv.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: osv.sarif
+          category: osv-scanner
+
+  gitleaks:
+    name: Gitleaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install gitleaks
+        env:
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          curl -sSfL -o gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "$GITLEAKS_SHA256  gitleaks.tgz" | sha256sum -c -
+          tar -xzf gitleaks.tgz gitleaks
+      - name: Scan all history
+        run: ./gitleaks git --redact --no-banner --report-format sarif --report-path gitleaks.sarif --exit-code 0 .
+      - if: always() && hashFiles('gitleaks.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+      - name: Fail on secrets in this pull request's commits
+        if: github.event_name == 'pull_request'
+        env:
+          RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+        run: ./gitleaks git --redact --no-banner --log-opts="$RANGE" .
+
+  zizmor:
+    name: zizmor (workflows)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Scan
+        env:
+          GH_TOKEN: ${{ github.token }} # for the online audits (impostor commits, known-vulnerable actions)
+        run: |
+          uvx zizmor==1.30.1 --format sarif .github/workflows > zizmor.sarif || true
+          { echo '## zizmor'; echo '```'; uvx zizmor==1.30.1 --format plain .github/workflows 2>&1 | tail -200 || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - if: always() && hashFiles('zizmor.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
+
+  psscriptanalyzer:
+    name: PSScriptAnalyzer (tools)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Analyze
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -RequiredVersion 1.25.0 -Scope CurrentUser -Force
+          $r = @(Invoke-ScriptAnalyzer -Path tools -Recurse -Severity Error, Warning)
+          $r | Format-Table -AutoSize Severity, RuleName, ScriptName, Line, Message | Out-String -Width 220 | Tee-Object -Variable table
+          "## PSScriptAnalyzer`n``````n$table`n``````" | Add-Content $env:GITHUB_STEP_SUMMARY
+          if (@($r | Where-Object Severity -eq 'Error').Count) { exit 1 }

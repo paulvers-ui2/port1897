@@ -1,0 +1,34 @@
+# golangci-lint v2 security config, run by .github/workflows/security.yml for
+# linux and windows (the style config for editors is /.golangci.yml).
+# Pull requests fail on new findings only; the rest of firestack's
+# backlog is reported to code scanning.
+version: "2"
+
+run:
+  timeout: 20m
+
+linters:
+  default: none
+  enable:
+    - gosec # security: weak crypto, file permissions, path traversal, unsafe use
+    - govet
+    - staticcheck # the bug-finding SA checks; see settings
+    - ineffassign
+    - bodyclose # HTTP response bodies left open
+    - nilerr # err checked, then nil returned
+    - durationcheck # durations multiplied together
+    - errorlint # error comparisons that miss wrapped errors
+  settings:
+    staticcheck:
+      checks: ["SA*"]
+    gosec:
+      excludes:
+        - G104 # unchecked errors: a lint of its own, and noisy
+        - G115 # integer conversions: thousands in packet code; worth a pass of its own
+  exclusions:
+    paths:
+      - third_party
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
