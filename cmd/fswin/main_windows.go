@@ -239,8 +239,7 @@ func run(o options) error {
 			return fmt.Errorf("api: %w", err)
 		}
 		defer srv.Close()
-		fmt.Printf("fswin: control API on %s
-", o.api)
+		fmt.Printf("fswin: control API on %s\n", o.api)
 	}
 
 	stop := make(chan os.Signal, 1)

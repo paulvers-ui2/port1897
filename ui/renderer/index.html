@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>port1897</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="pages">
+
+    <!-- Home: same layout as the Android app's tablet home screen -->
+    <section class="page" id="page-home" data-page="home">
+      <header class="brand">
+        <h1 class="brand-title">port1897</h1>
+        <span class="brand-heart" data-icon="heart"></span>
+      </header>
+
+      <div class="cards-wrap">
+        <div class="cards">
+          <button class="card" id="card-dns" data-go="configure">
+            <h2 class="card-title"><span class="ico" data-icon="dns"></span>DNS</h2>
+            <p class="card-main" id="dns-main">Enable DNS mode.</p>
+            <p class="card-sub" id="dns-sub"></p>
+            <p class="card-foot" id="dns-foot"></p>
+          </button>
+          <button class="card" id="card-firewall" data-go="logs">
+            <h2 class="card-title"><span class="ico" data-icon="firewall"></span>Firewall</h2>
+            <p class="card-main" id="fw-main">Enable firewall mode.</p>
+            <p class="card-sub" id="fw-sub"></p>
+            <p class="card-foot" id="fw-foot">Disabled</p>
+          </button>
+          <button class="card" id="card-proxy" data-go="configure">
+            <h2 class="card-title"><span class="ico" data-icon="proxy"></span>Proxy</h2>
+            <p class="card-main" id="px-main">Inactive</p>
+            <p class="card-sub" id="px-sub"></p>
+            <p class="card-foot" id="px-foot">Disabled</p>
+          </button>
+          <button class="card" id="card-logs" data-go="logs">
+            <h2 class="card-title"><span class="ico" data-icon="logs"></span>Logs</h2>
+            <p class="card-main" id="logs-main">Enable firewall mode.</p>
+            <p class="card-main" id="logs-sub">Disabled</p>
+            <p class="card-foot" id="logs-foot"></p>
+          </button>
+        </div>
+        <span class="cards-plus" data-icon="plus"></span>
+      </div>
+
+      <button class="card card-wide" id="card-apps" data-go="logs">
+        <h2 class="card-title"><span class="ico" data-icon="apps"></span>Apps</h2>
+        <div class="apps-row">
+          <span class="apps-big" id="apps-seen">0</span>
+          <span class="apps-mid">&nbsp;apps seen</span>
+          <div class="apps-grid">
+            <div><small>Blocked</small><b id="apps-blocked">0</b></div>
+            <div><small>Connections</small><b id="apps-flows">0</b></div>
+            <div><small>Blocked conns</small><b id="apps-blocked-flows">0</b></div>
+            <div><small>Traffic</small><b id="apps-traffic">0 B</b></div>
+          </div>
+        </div>
+      </button>
+
+      <div class="start-area">
+        <button class="start-btn" id="start-btn">
+          <span class="start-ico" data-icon="pause"></span>
+          <span id="start-label">START</span>
+          <span class="start-ico" data-icon="arrowDown"></span>
+        </button>
+        <p class="protection" id="protection">Not protected</p>
+        <p class="start-error" id="start-error" hidden></p>
+      </div>
+    </section>
+
+    <!-- Stats -->
+    <section class="page" id="page-stats" data-page="stats" hidden>
+      <h1 class="page-title">Stats</h1>
+      <div class="stats-cols">
+        <div class="panel">
+          <h2>Top apps</h2>
+          <ol class="bars" id="top-apps"></ol>
+        </div>
+        <div class="panel">
+          <h2>Top domains</h2>
+          <ol class="bars" id="top-domains"></ol>
+        </div>
+      </div>
+      <p class="hint" id="stats-hint">Start protection to see which apps and sites are used most.</p>
+    </section>
+
+    <!-- Logs: opened from the Firewall, Logs and Apps cards -->
+    <section class="page" id="page-logs" data-page="logs" hidden>
+      <h1 class="page-title">Logs</h1>
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-filter="flow">Network</button>
+        <button class="tab" data-filter="dns">DNS</button>
+        <input class="search" id="log-search" type="search" placeholder="Search app or domain">
+      </div>
+      <ul class="log" id="log"></ul>
+      <p class="hint" id="log-hint">Start protection to see connections.</p>
+    </section>
+
+    <!-- Configure -->
+    <section class="page" id="page-configure" data-page="configure" hidden>
+      <h1 class="page-title">Configure</h1>
+      <p class="hint" id="cfg-restart" hidden>Changes apply when you press START again.</p>
+
+      <div class="panel">
+        <h2><span class="ico" data-icon="dns"></span>DNS</h2>
+        <p class="desc">Encrypted DNS (DNS over HTTPS). Your ISP no longer sees the sites you look up.</p>
+        <div class="choices" id="dns-choices"></div>
+        <div class="row" id="dns-custom" hidden>
+          <label>URL <input id="doh-url" type="url" placeholder="https://example.com/dns-query"></label>
+          <label>IP addresses <input id="doh-ips" type="text" placeholder="1.2.3.4,5.6.7.8"></label>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2><span class="ico" data-icon="proxy"></span>VPN</h2>
+        <p class="desc">Where your traffic leaves. A VPN hides your IP address from the sites you visit.</p>
+        <div class="choices" id="exit-choices">
+          <label class="choice"><input type="radio" name="exit" value="none"><span><b>Off</b><small>Encrypted DNS and firewall only</small></span></label>
+          <label class="choice"><input type="radio" name="exit" value="warp"><span><b>Cloudflare WARP</b><small>Free. Registers an anonymous account on first use</small></span></label>
+          <label class="choice"><input type="radio" name="exit" value="wg"><span><b>WireGuard</b><small>Any provider's .conf file</small></span></label>
+          <label class="choice"><input type="radio" name="exit" value="proxy"><span><b>SOCKS5 / HTTP proxy</b><small>socks5://user:pass@host:port</small></span></label>
+        </div>
+        <div class="row" id="wg-row" hidden>
+          <span class="path" id="wg-file">No file chosen</span>
+          <button class="btn" id="wg-pick">Choose .conf…</button>
+        </div>
+        <div class="row" id="proxy-row" hidden>
+          <label>Proxy <input id="proxy-url" type="text" placeholder="socks5://127.0.0.1:1080"></label>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2><span class="ico" data-icon="firewall"></span>Protection</h2>
+        <label class="toggle"><input type="checkbox" id="opt-full"><span><b>Firewall all apps</b><small>Send all IPv4 traffic through the firewall, not only DNS</small></span></label>
+        <label class="toggle"><input type="checkbox" id="opt-nrpt"><span><b>Stop DNS leaks</b><small>Force every DNS lookup through the app, even if another app sets its own DNS</small></span></label>
+      </div>
+
+      <div class="panel">
+        <h2><span class="ico" data-icon="apps"></span>Blocked apps</h2>
+        <ul class="chips" id="blocked-list"></ul>
+        <form class="row" id="block-form">
+          <label>Program <input id="block-name" type="text" placeholder="chrome.exe"></label>
+          <button class="btn" type="submit">Block</button>
+        </form>
+      </div>
+
+      <div class="panel">
+        <h2><span class="ico" data-icon="logs"></span>Engine log</h2>
+        <button class="btn" id="open-log">Open log file</button>
+      </div>
+    </section>
+
+    <!-- About -->
+    <section class="page" id="page-about" data-page="about" hidden>
+      <h1 class="page-title">About</h1>
+      <div class="panel">
+        <h2>port1897</h2>
+        <p class="desc">Firewall, encrypted DNS and free VPN for Windows, built on firestack, the
+          open-source engine of the Rethink DNS + Firewall Android app.</p>
+        <p class="desc">Early test software. Unofficial: not affiliated with Celzero (Rethink),
+          Cloudflare, WireGuard LLC or Microsoft.</p>
+        <p class="desc">Engine: <span id="about-engine">not running</span></p>
+        <div class="row">
+          <button class="btn" data-url="https://github.com/wowjes92jsj2oe0-star/port1897">Source code</button>
+          <button class="btn" data-url="https://github.com/wowjes92jsj2oe0-star/port1897/issues/new?template=test_report.yml">Send a test report</button>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Licenses</h2>
+        <p class="desc">Mozilla Public License 2.0. Icons and layout from the Rethink Android app
+          (Apache-2.0). Wintun © WireGuard LLC, prebuilt-binaries license.</p>
+      </div>
+    </section>
+  </main>
+
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-nav="home"><span data-icon="navHome"></span>Home</button>
+    <button class="nav-item" data-nav="stats"><span data-icon="navStats"></span>Stats</button>
+    <button class="nav-item" data-nav="configure"><span data-icon="navConfigure"></span>Configure</button>
+    <button class="nav-item" data-nav="about"><span data-icon="navAbout"></span>About</button>
+  </nav>
+
+  <script src="icons.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

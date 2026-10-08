@@ -1,0 +1,38 @@
+{
+  "name": "port1897",
+  "productName": "port1897",
+  "version": "0.1.0",
+  "description": "Firewall, encrypted DNS and free VPN for Windows, built on firestack",
+  "main": "main.js",
+  "license": "MPL-2.0",
+  "private": true,
+  "author": "port1897 contributors",
+  "homepage": "https://github.com/wowjes92jsj2oe0-star/port1897",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "io.github.port1897",
+    "productName": "port1897",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "preload.js", "renderer/**/*", "package.json"],
+    "extraResources": [{ "from": "engine", "to": "engine" }],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "artifactName": "${productName}-${version}-${arch}-${target}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    }
+  }
+}
