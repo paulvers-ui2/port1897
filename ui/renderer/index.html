@@ -64,11 +64,11 @@
       </button>
 
       <div class="start-area">
-        <button class="start-btn" id="start-btn">
-          <span class="start-ico" data-icon="pause"></span>
-          <span id="start-label">START</span>
-          <span class="start-ico" data-icon="arrowDown"></span>
-        </button>
+        <div class="start-btn" id="start-btn">
+          <button class="start-side" id="pause-btn" type="button" title="Pause" aria-label="Pause protection"><span class="start-ico" data-icon="pause"></span></button>
+          <button class="start-main" id="start-main" type="button"><span id="start-label">START</span></button>
+          <button class="start-side" id="mode-btn" type="button" title="Choose mode" aria-label="Choose mode"><span class="start-ico" data-icon="arrowDown"></span></button>
+        </div>
         <p class="protection" id="protection">Not protected</p>
         <p class="start-error" id="start-error" hidden></p>
       </div>
@@ -89,6 +89,7 @@
   <script src="data.js"></script>
   <script src="ui.js"></script>
   <script src="pages.js"></script>
+  <script src="firewall.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

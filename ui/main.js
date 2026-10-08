@@ -12,7 +12,7 @@
 
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, Notification, clipboard, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, Notification, clipboard, net, powerMonitor } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
@@ -58,10 +58,23 @@ const DEFAULTS = {
   warp2Flags: '',
   warpAutoDisable: false,
   // Network and firewall
+  mode: 'both', // dns | firewall | both (Android: "Choose mode")
   full: true,
   killSwitch: false,
   allowLan: true,
-  blocked: [],
+  // Firewall rules (Android: App info, Universal firewall, IP & domain rules)
+  rules: { apps: {}, ips: [], domains: [] },
+  universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false },
+  dnsTypesAuto: true,
+  dnsTypes: [1, 28, 5, 65, 64, 45], // A, AAAA, CNAME, HTTPS, SVCB, IPSECKEY: Android's defaults
+  knownApps: [],
+  pausedUntil: 0,
+  // Anti-censorship and sockets (Network)
+  dialStrategy: 'never', // never | auto | split-tcp | split-tls
+  dialRetry: '',
+  dialTimeout: 0,
+  tcpKeepAlive: false,
+  eim: false,
   // Settings
   history: true,
   logLevel: 3,
@@ -86,6 +99,7 @@ const usqueDir = () => path.join(dataDir(), 'usque');
 const usqueLog = () => path.join(usqueDir(), 'usque.log');
 const wgDir = () => path.join(dataDir(), 'wireguard');
 const histDir = () => path.join(dataDir(), 'history');
+const rulesFile = () => path.join(dataDir(), 'rules.json');
 
 function enginePath() {
   if (app.isPackaged) return path.join(process.resourcesPath, 'engine', 'fswin.exe');
@@ -101,7 +115,9 @@ function usquePath() {
 function readSettings() {
   let s;
   try {
-    s = { ...DEFAULTS, ...JSON.parse(fs.readFileSync(settingsFile(), 'utf8')) };
+    const raw = JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
+    if (!('mode' in raw)) raw.mode = raw.full === false ? 'dns' : 'both'; // before modes
+    s = { ...DEFAULTS, ...raw };
   } catch {
     s = { ...DEFAULTS };
   }
@@ -151,9 +167,89 @@ function migrate(s) {
       // read-only; try again next time
     }
   }
-  if (!Array.isArray(s.blocked)) s.blocked = [];
+  // 0.1: a list of blocked apps; now a mode per app
+  if (Array.isArray(s.blocked)) {
+    s.rules = { ...DEFAULTS.rules, ...s.rules, apps: { ...(s.rules && s.rules.apps) } };
+    for (const name of s.blocked) s.rules.apps[String(name).toLowerCase()] = { ...s.rules.apps[name], mode: 'block' };
+    delete s.blocked;
+    try {
+      writeSettings(s);
+    } catch {
+      // read-only; try again next time
+    }
+  }
+  s.rules = { apps: {}, ips: [], domains: [], ...s.rules };
+  s.universal = { ...DEFAULTS.universal, ...s.universal };
+  if (!Array.isArray(s.knownApps)) s.knownApps = [];
   return s;
 }
+
+// ---------- firewall rules ----------
+
+let screenLocked = false;
+
+// The rule set fswin applies (cmd/fswin/rules_windows.go).
+function ruleSet(s) {
+  return {
+    apps: s.rules.apps,
+    ips: s.rules.ips,
+    domains: s.rules.domains,
+    universal: s.universal,
+    known: s.knownApps,
+    dnsTypes: s.dnsTypesAuto ? [] : s.dnsTypes,
+    pausedUntil: s.pausedUntil > Date.now() ? s.pausedUntil : 0,
+    screenLocked,
+  };
+}
+
+function writeRules(s) {
+  fs.mkdirSync(dataDir(), { recursive: true });
+  fs.writeFileSync(rulesFile(), JSON.stringify(ruleSet(s)));
+}
+
+// Rules apply at once: the file for the next start, the API for now.
+async function pushRules(s) {
+  writeRules(s);
+  try {
+    const r = await api('POST', '/api/rules', ruleSet(s));
+    return { ok: true, warnings: r.warnings || '' };
+  } catch {
+    return { ok: true, warnings: '' }; // not running; applies on next start
+  }
+}
+
+const RULE_KEYS = ['rules', 'universal', 'dnsTypesAuto', 'dnsTypes', 'knownApps', 'pausedUntil'];
+
+// Apps seen for the first time: remembered, and blocked when "Block newly
+// installed apps" is on (fswin already blocked them; this makes it a rule
+// the user can see and undo).
+function learnApps(evs) {
+  let s = null;
+  let known = null;
+  const fresh = [];
+  for (const e of evs) {
+    if (e.kind !== 'flow' || !e.app || e.app === '?' || /^pid\d+$/.test(e.app)) continue;
+    if (!s) {
+      s = readSettings();
+      known = new Set(s.knownApps);
+    }
+    const name = e.app.toLowerCase();
+    if (known.has(name)) continue;
+    known.add(name);
+    fresh.push({ name, blocked: e.rule === 'universal: new app' });
+  }
+  if (!fresh.length) return;
+  s.knownApps = [...known].sort();
+  const blocked = fresh.filter((f) => f.blocked && !s.rules.apps[f.name]);
+  for (const f of blocked) s.rules.apps[f.name] = { mode: 'block' };
+  writeSettings(s);
+  writeRules(s);
+  if (blocked.length) {
+    pushRules(s);
+    if (s.notify) notify(`New app blocked: ${blocked.map((f) => f.name).join(', ')}. Allow it in Apps.`);
+  }
+}
+
 
 // ---------- engine API ----------
 
@@ -243,7 +339,8 @@ function engineArgs(s) {
     '-fallback-doh', s.fallbackDoh,
     '-fallback-ips', s.fallbackIps,
   ];
-  const type = s.dnsType === 'rdns' ? 'doh' : s.dnsType;
+  // Firewall mode leaves DNS to the network adapter's servers, as on Android
+  const type = s.mode === 'firewall' ? 'system' : s.dnsType === 'rdns' ? 'doh' : s.dnsType;
   a.push('-dns', type);
   if (type === 'doh') a.push('-doh', s.doh, '-doh-ips', s.dohIps || '');
   if (type === 'dot') a.push('-dot', s.dot);
@@ -253,7 +350,7 @@ function engineArgs(s) {
   if (s.dnssec) a.push('-dnssec');
   if (s.undelegated) a.push('-undelegated');
   if (s.dnsFallback) a.push('-dns-fallback');
-  if (s.full) a.push('-full');
+  if (s.mode !== 'dns') a.push('-full');
   if (s.nrpt) a.push('-nrpt');
   if (s.killSwitch) {
     a.push('-killswitch');
@@ -281,7 +378,13 @@ function engineArgs(s) {
       if (s[s.exit].host) a.push('-proxy', proxyURL(s.exit, s[s.exit]));
       break;
   }
-  if (s.blocked.length) a.push('-block', s.blocked.join(','));
+  writeRules(s);
+  a.push('-rules', rulesFile());
+  a.push('-dial-strategy', s.dialStrategy || 'never');
+  if (s.dialRetry) a.push('-dial-retry', s.dialRetry);
+  if (s.dialTimeout > 0) a.push('-dial-timeout', String(s.dialTimeout));
+  if (s.tcpKeepAlive) a.push('-tcp-keepalive');
+  if (s.eim) a.push('-eim');
   return a;
 }
 
@@ -531,6 +634,7 @@ async function pumpEvents(st, s) {
   } catch {
     return;
   }
+  learnApps(evs);
   const lines = [];
   for (const e of evs) {
     hist.engineLast = e.id;
@@ -588,6 +692,48 @@ function stats(range) {
     domains: list(domains, (d) => d.n > 0, (d) => d.n),
     blockedDomains: list(domains, (d) => d.blocked > 0, (d) => d.blocked),
   };
+}
+
+// Most contacted domains and IPs of one app, from recent events (memory and
+// the last two days of event files), for App info.
+function appStats(appName) {
+  const want = String(appName || '').toLowerCase();
+  const domains = {};
+  const ips = {};
+  const seen = new Set();
+  const take = (e) => {
+    if (e.kind !== 'flow' || String(e.app || '').toLowerCase() !== want) return;
+    const key = `${e.at}|${e.dst}|${e.cid || ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const ip = String(e.dst || '').replace(/^\[?([^\]]+?)\]?:\d+$/, '$1');
+    for (const [obj, name] of [[domains, e.domain], [ips, ip]]) {
+      if (!name) continue;
+      const t = (obj[name] ||= { n: 0, blocked: 0 });
+      t.n++;
+      if (e.blocked) t.blocked++;
+    }
+  };
+  for (let d = 1; d >= 0; d--) {
+    const day = new Date(Date.now() - d * 24 * HOUR).toISOString().slice(0, 10);
+    try {
+      const text = fs.readFileSync(path.join(histDir(), `events-${day}.jsonl`), 'utf8');
+      if (text.length > 64 * 1024 * 1024) continue;
+      for (const line of text.split(/\r?\n/)) {
+        if (!line || !line.toLowerCase().includes(want)) continue;
+        try {
+          take(JSON.parse(line));
+        } catch {
+          // a torn line
+        }
+      }
+    } catch {
+      // no file that day
+    }
+  }
+  for (const e of hist.buf) take(e);
+  const top = (obj) => Object.entries(obj).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.n + b.blocked - (a.n + a.blocked)).slice(0, 30);
+  return { domains: top(domains), ips: top(ips) };
 }
 
 function saveBuckets(s) {
@@ -714,10 +860,20 @@ function trayIcon(on) {
 
 let trayState = null;
 let trayBusy = false;
-function updateTray(st) {
+let trayPaused = false;
+function updateTray(st, force) {
   const on = !!st;
-  if (!tray || (trayState === on && !trayBusy)) return;
+  const paused = readSettings().pausedUntil > Date.now();
+  if (!tray || (trayState === on && trayPaused === paused && !trayBusy && !force)) return;
   trayState = on;
+  trayPaused = paused;
+  const pause = async (m) => {
+    const s = readSettings();
+    s.pausedUntil = m ? Date.now() + m * 60 * 1000 : 0;
+    writeSettings(s);
+    await pushRules(s);
+    updateTray(lastStatus, true);
+  };
   tray.setImage(trayIcon(on));
   tray.setToolTip(on ? `port1897: protected${st.exit ? ' via ' + st.exit : ''}` : 'port1897: not protected');
   tray.setContextMenu(
@@ -740,10 +896,12 @@ function updateTray(st) {
           }
         },
       },
+      on && !paused ? { label: 'Pause for 15 minutes', click: () => pause(15) } : null,
+      on && paused ? { label: 'Resume (paused)', click: () => pause(0) } : null,
       { label: 'Open port1897', click: showWindow },
       { type: 'separator' },
       { label: 'Quit (turns protection off)', click: () => app.quit() },
-    ])
+    ].filter(Boolean))
   );
 }
 
@@ -757,11 +915,41 @@ function createTray() {
 // ---------- IPC ----------
 
 ipcMain.handle('settings:get', () => readSettings());
-ipcMain.handle('settings:set', (_e, patch) => {
-  const merged = { ...readSettings(), ...patch };
-  merged.blocked = Array.isArray(merged.blocked) ? merged.blocked.map(String) : [];
+ipcMain.handle('settings:set', async (_e, patch) => {
+  const merged = migrate({ ...readSettings(), ...patch });
   writeSettings(merged);
+  if (RULE_KEYS.some((k) => k in patch)) await pushRules(merged);
   return merged;
+});
+// Rule changes apply at once, without a restart.
+ipcMain.handle('rules:set', async (_e, patch) => {
+  const s = migrate({ ...readSettings(), ...patch });
+  writeSettings(s);
+  const r = await pushRules(s);
+  return { settings: s, warnings: r.warnings };
+});
+ipcMain.handle('engine:pause', async (_e, minutes) => {
+  const s = readSettings();
+  const m = Number(minutes) || 0;
+  s.pausedUntil = m > 0 ? Date.now() + m * 60 * 1000 : 0;
+  writeSettings(s);
+  await pushRules(s);
+  updateTray(lastStatus, true);
+  return s;
+});
+ipcMain.handle('conns:list', async (_e, appName) => {
+  try {
+    return await api('GET', '/api/conns?app=' + encodeURIComponent(String(appName || '')));
+  } catch {
+    return [];
+  }
+});
+ipcMain.handle('conns:close', async (_e, appName) => {
+  try {
+    return await api('POST', '/api/close', { app: String(appName || '') });
+  } catch {
+    return { closed: 0 };
+  }
 });
 ipcMain.handle('engine:start', () => startEngine());
 ipcMain.handle('engine:stop', () => stopEngine());
@@ -781,21 +969,20 @@ ipcMain.handle('engine:events', (_e, after) => {
   return hist.buf.filter((e) => e.id > a).slice(-300);
 });
 ipcMain.handle('engine:stats', (_e, range) => stats(String(range)));
+ipcMain.handle('engine:appStats', (_e, appName) => appStats(appName));
 ipcMain.handle('engine:block', async (_e, appName, block) => {
   const name = String(appName).trim().toLowerCase();
-  if (!name) return readSettings().blocked;
   const s = readSettings();
-  const set = new Set(s.blocked);
-  if (block) set.add(name);
-  else set.delete(name);
-  s.blocked = [...set].sort();
+  if (!name) return s;
+  const a = { ...s.rules.apps[name] };
+  if (block) a.mode = 'block';
+  else if (a.mode === 'block') delete a.mode;
+  delete a.allowUntil;
+  if (Object.keys(a).length) s.rules.apps[name] = a;
+  else delete s.rules.apps[name];
   writeSettings(s);
-  try {
-    await api('POST', '/api/block', { app: name, block: !!block });
-  } catch {
-    // not running; applies on next start
-  }
-  return s.blocked;
+  await pushRules(s);
+  return s;
 });
 
 ipcMain.handle('usque:status', () => usqueStatus());
@@ -960,6 +1147,14 @@ if (!app.requestSingleInstanceLock()) {
     const autostart = process.argv.includes('--autostart');
     createWindow(!autostart);
     createTray();
+    // "Block all apps when the PC is locked"
+    const onLock = (locked) => {
+      screenLocked = locked;
+      const s = readSettings();
+      if (s.universal.locked) pushRules(s);
+    };
+    powerMonitor.on('lock-screen', () => onLock(true));
+    powerMonitor.on('unlock-screen', () => onLock(false));
     setInterval(statusLoop, 1500);
     setInterval(() => saveBuckets(readSettings()), 60 * 1000);
     if (autostart && readSettings().wasRunning) {

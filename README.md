@@ -31,6 +31,10 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
   server -> WARP (`-chain my.conf`), any WireGuard server (`-wg my.conf`), or a
   SOCKS5/HTTP proxy (`-proxy socks5://...`). MASQUE and the chain use
   [usque](https://github.com/paulvers-ui/usque).
+- **Firewall rules** (`-rules`): per app block, isolate, bypass or exclude; IP and
+  domain rules; the universal rules (block UDP, ICMP, port 80, unknown or new apps,
+  DNS bypass, PC locked, lockdown); allowed DNS record types; pause.
+- **Anti-censorship** (`-dial-strategy`): split TCP or the TLS ClientHello.
 - **Kill switch** (`-killswitch`): Windows Filtering Platform rules block everything
   outside the tunnel, and keep blocking if the engine crashes.
 - **App window** (`ui/`): an Electron app styled after the Android home screen, with
@@ -97,6 +101,12 @@ Please tell us how it went with a
 | `-masque` | Use free Cloudflare WARP over MASQUE (needs `usque.exe` next to `fswin.exe`) |
 | `-chain my.conf` | WARP -> the WireGuard server in `my.conf` -> WARP (needs `usque.exe`) |
 | `-killswitch` | Block all traffic outside the tunnel, even if `fswin` crashes |
+| `-rules rules.json` | Firewall rules as the app writes them: a mode per app (block, isolate, bypass, exclude), IP and domain rules, universal rules, allowed DNS record types, pause |
+| `-dial-strategy never\|auto\|split-tcp\|split-tls` | Anti-censorship: split the first TCP segment or the TLS ClientHello to get past DPI filters (default `never`, as on Android) |
+| `-dial-retry never\|split\|plain` | What to do when a connection fails |
+| `-dial-timeout 300` | Close idle TCP and UDP sockets after this many seconds |
+| `-tcp-keepalive` | Shorter TCP keep alive |
+| `-eim` | Endpoint-independent mapping and filtering for UDP (games, calls) |
 | `-cleanup` | Remove a DNS rule or kill switch left behind by a crashed `fswin`, then exit |
 | `-log 0..8` | firestack log detail: 0 very verbose, 3 default, 8 none |
 | `-version` | Print the build and exit |

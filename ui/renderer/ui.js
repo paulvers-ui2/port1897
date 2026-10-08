@@ -145,6 +145,34 @@ function dialog({ title, body, ok, cancel }) {
   });
 }
 
+// Bottom-sheet menu (Android's bottom sheets): every action closes it.
+function sheet({ title, body, actions }) {
+  const close = () => back.remove();
+  const back = h('div', { class: 'modal-back', onclick: (e) => e.target === back && close() });
+  const acts = (actions || []).filter(Boolean).map((a) =>
+    btn(a.text, () => {
+      close();
+      a.onclick();
+    }, { primary: a.primary, wide: true, cls: a.cls })
+  );
+  back.append(
+    h(
+      'div',
+      { class: 'modal sheet', role: 'dialog' },
+      h('h2', { class: 'modal-title', text: title }),
+      body ? h('div', { class: 'modal-body' }, body) : null,
+      h('div', { class: 'sheet-actions' }, acts, btn('Close', close, { wide: true }))
+    )
+  );
+  document.body.append(back);
+  return close;
+}
+
+// A label and value line, for details.
+function kv(label, value) {
+  return h('div', { class: 'kv' }, h('span', { text: label }), h('b', { text: value === undefined || value === '' ? '—' : String(value) }));
+}
+
 function confirmDialog(title, text, ok) {
   return dialog({ title, body: h('p', { class: 'desc', text }), ok });
 }

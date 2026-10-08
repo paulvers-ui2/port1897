@@ -64,38 +64,46 @@ func (a *apps) path(uid int32) string {
 }
 
 // bridge answers firestack's callbacks: it finds which program owns each
-// flow, blocks the programs listed in -block, sends DNS to the Preferred
-// (DoH) transport, and prints what it sees.
+// flow, applies the firewall rules (rules_windows.go), sends DNS to the
+// chosen transport, and records what it sees.
 type bridge struct {
-	start   time.Time
-	cid     atomic.Int64
-	binder  *ifbind.Binder
-	apps    *apps
-	blockmu sync.RWMutex
-	blocked map[string]bool // lowercased exe names or full paths
-	log     *journal
-	bypass  atomic.Value // string: lowercased exe path let straight out (usque)
-	dnsTID  atomic.Value // string: transport DNS queries go to
+	start  time.Time
+	cid    atomic.Int64
+	binder *ifbind.Binder
+	apps   *apps
+	rulemu sync.Mutex // serializes rule updates
+	rules  atomic.Pointer[rules]
+	conns  *connTable
+	closer atomic.Value // func(cidcsv string) string: the tunnel's CloseConns
+	dnsWhy *whyCache    // why recent queries were answered by BlockAll
+	log    *journal
+	bypass atomic.Value // string: lowercased exe path let straight out (usque)
+	dnsTID atomic.Value // string: transport DNS queries go to
 
 	dnsDirect bool // never send DNS through the exit
 	dnsCache  bool // "DNS booster": answer repeat lookups from the cache
 	dnssec    bool // block bogus (bogon) answers, as DnsSecGuard does
-	selfpid uint32
-	selfuid int32
-	exit    atomic.Value // string: proxy id for allowed flows and DNS
+	selfpid   uint32
+	selfuid   int32
+	exit      atomic.Value // string: proxy id for allowed flows and DNS
 }
 
 var _ intra.Bridge = (*bridge)(nil)
 
-func newBridge(binder *ifbind.Binder, blockcsv string) *bridge {
+func newBridge(binder *ifbind.Binder, initial *rules, blockcsv string) *bridge {
 	b := &bridge{
 		start:   time.Now(),
 		binder:  binder,
 		apps:    newApps(),
+		conns:   newConnTable(),
+		dnsWhy:  newWhyCache(),
 		selfpid: windows.GetCurrentProcessId(),
-		blocked: map[string]bool{},
 		log:     newJournal(),
 	}
+	if initial == nil {
+		initial, _ = compileRules(ruleSet{})
+	}
+	b.rules.Store(initial)
 	self, err := os.Executable()
 	if err != nil {
 		self = "fswin.exe"
@@ -136,28 +144,57 @@ func (b *bridge) exitID() string {
 	return x.Base
 }
 
-// setBlocked blocks or unblocks app, an exe name or a full path.
+// setRules swaps in a new rule set and closes the open connections it now
+// blocks. Rules that do not parse are skipped and reported in err.
+func (b *bridge) setRules(rs ruleSet) error {
+	r, err := compileRules(rs)
+	b.rulemu.Lock()
+	b.rules.Store(r)
+	b.rulemu.Unlock()
+	b.enforce()
+	return err
+}
+
+// setBlocked blocks or unblocks app, an exe name or a full path, keeping
+// its other settings.
 func (b *bridge) setBlocked(app string, block bool) {
 	app = strings.ToLower(strings.TrimSpace(app))
 	if app == "" {
 		return
 	}
-	b.blockmu.Lock()
-	defer b.blockmu.Unlock()
-	if block {
-		b.blocked[app] = true
-	} else {
-		delete(b.blocked, app)
+	b.rulemu.Lock()
+	rs := b.rules.Load().src
+	apps := make(map[string]appRule, len(rs.Apps)+1)
+	for k, v := range rs.Apps {
+		apps[strings.ToLower(k)] = v
 	}
+	a := apps[app]
+	if block {
+		a.Mode = modeBlock
+	} else if a.Mode == modeBlock {
+		a.Mode = modeNone
+	}
+	a.AllowUntil = 0
+	if a == (appRule{}) {
+		delete(apps, app)
+	} else {
+		apps[app] = a
+	}
+	rs.Apps = apps
+	r, _ := compileRules(rs)
+	b.rules.Store(r)
+	b.rulemu.Unlock()
+	b.enforce()
 }
 
 // blockedApps lists the blocked exe names and paths, sorted.
 func (b *bridge) blockedApps() []string {
-	b.blockmu.RLock()
-	defer b.blockmu.RUnlock()
-	out := make([]string, 0, len(b.blocked))
-	for k := range b.blocked {
-		out = append(out, k)
+	r := b.rules.Load()
+	out := make([]string, 0, len(r.apps))
+	for k, a := range r.apps {
+		if a.Mode == modeBlock {
+			out = append(out, k)
+		}
 	}
 	slices.Sort(out)
 	return out
@@ -167,14 +204,65 @@ func (b *bridge) blockedList() string {
 	return strings.Join(b.blockedApps(), ", ")
 }
 
-func (b *bridge) isBlocked(path string) bool {
-	if path == "" {
-		return false
+// decide applies the rules to a flow from the program at path.
+func (b *bridge) decide(protocol int32, path string, dst netip.AddrPort, domains []string) decision {
+	if b.isBypass(path) {
+		return decision{noProxy: true, why: "usque"}
 	}
-	p := strings.ToLower(path)
-	b.blockmu.RLock()
-	defer b.blockmu.RUnlock()
-	return b.blocked[p] || b.blocked[filepath.Base(p)]
+	r := b.rules.Load()
+	return r.decide(protocol, path, r.knownApp(path), dst, domains, time.Now())
+}
+
+// enforce closes the open connections the current rules block, as the
+// Android app does when a rule changes.
+func (b *bridge) enforce() {
+	var cids []string
+	for cid, c := range b.conns.all() {
+		if d := b.decide(c.proto, b.apps.path(c.uid), c.dst, c.domains); d.block {
+			cids = append(cids, cid)
+		}
+	}
+	b.closeConns(cids)
+}
+
+// closeApp closes the open connections of app (exe name or path), or all
+// of them if app is "".
+func (b *bridge) closeApp(app string) int {
+	app = strings.ToLower(strings.TrimSpace(app))
+	var cids []string
+	for cid, c := range b.conns.all() {
+		full, exe := appKeys(b.apps.path(c.uid))
+		if app == "" || app == full || app == exe {
+			cids = append(cids, cid)
+		}
+	}
+	b.closeConns(cids)
+	return len(cids)
+}
+
+func (b *bridge) closeConns(cids []string) {
+	if len(cids) == 0 {
+		return
+	}
+	if f, ok := b.closer.Load().(func(string) string); ok && f != nil {
+		closed := f(strings.Join(cids, ","))
+		b.logf("closed %d connections: %s", len(cids), closed)
+	}
+}
+
+// splitDomains turns firestack's domain csvs into a lowercased list,
+// preferring the domains looked up by this app over probable ones.
+func splitDomains(domains, probable string) (out []string) {
+	csv := domains
+	if strings.TrimSpace(csv) == "" {
+		csv = probable
+	}
+	for _, d := range strings.Split(csv, ",") {
+		if d = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(d), ".")); d != "" {
+			out = append(out, d)
+		}
+	}
+	return
 }
 
 func (b *bridge) logf(format string, args ...any) {
@@ -243,24 +331,33 @@ func (b *bridge) Preflow(protocol, uid int32, src, dst *x.Gostr) *intra.PreMark 
 
 func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probableDomains, blocklists *x.Gostr) *intra.Mark {
 	cid := strconv.FormatInt(b.cid.Add(1), 10)
+	path := b.apps.path(uid)
+	dap, _ := netip.ParseAddrPort(dst.V()) // zero if unparsable: IP rules then skip it
+	doms := splitDomains(domains.V(), probableDomains.V())
+	d := b.decide(protocol, path, dap, doms)
 	pid := b.exitID()
 	verdict := ""
-	if path := b.apps.path(uid); b.isBypass(path) {
-		pid = x.Base
-	} else if b.isBlocked(path) {
+	if d.block {
 		pid = x.Block
 		verdict = " BLOCKED"
+	} else if d.noProxy {
+		pid = x.Base
 	}
 	app := b.appName(uid)
-	b.logf("flow  #%s %s %s %s -> %s [%s]%s",
-		cid, proto(protocol), app, src.V(), dst.V(), domains.V(), verdict)
-	domain, _, _ := strings.Cut(domains.V(), ",")
+	b.logf("flow  #%s %s %s %s -> %s [%s]%s %s",
+		cid, proto(protocol), app, src.V(), dst.V(), strings.Join(doms, ","), verdict, d.why)
+	domain := ""
+	if len(doms) > 0 {
+		domain = doms[0]
+	}
 	b.log.flows.Add(1)
-	if verdict != "" {
+	if d.block {
 		b.log.flowsBlocked.Add(1)
+	} else {
+		b.conns.add(cid, liveConn{uid: uid, proto: protocol, dst: dap, domains: doms, app: app, at: time.Now().UnixMilli()})
 	}
 	b.log.add(event{Kind: "flow", App: app, Proto: proto(protocol), Dst: dst.V(),
-		Domain: domain, Via: exitName(pid), Blocked: verdict != ""})
+		Domain: domain, Via: exitName(pid), Blocked: d.block, Rule: d.why, CID: cid})
 	return &intra.Mark{PIDCSV: pid, CID: cid, UID: strconv.Itoa(int(uid))}
 }
 
@@ -278,6 +375,7 @@ func (b *bridge) OnSocketClosed(s *intra.SocketSummary) {
 	}
 	b.logf("close #%s %s -> %s via %s rx %d tx %d %dms %s",
 		s.ID, s.Proto, s.Target, s.PID, s.Rx, s.Tx, s.Duration, s.Msg)
+	b.conns.remove(s.ID)
 	b.log.rx.Add(s.Rx)
 	b.log.tx.Add(s.Tx)
 	app := "?"
@@ -285,7 +383,7 @@ func (b *bridge) OnSocketClosed(s *intra.SocketSummary) {
 		app = b.appName(int32(u))
 	}
 	b.log.add(event{Kind: "close", App: app, Proto: s.Proto, Dst: s.Target,
-		Via: exitName(s.PID), Rx: s.Rx, Tx: s.Tx, DurMs: s.Duration})
+		Via: exitName(s.PID), Rx: s.Rx, Tx: s.Tx, DurMs: s.Duration, CID: s.ID})
 }
 
 // DNSListener
@@ -302,7 +400,13 @@ func (b *bridge) OnQuery(uid, domain *x.Gostr, qtyp int) *x.DNSOpts {
 	if b.dnsDirect {
 		pid = x.Base
 	}
-	return &x.DNSOpts{TIDCSV: tid, PIDCSV: pid}
+	block, trust, why := b.rules.Load().dnsVerdict(domain.V(), qtyp, time.Now().UnixMilli())
+	if block {
+		b.dnsWhy.put(domain.V(), why)
+		b.log.dnsBlocked.Add(1)
+		return &x.DNSOpts{TIDCSV: x.BlockAll, PIDCSV: x.Base}
+	}
+	return &x.DNSOpts{TIDCSV: tid, PIDCSV: pid, NOBLOCK: trust}
 }
 
 // OnUpstreamAnswer blocks bogus answers when the DNSSEC switch is on: a
@@ -316,6 +420,7 @@ func (b *bridge) OnUpstreamAnswer(smm *x.DNSSummary, unmodifiedipcsv *x.Gostr) *
 		return nil
 	}
 	b.log.dnsBogus.Add(1)
+	b.dnsWhy.put(smm.QName, "DNSSEC: bogus answer "+strings.Join(bad, ","))
 	b.logf("dnssec: %s answered with bogus %v via %s (AD %t); blocked", smm.QName, bad, smm.ID, smm.AD)
 	return &x.DNSOpts{TIDCSV: x.BlockAll, PIDCSV: x.Base}
 }
@@ -334,9 +439,16 @@ func (b *bridge) OnResponse(s *x.DNSSummary) {
 		b.log.dnsLastMs.Store(ms)
 		b.log.dnsTotalMs.Add(ms)
 	}
+	why := ""
+	if strings.HasSuffix(s.ID, x.BlockAll) {
+		why = b.dnsWhy.get(s.QName)
+	}
+	if why == "" && s.Blocklists != "" {
+		why = "blocklists: " + s.Blocklists
+	}
 	b.log.add(event{Kind: "dns", Domain: strings.TrimSuffix(s.QName, "."), Answer: s.RData,
-		Via: s.ID, LatencyMs: ms, Blocked: s.Status == x.Complete && isUnspecifiedAnswer(s.RData),
-		Secure: s.AD, Cached: s.Cached})
+		Via: s.ID, LatencyMs: ms, Blocked: why != "" || (s.Status == x.Complete && isUnspecifiedAnswer(s.RData)),
+		Secure: s.AD, Cached: s.Cached, Rule: why, QType: s.QType})
 }
 
 // isUnspecifiedAnswer reports answers of 0.0.0.0 / ::, which is how

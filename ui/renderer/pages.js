@@ -89,27 +89,43 @@ PAGES.configure = () =>
 
 // ---------- Apps ----------
 
+let appsFilter = 'all';
 PAGES.apps = () => {
   const list = h('div', { class: 'group' }, note('Loading…'));
   const search = field({ placeholder: 'Search apps', oninput: () => fill() });
   let apps = [];
+  const filters = h(
+    'div',
+    { class: 'seg-wrap' },
+    h('div', { class: 'seg' }, [['all', 'All'], ['allowed', 'Allowed'], ['blocked', 'Blocked'], ['rules', 'With rules']].map(([id, name]) => h('button', { class: appsFilter === id ? 'on' : '', type: 'button', text: name, onclick: () => {
+      appsFilter = id;
+      filters.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.textContent === name));
+      fill();
+    } })))
+  );
+  const keep = (a) => {
+    const r = appRuleOf(a.name);
+    if (appsFilter === 'allowed') return r.mode !== 'block';
+    if (appsFilter === 'blocked') return r.mode === 'block';
+    if (appsFilter === 'rules') return !!Object.keys(r).length || ['ips', 'domains'].some((k) => App.settings.rules[k].some((x) => x.app === a.name.toLowerCase()));
+    return true;
+  };
   const fill = () => {
     const q = search.input.value.trim().toLowerCase();
-    const blocked = new Set(App.settings.blocked);
-    const rows = apps.filter((a) => !q || a.name.toLowerCase().includes(q));
+    const rows = apps.filter((a) => (!q || a.name.toLowerCase().includes(q)) && keep(a));
     list.replaceChildren();
     if (!rows.length) {
       list.append(h('p', { class: 'empty', text: App.status ? 'No apps yet. Use the internet and they show up here.' : 'Start protection to see the apps that use the internet.' }));
       return;
     }
     for (const a of rows) {
-      const isBlocked = blocked.has(a.name.toLowerCase());
+      const isBlocked = appRuleOf(a.name).mode === 'block';
       list.append(
         h(
           'div',
-          { class: 'row' },
+          { class: 'row clickable' + (isBlocked ? ' blocked' : ''), tabindex: '0', onclick: () => App.go('app-info', { app: a.name.toLowerCase() }), onkeydown: (e) => e.key === 'Enter' && App.go('app-info', { app: a.name.toLowerCase() }) },
           avatar(a.name),
-          h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: a.name }), h('span', { class: 'row-sub', text: isBlocked ? 'Blocked' : `${a.n || 0} connections · ${fmtBytes(a.rx)} ▼ / ${fmtBytes(a.tx)} ▲` })),
+          h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: a.name }), h('span', { class: 'row-sub', text: `${appStatusText(a.name)} · ${a.n || 0} connections · ${fmtBytes(a.rx)} ▼ / ${fmtBytes(a.tx)} ▲` })),
           toggle(!isBlocked, async (allow) => {
             await App.block(a.name, !allow);
             fill();
@@ -128,11 +144,11 @@ PAGES.apps = () => {
       prev.tx += a.tx || 0;
       seen.set(k, prev);
     }
-    for (const b of App.settings.blocked) if (!seen.has(b)) seen.set(b, { name: b, n: 0, rx: 0, tx: 0 });
+    for (const b of Object.keys(App.settings.rules.apps)) if (!seen.has(b)) seen.set(b, { name: b, n: 0, rx: 0, tx: 0 });
     apps = [...seen.values()].filter((a) => a.name !== '?').sort((x, y) => y.n - x.n || x.name.localeCompare(y.name));
     fill();
   });
-  return screen('Apps', note('Switch an app off to block it from the internet. Blocking applies immediately while protection is on.'), h('div', { class: 'field-row' }, search), list);
+  return screen('Apps', note('Switch an app off to block it from the internet. Tap an app for its rules: isolate, bypass, exclude, IP and domain rules. Rules apply immediately.'), filters, h('div', { class: 'field-row' }, search), list);
 };
 
 // ---------- DNS ----------
@@ -184,8 +200,11 @@ PAGES.dns = () => {
       switchRow({ ico: 'ic_prevent_dns_proxy', title: 'Never proxy DNS', sub: 'Do not send DNS over the WireGuard, WARP, SOCKS5 or HTTP proxy; it still goes encrypted to your DNS server', value: s.dnsDirect, onchange: (v) => save({ dnsDirect: v }) }),
       switchRow({ ico: 'ic_prevent_dns_leaks', title: 'Prevent DNS leaks', sub: 'Force every DNS lookup on this PC through the app, even when another app or VPN sets its own DNS', value: s.nrpt, onchange: (v) => save({ nrpt: v }) }),
       switchRow({ ico: 'ic_use_fallback_bypass', title: 'Use fallback DNS', sub: 'When your chosen DNS fails, answer with the fallback DNS (Network → Choose fallback DNS)', value: s.dnsFallback, onchange: (v) => save({ dnsFallback: v }) }),
-      switchRow({ ico: 'ic_undelegated_domain', title: 'Use System DNS for undelegated domains', sub: 'Use System DNS for undelegated domains like .lan, .internal, etc.', value: s.undelegated, onchange: (v) => save({ undelegated: v }) })
-    )
+      switchRow({ ico: 'ic_undelegated_domain', title: 'Use System DNS for undelegated domains', sub: 'Use System DNS for undelegated domains like .lan, .internal, etc.', value: s.undelegated, onchange: (v) => save({ undelegated: v }) }),
+      row({ ico: 'ic_filter', title: 'Allowed DNS record types', sub: 'Select which DNS resource record types to allow. Now: ' + recordTypesSummary(), right: chevron(), onclick: chooseRecordTypes })
+    ),
+    sectionLabel('Rules'),
+    card(row({ ico: 'dns_home_screen', title: 'Domain rules', sub: countRules('domains', '') + ' for all apps. Blocked domains get no DNS answer.', right: chevron(), onclick: () => ((rulesTab = 'domains'), App.go('custom-rules', {})) }))
   );
 };
 
@@ -270,33 +289,6 @@ async function removeCustomDns(type, e) {
   all[type] = (all[type] || []).filter((c) => c.url !== e.url);
   await save({ customDns: all }, true);
 }
-
-// ---------- Firewall ----------
-
-PAGES.firewall = () => {
-  const s = App.settings;
-  const chips = h('div', { class: 'group pad' });
-  if (!s.blocked.length) chips.append(note('No apps blocked yet. Block them in Apps or from the Logs.'));
-  for (const app of s.blocked) {
-    chips.append(row({ ico: 'firewall_home_screen', title: app, sub: 'Blocked', right: btn('Unblock', () => App.block(app, false).then(() => App.render())) }));
-  }
-  const name = field({ label: 'Block a program by name', placeholder: 'chrome.exe' });
-  return screen(
-    'Firewall',
-    sectionLabel('Universal'),
-    card(
-      switchRow({ ico: 'universal_firewall', title: 'Firewall all apps', sub: 'Send all IPv4 traffic through the firewall, not only DNS. Needed to block apps.', value: s.full, onchange: (v) => save({ full: v }) }),
-      row({ ico: 'ic_app_info_accent', title: 'Apps', sub: 'Allow or block each app', right: chevron(), onclick: () => App.go('apps') })
-    ),
-    sectionLabel('Blocked apps'),
-    chips,
-    h('div', { class: 'group pad' }, h('div', { class: 'field-row' }, name, btn('Block', () => {
-      const v = name.input.value.trim();
-      if (v) App.block(v, true).then(() => App.render());
-    }))),
-    note('Rules by website and IP address are coming in a later version.')
-  );
-};
 
 // ---------- Proxy (WARP, WireGuard, SOCKS5, HTTP) ----------
 
@@ -700,9 +692,50 @@ PAGES.network = () => {
     card(
       row({ ico: 'ic_fallback', title: 'Choose fallback DNS', sub: `In rare cases when your chosen DNS can't be reached, fallback DNS is used. Now: ${s.fallbackName}`, right: chevron(), onclick: chooseFallback }),
       row({ ico: 'ic_ip_network', title: 'Choose IP version', sub: 'IPv4 (IPv6 support comes later; IPv6 is blocked while the kill switch is on)', right: chevron(), onclick: () => toast('IPv4 only for now') })
+    ),
+    sectionLabel('Anti-censorship'),
+    card(
+      row({ ico: 'ic_firewall_shield', title: 'Dial strategy', sub: 'How connections leave this PC. Splitting the first packet or the TLS ClientHello (which carries the site name) gets past many DPI firewalls that block sites by name. Off on Android.', right: selectBox(DIAL_STRATEGIES, s.dialStrategy, (v) => save({ dialStrategy: v }), 'Dial strategy') }),
+      row({ ico: 'ic_refresh_white', title: 'Retry', sub: 'When a connection fails: retry it as-is, or retry with a split.', right: selectBox(DIAL_RETRIES, s.dialRetry, (v) => save({ dialRetry: v }), 'Retry') })
+    ),
+    note('Also against censorship: WARP over MASQUE with a custom SNI (Proxy → WARP Tunnel), and the WARP chain.'),
+    sectionLabel('TCP'),
+    card(
+      switchRow({ ico: 'ic_tcp_keep_alive', title: 'Shorter TCP keep alive', sub: 'Quickly close TCP sockets with no recent activity.', value: s.tcpKeepAlive, onchange: (v) => save({ tcpKeepAlive: v }) }),
+      switchRow({ ico: 'ic_endpoint_independent', title: 'Endpoint-Independent mapping', sub: 'UDP sockets keep a fixed address and port for all destinations. Helps games, calls and peer-to-peer apps.', value: s.eim, onchange: (v) => save({ eim: v }) }),
+      row({ ico: 'ic_idle_timeout', title: 'Idle timeout', sub: 'Close idle TCP and UDP sockets after this duration.', right: selectBox(IDLE_TIMEOUTS, String(s.dialTimeout || 0), (v) => save({ dialTimeout: Number(v) }), 'Idle timeout') })
     )
   );
 };
+
+const DIAL_STRATEGIES = [
+  ['never', 'Off (as-is)'],
+  ['auto', 'Auto'],
+  ['split-tcp', 'Split TCP'],
+  ['split-tls', 'Split TLS ClientHello'],
+];
+
+const DIAL_RETRIES = [
+  ['', 'Auto'],
+  ['never', 'Never'],
+  ['plain', 'Retry as-is'],
+  ['split', 'Retry with split'],
+];
+
+const IDLE_TIMEOUTS = [
+  ['0', 'Default'],
+  ['60', '1 minute'],
+  ['300', '5 minutes'],
+  ['900', '15 minutes'],
+  ['3600', '1 hour'],
+];
+
+function selectBox(options, value, onchange, label) {
+  const sel = h('select', { class: 'fld-input', 'aria-label': label, onclick: (e) => e.stopPropagation() }, options.map(([v, n]) => h('option', { value: v, text: n })));
+  sel.value = value || options[0][0];
+  sel.addEventListener('change', () => onchange(sel.value));
+  return sel;
+}
 
 async function chooseFallback() {
   const opts = DNS_LISTS.doh.filter((d) => d.ips);
@@ -860,7 +893,6 @@ function siteIcon(domain) {
 
 function fillLog(list, q) {
   q = (q || '').trim().toLowerCase();
-  const blocked = new Set(App.settings.blocked);
   const rows = App.events
     .filter((e) => e.kind === logFilter)
     .filter((e) => !q || (e.app || '').toLowerCase().includes(q) || (e.domain || '').toLowerCase().includes(q) || (e.dst || '').includes(q))
@@ -871,31 +903,34 @@ function fillLog(list, q) {
     list.append(h('p', { class: 'empty', text: App.status ? 'Nothing yet. Use the internet and connections show up here.' : 'Start protection to see connections.' }));
     return;
   }
+  const open = (f) => ({ class: 'row clickable', tabindex: '0', onclick: f, onkeydown: (ev) => ev.key === 'Enter' && f() });
   for (const e of rows) {
     if (e.kind === 'flow') {
-      const isBlocked = blocked.has((e.app || '').toLowerCase());
+      const o = open(() => connDetails(e));
+      o.class += e.blocked ? ' blocked' : '';
       list.append(
         h(
           'div',
-          { class: 'row' + (e.blocked ? ' blocked' : '') },
+          o,
           avatar(e.app),
           h(
             'span',
             { class: 'row-text' },
             h('span', { class: 'row-title', text: (e.domain || e.dst) + (e.blocked ? '  · blocked' : '') }),
-            h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.app || '?'} · ${e.proto} ${e.dst}${e.via && e.via !== 'direct' && e.via !== 'blocked' ? ' · via ' + e.via : ''}` })
-          ),
-          e.app && e.app !== '?' ? btn(isBlocked ? 'Unblock' : 'Block', () => App.block(e.app, !isBlocked).then(() => fillLog(list, q))) : null
+            h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.app || '?'} · ${e.proto} ${e.dst}${e.via && e.via !== 'direct' && e.via !== 'blocked' ? ' · via ' + e.via : ''}${e.blocked && e.rule ? ' · ' + e.rule : ''}` })
+          )
         )
       );
     } else {
-      const marks = [e.secure ? 'DNSSEC ✓' : '', e.cached ? 'cached' : '', e.via === 'BlockAll' ? 'blocked: bogus answer' : e.blocked ? 'blocked' : ''].filter(Boolean).join(' · ');
+      const marks = [e.secure ? 'DNSSEC ✓' : '', e.cached ? 'cached' : '', e.blocked ? 'blocked' + (e.rule ? ': ' + e.rule : '') : ''].filter(Boolean).join(' · ');
+      const o = open(() => dnsDetails(e));
+      o.class += e.blocked ? ' blocked' : '';
       list.append(
         h(
           'div',
-          { class: 'row' + (e.blocked ? ' blocked' : '') },
+          o,
           siteIcon(e.domain),
-          h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: e.domain || '' }), h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.answer || 'no answer'} · ${e.latencyMs} ms${marks ? ' · ' + marks : ''}` }))
+          h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: e.domain || '' }), h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.qtype ? rrName(e.qtype) + ' · ' : ''}${e.answer || 'no answer'} · ${e.latencyMs} ms${marks ? ' · ' + marks : ''}` }))
         )
       );
     }

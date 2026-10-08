@@ -188,11 +188,17 @@ button { cursor: pointer; }
   letter-spacing: 0.2em;
   text-transform: uppercase;
 }
-.start-btn:disabled { opacity: 0.6; cursor: progress; }
+.start-btn { padding: 0; overflow: hidden; }
+.start-btn button { border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
+.start-btn button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.07); }
+.start-main { flex: 1; align-self: stretch; padding: 18px 10px; }
+.start-side { display: inline-flex; align-items: center; justify-content: center; padding: 18px 25px; }
+.start-btn.busy { opacity: 0.6; cursor: progress; }
+.start-btn.busy button { cursor: progress; }
 .start-btn.running { background: #1B2A33; box-shadow: inset 0 0 0 2px var(--good); }
 .start-ico { display: inline-flex; width: 24px; height: 24px; }
 .start-ico svg { width: 24px; height: 24px; }
-.start-btn:not(.running) .start-ico { visibility: hidden; }
+.start-btn:not(.running) #pause-btn { visibility: hidden; }
 
 .protection {
   margin: 15px 0 0;

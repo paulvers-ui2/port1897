@@ -40,6 +40,7 @@ import (
 	"github.com/celzero/firestack/intra"
 	x "github.com/celzero/firestack/intra/backend"
 	"github.com/celzero/firestack/intra/netstack"
+	"github.com/celzero/firestack/intra/settings"
 	"github.com/celzero/firestack/win/dnspolicy"
 	"github.com/celzero/firestack/win/ifbind"
 	"github.com/celzero/firestack/win/wfp"
@@ -92,6 +93,13 @@ type options struct {
 	fallbackIPs string
 	usqueFlags  string
 	allowLAN    bool
+
+	rulesFile    string
+	dialStrategy string // anti-censorship: never, auto, split-tcp, split-tls
+	dialRetry    string // never, split (retry with split), plain (retry as-is)
+	dialTimeout  int    // seconds; 0 for the default
+	keepAlive    bool   // shorter TCP keep alive
+	eim          bool   // UDP endpoint-independent mapping and filtering
 }
 
 func main() {
@@ -132,6 +140,12 @@ func main() {
 	flag.StringVar(&o.fallbackIPs, "fallback-ips", "", "comma-separated IPs of -fallback-doh (default: -doh-ips)")
 	flag.StringVar(&o.usqueFlags, "usque-flags", "", "extra usque flags for -masque or -chain, space-separated; core flags (-b -p -u -w -c --wg --exit-config) are refused")
 	flag.BoolVar(&o.allowLAN, "allow-lan", false, "with -killswitch, let private and link-local addresses (printers, shares) through")
+	flag.StringVar(&o.rulesFile, "rules", "", "firewall rules (JSON, as the app writes them) to start with; the app updates them through -api")
+	flag.StringVar(&o.dialStrategy, "dial-strategy", dialNever, "anti-censorship: never (connect as-is), auto, split-tcp (split the first TCP segment) or split-tls (fragment the TLS ClientHello)")
+	flag.StringVar(&o.dialRetry, "dial-retry", "", "when a connection fails: never, split (retry with the split) or plain (retry as-is); default: never for -dial-strategy never, else plain")
+	flag.IntVar(&o.dialTimeout, "dial-timeout", 0, "idle timeout for TCP and UDP sockets, in seconds; 0 for firestack's default")
+	flag.BoolVar(&o.keepAlive, "tcp-keepalive", false, "shorter TCP keep alive: quickly close TCP sockets with no recent activity")
+	flag.BoolVar(&o.eim, "eim", false, "endpoint-independent mapping and filtering for UDP (fixed port for all destinations; helps games and calls)")
 	showVersion := flag.Bool("version", false, "print the build and exit")
 	flag.Parse()
 	if *showVersion {
@@ -220,7 +234,18 @@ func run(o options) error {
 	intra.UndelegatedDomains(o.undelegated)
 	intra.DefaultDNSAsFallback(o.dnsFallback)
 
-	b := newBridge(binder, o.block)
+	var initial *rules
+	if o.rulesFile != "" {
+		r, err := loadRulesFile(o.rulesFile)
+		if r == nil {
+			return fmt.Errorf("-rules: %w", err)
+		}
+		if err != nil {
+			fmt.Println("fswin: -rules: skipped:", err)
+		}
+		initial = r
+	}
+	b := newBridge(binder, initial, o.block)
 	b.dnsDirect = o.dnsDirect
 	b.dnsCache = o.dnsCache
 	b.dnssec = o.dnssec
@@ -233,6 +258,11 @@ func run(o options) error {
 		return fmt.Errorf("connect: %w", err)
 	}
 	defer t.Disconnect()
+	b.closer.Store(func(csv string) string { return t.CloseConns(csv) })
+	if err := setDialer(o); err != nil {
+		return err
+	}
+	intra.Transparency(o.eim, o.eim)
 
 	tid, dnsLabel, err := setupDNS(t, o, binder)
 	if err != nil {
@@ -369,6 +399,47 @@ func netsh(cmds [][]string) error {
 			return fmt.Errorf("netsh %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		}
 	}
+	return nil
+}
+
+// Dial strategies for -dial-strategy. Desync is left out: Windows falls
+// back to a plain dial for it (intra/dialers/desync_windows.go).
+const (
+	dialNever    = "never"
+	dialAuto     = "auto"
+	dialSplitTCP = "split-tcp"
+	dialSplitTLS = "split-tls"
+)
+
+// setDialer applies the anti-censorship options. The Android app fixes
+// them to never split and never retry; here they are a choice.
+func setDialer(o options) error {
+	strat := map[string]int32{
+		dialNever:    settings.SplitNever,
+		dialAuto:     settings.SplitAuto,
+		dialSplitTCP: settings.SplitTCP,
+		dialSplitTLS: settings.SplitTCPOrTLS,
+	}
+	s, ok := strat[o.dialStrategy]
+	if !ok {
+		return fmt.Errorf("-dial-strategy must be never, auto, split-tcp or split-tls, not %q", o.dialStrategy)
+	}
+	retry := o.dialRetry
+	if retry == "" {
+		retry = "plain"
+		if s == settings.SplitNever {
+			retry = "never"
+		}
+	}
+	r, ok := map[string]int32{
+		"never": settings.RetryNever,
+		"split": settings.RetryWithSplit,
+		"plain": settings.RetryAfterSplit,
+	}[retry]
+	if !ok {
+		return fmt.Errorf("-dial-retry must be never, split or plain, not %q", o.dialRetry)
+	}
+	settings.SetDialerOpts(s, r, int32(o.dialTimeout), o.keepAlive)
 	return nil
 }
 

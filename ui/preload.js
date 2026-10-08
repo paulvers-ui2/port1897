@@ -22,7 +22,12 @@ contextBridge.exposeInMainWorld('port', {
   status: call('engine:status'),
   events: call('engine:events'),
   stats: call('engine:stats'),
+  appStats: call('engine:appStats'),
   block: call('engine:block'),
+  setRules: call('rules:set'),
+  pause: call('engine:pause'),
+  conns: call('conns:list'),
+  closeConns: call('conns:close'),
   usque: {
     status: call('usque:status'),
     register: call('usque:register'),

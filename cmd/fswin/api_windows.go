@@ -39,6 +39,8 @@ type apiStatus struct {
 	NRPT      bool     `json:"nrpt"`
 	AllowLAN  bool     `json:"allowLan"`
 	Kill      bool     `json:"killSwitch"`
+	Paused    int64    `json:"pausedUntil"` // unix millis; 0 when not paused
+	Dial      string   `json:"dial"`        // anti-censorship dial strategy
 }
 
 type dnsStat struct {
@@ -47,6 +49,7 @@ type dnsStat struct {
 	Queries int64  `json:"queries"`
 	Failed  int64  `json:"failed"`
 	Bogus   int64  `json:"bogus"`
+	Blocked int64  `json:"blocked"` // by domain rules or query type
 	DNSSEC  bool   `json:"dnssec"`
 	Cache   bool   `json:"cache"`
 	LastMs  int64  `json:"lastMs"`
@@ -101,6 +104,9 @@ func serveAPI(addr, tokenFile string, b *bridge, info func() apiStatus, stop fun
 	mux.HandleFunc("GET /api/events", a.events)
 	mux.HandleFunc("GET /api/stats", a.stats)
 	mux.HandleFunc("POST /api/block", a.block)
+	mux.HandleFunc("POST /api/rules", a.setRules)
+	mux.HandleFunc("GET /api/conns", a.conns)
+	mux.HandleFunc("POST /api/close", a.closeConns)
 	mux.HandleFunc("POST /api/stop", a.shutdown)
 
 	srv := &http.Server{
@@ -166,6 +172,38 @@ func (a *apiServer) block(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"blockedApps": a.b.blockedApps()})
 }
 
+// setRules takes the whole rule set (rules_windows.go) and applies it at
+// once; open connections that it blocks are closed.
+func (a *apiServer) setRules(w http.ResponseWriter, r *http.Request) {
+	var rs ruleSet
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&rs); err != nil {
+		http.Error(w, "bad rules: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	res := map[string]any{"ok": true}
+	if err := a.b.setRules(rs); err != nil {
+		res["warnings"] = err.Error() // rules that did not parse were skipped
+	}
+	writeJSON(w, res)
+}
+
+// conns lists open connections, of ?app=name.exe only if given.
+func (a *apiServer) conns(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, a.b.conns.list(r.URL.Query().Get("app")))
+}
+
+// closeConns takes {"app": "chrome.exe"} or {"app": ""} for all.
+func (a *apiServer) closeConns(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		App string `json:"app"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		http.Error(w, "want {\"app\": \"name.exe\"}", http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]int{"closed": a.b.closeApp(req.App)})
+}
+
 func (a *apiServer) shutdown(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]bool{"stopping": true})
 	go a.stop()
@@ -187,6 +225,7 @@ func statusOf(b *bridge, o options, started time.Time, exitID, dnsLabel string) 
 			Queries: l.dnsQueries.Load(),
 			Failed:  l.dnsFailed.Load(),
 			Bogus:   l.dnsBogus.Load(),
+			Blocked: l.dnsBlocked.Load(),
 			DNSSEC:  o.dnssec,
 			Cache:   o.dnsCache,
 			LastMs:  l.dnsLastMs.Load(),
@@ -198,6 +237,10 @@ func statusOf(b *bridge, o options, started time.Time, exitID, dnsLabel string) 
 			AppsSeen:    l.appsSeen(),
 		},
 		Traffic: trafStat{Rx: l.rx.Load(), Tx: l.tx.Load()},
+		Dial:    o.dialStrategy,
+	}
+	if r := b.rules.Load(); r.isPaused(time.Now().UnixMilli()) {
+		st.Paused = r.paused
 	}
 	if ok := st.DNS.Queries - st.DNS.Failed; ok > 0 {
 		st.DNS.AvgMs = l.dnsTotalMs.Load() / ok

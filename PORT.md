@@ -49,7 +49,8 @@ firewall rules) is Phase 2 work.
 | MASQUE WARP and the WARP chain (WARP2 -> wg0 -> WARP1) via usque as a child process, password-protected loopback SOCKS | done (flags) | `fswin -masque` / `-chain`, `cmd/fswin/usque_windows.go` |
 | Kill switch with the Windows Filtering Platform, persistent across crashes | done (flag) | `win/wfp`, `fswin -killswitch` / `-cleanup` |
 | App window (Electron) with tray icon, styled after the Android home screen | done | `ui/` |
-| Rules engine ported from the Android app, stored in SQLite | later | |
+| Rules engine ported from the Android app: app modes (block, isolate, bypass DNS & firewall, bypass universal, exclude, allow for 15 min), per-app and global IP / domain rules, universal rules, DNS record types, pause; rules apply live through the API and close blocked connections | done | `cmd/fswin/rules_windows.go`, `ui/renderer/firewall.js` |
+| Anti-censorship dial strategy (split TCP / TLS ClientHello); desync is not implemented on Windows | done (flags) | `fswin -dial-strategy` |
 | Windows service + named-pipe API for the UI | later | |
 
 Notes:

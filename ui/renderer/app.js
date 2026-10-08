@@ -63,7 +63,14 @@ const App = {
     this.render();
   },
   async block(app, block) {
-    this.settings.blocked = await this.port.block(app, block);
+    this.settings = await this.port.block(app, block);
+    renderHome();
+  },
+  // Firewall rules apply at once; no restart needed.
+  async setRules(patch) {
+    const r = await this.port.setRules(patch);
+    this.settings = r.settings;
+    if (r.warnings) toast('Some rules were skipped: ' + r.warnings);
     renderHome();
   },
   applyTheme() {
@@ -139,19 +146,24 @@ function renderHome() {
   }
 
   setText('apps-seen', on ? String(s.firewall.appsSeen) : '0');
-  setText('apps-blocked', String(on ? s.firewall.blockedApps.length : (cfg.blocked || []).length));
+  setText('apps-blocked', String(on ? s.firewall.blockedApps.length : cfg.rules ? blockedNames().length : 0));
   setText('apps-flows', on ? String(s.firewall.flows) : '0');
   setText('apps-blocked-flows', on ? String(s.firewall.blocked) : '0');
   setText('apps-traffic', on ? fmtBytes(s.traffic.rx + s.traffic.tx) : '0 B');
 
   const btnEl = $('start-btn');
   btnEl.classList.toggle('running', on);
-  btnEl.disabled = App.busy;
+  btnEl.classList.toggle('busy', App.busy);
+  $('start-main').disabled = App.busy;
   setText('start-label', App.busy ? (on ? 'STOPPING…' : 'STARTING…') : on ? 'STOP' : 'START');
+  const paused = on && cfg.pausedUntil > Date.now();
+  $('pause-btn').title = paused ? 'Paused: open' : 'Pause';
 
   const prot = $('protection');
-  prot.classList.toggle('on', on);
-  if (on) {
+  prot.classList.toggle('on', on && !paused);
+  if (paused) {
+    prot.textContent = `Paused · ${fmtLeft(cfg.pausedUntil - Date.now())} left`;
+  } else if (on) {
     const parts = ['encrypted DNS'];
     if (s.mode === 'full') parts.push('firewall');
     if (s.exit) parts.push(s.exit);
@@ -210,7 +222,9 @@ async function main() {
   });
   document.querySelectorAll('[data-nav]').forEach((b) => b.addEventListener('click', () => App.root(b.dataset.nav)));
   document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', () => App.go(b.dataset.go)));
-  $('start-btn').addEventListener('click', () => toggleEngine());
+  $('start-main').addEventListener('click', () => toggleEngine());
+  $('pause-btn').addEventListener('click', () => pauseProtection());
+  $('mode-btn').addEventListener('click', () => chooseMode());
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !document.querySelector('.modal-back')) App.back();
   });
@@ -234,7 +248,11 @@ function demoPort() {
     fallbackDoh: 'https://cloudflare-dns.com/dns-query', fallbackIps: '1.1.1.1,1.0.0.1', fallbackName: 'Cloudflare',
     exit: 'masque', wgActive: '', socks: { host: '127.0.0.1', port: 1080, user: '', pass: '' }, http: { host: '', port: 8080, user: '', pass: '' },
     warpSni: '', exitSni: '', masqueFlags: '', warp1Flags: '', wgFlags: '', warp2Flags: '', warpAutoDisable: false,
-    full: true, killSwitch: false, allowLan: true, blocked: ['notepad.exe'],
+    mode: 'both', full: true, killSwitch: false, allowLan: true,
+    rules: { apps: { 'notepad.exe': { mode: 'block' } }, ips: [], domains: [{ domain: 'ads.example.com', action: 'block' }] },
+    universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false },
+    dnsTypesAuto: true, dnsTypes: [1, 28, 5, 65, 64, 45], knownApps: [], pausedUntil: 0,
+    dialStrategy: 'never', dialRetry: '', dialTimeout: 0, tcpKeepAlive: false, eim: false,
     history: true, logLevel: 3, notify: true, statusAlerts: true, theme: 'darkplus', autostart: false,
   };
   let running = false;
@@ -246,6 +264,7 @@ function demoPort() {
   const doms = ['example.com', 'github.com', 'discord.gg', 'spotify.com', 'windowsupdate.com', 'cloudflare.com'];
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
   const reg = { warp1: { registered: true }, warp2: { registered: false }, wg0: { present: false, text: '' } };
+  const isBlocked = (app) => (s.rules.apps[app] || {}).mode === 'block';
   return {
     getSettings: async () => ({ ...s }),
     setSettings: async (p) => (s = { ...s, ...p }),
@@ -260,7 +279,7 @@ function demoPort() {
         version: 'demo', startedAt: Date.now(), mode: s.full ? 'full' : 'dns', nrpt: s.nrpt, killSwitch: s.killSwitch,
         exit: s.exit === 'none' ? '' : EXIT_LABEL[s.exit],
         dns: { server: s.doh, type: s.dnsType, queries, failed: 0, lastMs: 18, avgMs: 21 },
-        firewall: { flows, blocked: Math.floor(flows / 9), blockedApps: s.blocked, appsSeen: 6 },
+        firewall: { flows, blocked: Math.floor(flows / 9), blockedApps: apps.filter(isBlocked), appsSeen: 6 },
         traffic: { rx: flows * 48000, tx: flows * 9000 },
       };
     },
@@ -270,8 +289,8 @@ function demoPort() {
       for (let i = 0; i < 3; i++) {
         const app = pick(apps);
         const dom = pick(doms);
-        out.push({ id: ++id, at: Date.now(), kind: 'dns', domain: dom, answer: '104.16.0.1', latencyMs: 20, secure: dom.endsWith('.com') });
-        out.push({ id: ++id, at: Date.now(), kind: 'flow', app, proto: 'tcp', dst: '104.16.0.1:443', domain: dom, via: 'Cloudflare WARP', blocked: s.blocked.includes(app) });
+        out.push({ id: ++id, at: Date.now(), kind: 'dns', domain: dom, answer: '104.16.0.1', latencyMs: 20, secure: dom.endsWith('.com'), qtype: 1 });
+        out.push({ id: ++id, at: Date.now(), kind: 'flow', app, proto: 'tcp', dst: '104.16.0.1:443', domain: dom, via: 'Cloudflare WARP', blocked: isBlocked(app), rule: isBlocked(app) ? 'app blocked' : '', cid: String(id) });
       }
       return out;
     },
@@ -282,10 +301,18 @@ function demoPort() {
       domains: doms.map((d, i) => ({ name: d, n: 40 - i * 6, blocked: 0 })),
       blockedDomains: [{ name: 'ads.example.com', n: 9, blocked: 9 }],
     }),
+    appStats: async () => ({ domains: doms.map((d, i) => ({ name: d, n: 30 - i * 4, blocked: 0 })), ips: [{ name: '104.16.0.1', n: 22, blocked: 0 }] }),
     block: async (app, b) => {
-      s.blocked = b ? [...new Set([...s.blocked, app.toLowerCase()])] : s.blocked.filter((x) => x !== app.toLowerCase());
-      return s.blocked;
+      const a = { ...s.rules.apps[app.toLowerCase()] };
+      if (b) a.mode = 'block';
+      else if (a.mode === 'block') delete a.mode;
+      s.rules = { ...s.rules, apps: { ...s.rules.apps, [app.toLowerCase()]: a } };
+      return { ...s };
     },
+    setRules: async (p) => ((s = { ...s, ...p }), { settings: { ...s }, warnings: '' }),
+    pause: async (m) => ((s = { ...s, pausedUntil: m ? Date.now() + m * 60000 : 0 }), { ...s }),
+    conns: async () => (running ? [{ cid: '1', app: 'chrome.exe', proto: 'tcp', dst: '104.16.0.1:443', domain: 'github.com', since: Date.now() - 5000 }] : []),
+    closeConns: async () => ({ closed: running ? 1 : 0 }),
     usque: {
       status: async () => reg,
       register: async (w) => ((reg[w].registered = true), { ok: true }),
