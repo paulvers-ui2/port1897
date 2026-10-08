@@ -43,6 +43,10 @@ const (
 	modeExclude         = "exclude"         // not firewalled, never proxied
 )
 
+// ruleOutgoingAllowed is the reason given for flows "Allow outgoing only"
+// let through; the app window whitelists their programs when it sees it.
+const ruleOutgoingAllowed = "universal: outgoing allowed"
+
 // Rule actions.
 const (
 	actBlock = "block"
@@ -78,6 +82,10 @@ type universalRules struct {
 	NewApps   bool `json:"newApps"`   // block programs not seen before
 	Locked    bool `json:"locked"`    // block everything while Windows is locked
 	Lockdown  bool `json:"lockdown"`  // block all but bypassed apps and trusted IPs
+	// OutgoingOnly allows every outgoing connection the rules above it do
+	// not block, and blocks incoming ones; the app window then sets each
+	// program it allowed to Bypass Universal, so it stays allowed.
+	OutgoingOnly bool `json:"outgoingOnly"`
 }
 
 // ruleSet is the JSON the app sends.
@@ -267,6 +275,12 @@ func (r *rules) isPaused(now int64) bool {
 	return r.paused > now
 }
 
+// blocksIncoming reports whether connections coming in through the tunnel
+// are refused: "Allow outgoing only", unless protection is paused.
+func (r *rules) blocksIncoming(now int64) bool {
+	return r.u.OutgoingOnly && !r.isPaused(now)
+}
+
 func ruleApplies(ruleApp, full, exe string) bool {
 	return ruleApp == full || ruleApp == exe
 }
@@ -421,6 +435,9 @@ func (r *rules) decide(protocol int32, path string, known bool, dst netip.AddrPo
 		return blocked("universal: lockdown")
 	case u.Locked && r.locked:
 		return blocked("universal: PC locked")
+	case u.OutgoingOnly:
+		// every program may connect out; the rules below would only block it
+		return allow(ruleOutgoingAllowed)
 	case u.Unknown && path == "":
 		return blocked("universal: unknown app")
 	case u.NewApps && path != "" && a.Mode == modeNone && !known:

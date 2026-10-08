@@ -19,6 +19,7 @@ const crypto = require('node:crypto');
 const http = require('node:http');
 const { execFile } = require('node:child_process');
 const nodeNet = require('node:net');
+const os = require('node:os');
 const dnsPromises = require('node:dns').promises;
 
 const API_HOST = '127.0.0.1';
@@ -78,7 +79,7 @@ const DEFAULTS = {
   allowLan: true,
   // Firewall rules (Android: App info, Universal firewall, IP & domain rules)
   rules: { apps: {}, ips: [], domains: [] },
-  universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false },
+  universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false, outgoingOnly: false },
   dnsTypesAuto: true,
   dnsTypes: [1, 28, 5, 65, 64, 45], // A, AAAA, CNAME, HTTPS, SVCB, IPSECKEY: Android's defaults
   knownApps: [],
@@ -121,6 +122,39 @@ const wgDir = () => path.join(dataDir(), 'wireguard');
 const histDir = () => path.join(dataDir(), 'history');
 const rulesFile = () => path.join(dataDir(), 'rules.json');
 const pcapFile = () => path.join(dataDir(), 'capture.pcap');
+const appLogFile = () => path.join(dataDir(), 'app.log');
+const prevAppLogFile = () => path.join(dataDir(), 'app.prev.log');
+
+// appLog is the app window's own log, for the debug zip: engine starts and
+// stops, notices, errors and window crashes. Past 1 MB it starts over and
+// keeps the previous one.
+function appLog(...parts) {
+  const text = parts.map((p) => (p instanceof Error ? p.stack || p.message : String(p))).join(' ');
+  try {
+    const f = appLogFile();
+    try {
+      if (fs.statSync(f).size > 1 << 20) fs.renameSync(f, prevAppLogFile());
+    } catch {}
+    fs.appendFileSync(f, `${new Date().toISOString()} ${text}\n`);
+  } catch {}
+}
+
+// logged, without changing what happens next (Electron's error dialog)
+process.on('uncaughtExceptionMonitor', (e, origin) => appLog(`${origin}:`, e));
+
+// every failing IPC handler is logged, then fails in the window as before
+{
+  const handle = ipcMain.handle.bind(ipcMain);
+  ipcMain.handle = (channel, fn) =>
+    handle(channel, async (...args) => {
+      try {
+        return await fn(...args);
+      } catch (e) {
+        appLog(`ipc ${channel} failed:`, e);
+        throw e;
+      }
+    });
+}
 
 function enginePath() {
   if (app.isPackaged) return path.join(process.resourcesPath, 'engine', 'fswin.exe');
@@ -277,6 +311,7 @@ function learnApps(evs) {
   let s = null;
   let known = null;
   const fresh = [];
+  const allowed = new Set(); // let through by "Allow outgoing only"
   for (const e of evs) {
     if (e.kind !== 'flow' || !e.app || e.app === '?' || /^pid\d+$/.test(e.app)) continue;
     if (!s) {
@@ -284,21 +319,26 @@ function learnApps(evs) {
       known = new Set(s.knownApps);
     }
     const name = e.app.toLowerCase();
+    if (e.rule === OUTGOING_ALLOWED && !s.rules.apps[name]) allowed.add(name);
     if (known.has(name)) continue;
     known.add(name);
     fresh.push({ name, blocked: e.rule === 'universal: new app' });
   }
-  if (!fresh.length) return;
+  if (!fresh.length && !allowed.size) return;
   s.knownApps = [...known].sort();
   const blocked = fresh.filter((f) => f.blocked && !s.rules.apps[f.name]);
   for (const f of blocked) s.rules.apps[f.name] = { mode: 'block' };
+  // whitelisted: the app keeps working whatever the universal rules say
+  for (const name of allowed) s.rules.apps[name] = { mode: 'bypassUniversal' };
   writeSettings(s);
   writeRules(s);
-  if (blocked.length) {
-    pushRules(s);
-    if (s.notify) notify(`New app blocked: ${blocked.map((f) => f.name).join(', ')}. Allow it in Apps.`);
-  }
+  if (allowed.size) appLog('allowed (outgoing only):', [...allowed].join(', '));
+  if (blocked.length || allowed.size) pushRules(s);
+  if (blocked.length && s.notify) notify(`New app blocked: ${blocked.map((f) => f.name).join(', ')}. Allow it in Apps.`);
 }
+
+// the reason fswin gives for flows "Allow outgoing only" let through
+const OUTGOING_ALLOWED = 'universal: outgoing allowed';
 
 
 // ---------- RethinkDNS blocklists (Android: "Configure 195+ blocklists") ----------
@@ -638,6 +678,13 @@ function lastLogLines(n) {
 let expectedStop = false;
 
 async function startEngine() {
+  const s = readSettings();
+  const r = await startEngineOnce();
+  appLog(r.ok ? 'engine running' : `engine did not start: ${r.error}`, `(mode ${s.mode}, DNS ${s.dnsType}, exit ${s.exit}, kill switch ${s.killSwitch ? 'on' : 'off'})`, r.log ? '\n' + r.log : '');
+  return r;
+}
+
+async function startEngineOnce() {
   if (await engineStatus()) return { ok: true };
   const exe = enginePath();
   if (!fs.existsSync(exe)) return { ok: false, error: `Engine not found at ${exe}` };
@@ -675,6 +722,12 @@ async function startEngine() {
 }
 
 async function stopEngine(byUser = true) {
+  const r = await stopEngineOnce(byUser);
+  appLog(r.ok ? 'engine stopped' : `engine did not stop: ${r.error}`, byUser ? '(by the user)' : '');
+  return r;
+}
+
+async function stopEngineOnce(byUser) {
   expectedStop = true;
   try {
     await api('POST', '/api/stop');
@@ -1064,6 +1117,7 @@ async function pingTest(q) {
 // ---------- notifications and the status loop ----------
 
 function notify(body) {
+  appLog('notice:', body);
   if (Notification.isSupported()) new Notification({ title: 'port1897', body, icon: path.join(__dirname, 'build', 'icon.png') }).show();
 }
 
@@ -1138,6 +1192,13 @@ function createWindow(show = true) {
   // nothing in the window may navigate away or open new windows
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
+  // the window's warnings, errors and crashes go to the app log
+  win.webContents.on('console-message', (e, lvl, msg, line, src) => {
+    const level = e.level || ['debug', 'info', 'warning', 'error'][lvl];
+    if (level === 'warning' || level === 'error') appLog(`window ${level}:`, e.message || msg, `(${e.sourceId || src}:${e.lineNumber || line})`);
+  });
+  win.webContents.on('render-process-gone', (_e, d) => appLog('window crashed:', d.reason, 'exit code', d.exitCode));
+  win.webContents.on('unresponsive', () => appLog('window not responding'));
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   // the close button hides to the tray; Quit (tray menu) turns protection off
   win.on('close', (e) => {
@@ -1274,6 +1335,31 @@ ipcMain.handle('engine:cleanup', async () => {
   }
 });
 ipcMain.handle('engine:status', () => engineStatus());
+// The kill switch button: applied at once while protection runs with all
+// traffic in the tunnel; in DNS-only mode protection restarts with it, as
+// the kill switch needs the whole tunnel.
+ipcMain.handle('engine:killSwitch', async (_e, on) => {
+  on = !!on;
+  const s = { ...readSettings(), killSwitch: on };
+  writeSettings(s);
+  appLog(`kill switch ${on ? 'on' : 'off'} (button)`);
+  const st = await engineStatus();
+  if (!st) return { ok: true, applied: 'next start' };
+  if (st.mode === 'full') {
+    try {
+      await api('POST', '/api/killswitch', { on, allowLan: s.allowLan });
+      return { ok: true, applied: 'now' };
+    } catch (e) {
+      appLog('kill switch failed:', e);
+      return { ok: false, error: e.message };
+    }
+  }
+  if (!on) return { ok: true, applied: 'now' }; // DNS only: it was never on
+  const stop = await stopEngine(false);
+  if (!stop.ok) return stop;
+  const r = await startEngine();
+  return r.ok ? { ok: true, applied: 'restarted' } : r;
+});
 ipcMain.handle('engine:events', (_e, after) => {
   const a = Number(after) || 0;
   return hist.buf.filter((e) => e.id > a).slice(-300);
@@ -1513,10 +1599,44 @@ async function systemReport() {
     ['NRPT policy in effect', 'Get-DnsClientNrptPolicy | Format-List | Out-String -Width 220'],
     ['VPN and tunnel programs running', "Get-Process | Where-Object { $_.Name -match 'vpn|proton|warp|wireguard|nord|mullvad|openvpn|usque|fswin|tailscale|zerotier' } | Format-Table -AutoSize Id,Name,Path | Out-String -Width 220"],
     ['Lookup of cloudflare.com by Windows', 'Resolve-DnsName cloudflare.com -Type A -QuickTimeout -ErrorAction Continue | Out-String -Width 220'],
+    ['Windows Firewall profiles', 'Get-NetFirewallProfile | Format-Table -AutoSize Name,Enabled,DefaultInboundAction,DefaultOutboundAction | Out-String -Width 220'],
+    [
+      'Crashes of port1897, the engine, usque or Wintun (Application log, 7 days)',
+      "Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error','Application Hang','Windows Error Reporting'; StartTime=(Get-Date).AddDays(-7)} -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'fswin|port1897|usque|wintun' } | Select-Object -First 20 | Format-List TimeCreated,ProviderName,Id,Message | Out-String -Width 220",
+    ],
+    [
+      'Wintun and network driver events (System log, 7 days)',
+      "Get-WinEvent -FilterHashtable @{LogName='System'; Level=1,2,3; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 2000 -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match 'wintun|Tcpip|Dnscache|NDIS|BFE' -or $_.Message -match 'wintun|port1897' } | Select-Object -First 30 | Format-List TimeCreated,ProviderName,Id,LevelDisplayName,Message | Out-String -Width 220",
+    ],
   ];
-  const out = [`port1897 ${app.getVersion()} debug report, ${new Date().toISOString()}`, ''];
+  const v = process.versions;
+  const out = [
+    `port1897 ${app.getVersion()} debug report, ${new Date().toISOString()}`,
+    `Electron ${v.electron}, Chromium ${v.chrome}, Node ${v.node}; Windows ${os.release()} ${os.arch()}; engine ${fs.existsSync(enginePath()) ? enginePath() : 'missing'}`,
+    '',
+  ];
   for (const [title, cmd] of parts) out.push(`===== ${title} =====`, (await psRun(cmd)).text.trim(), '');
   return out.join('\r\n');
+}
+
+// crashDumpList names the crash dumps Electron keeps, with sizes and dates;
+// the dumps hold memory, so they are not copied.
+function crashDumpList() {
+  const dir = app.getPath('crashDumps');
+  const walk = (d) =>
+    fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+      const f = path.join(d, e.name);
+      return e.isDirectory() ? walk(f) : [f];
+    });
+  try {
+    const files = walk(dir).map((f) => {
+      const st = fs.statSync(f);
+      return `${st.mtime.toISOString()}  ${String(st.size).padStart(10)}  ${path.relative(dir, f)}`;
+    });
+    return files.length ? `${dir}\r\n${files.join('\r\n')}\r\n` : `${dir}: none\r\n`;
+  } catch {
+    return `${dir}: none\r\n`;
+  }
 }
 
 // readTail reads at most max bytes from the end of f, so a huge verbose log
@@ -1570,6 +1690,9 @@ ipcMain.handle('debug:zip', async () => {
     tmp = fs.mkdtempSync(path.join(app.getPath('temp'), 'port1897-debug-'));
     putFile('engine.log', logFile());
     putFile('engine.prev.log', prevLogFile());
+    putFile('app.log', appLogFile());
+    putFile('app.prev.log', prevAppLogFile());
+    put('crash-dumps.txt', crashDumpList());
     putFile('usque/usque.log', usqueLog());
     putJSON('settings.json', settingsFile());
     putJSON('rules.json', rulesFile());
@@ -1597,6 +1720,9 @@ ipcMain.handle('debug:zip', async () => {
         '',
         'Private keys, tokens and passwords are replaced with "(hidden)".',
         'engine.log, engine.prev.log and history/ list the apps, domains and addresses this PC used; remove them before sharing if you prefer.',
+        '',
+        'engine.log: the engine (firestack, DNS, firewall, WireGuard, WARP). app.log: the app window (starts, stops, errors, crashes).',
+        'usque/: WARP over MASQUE. system.txt: adapters, routes, DNS, other VPNs, Windows Firewall and recent crashes. crash-dumps.txt: crash dumps on this PC (names only; the dumps themselves can hold private data and are left out).',
       ].join('\r\n')
     );
     // zip next to the temp folder, then copy over the chosen file: the user's
@@ -1671,7 +1797,9 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', async (_e, argv) => {
     if (!(await automate(argv))) showWindow();
   });
+  app.on('child-process-gone', (_e, d) => appLog('child process gone:', d.type, d.reason, 'exit code', d.exitCode));
   app.whenReady().then(async () => {
+    appLog(`port1897 ${app.getVersion()} started (Electron ${process.versions.electron}, Windows ${os.release()})`);
     Menu.setApplicationMenu(null);
     // the window needs no web permissions (notifications come from the main
     // process, the clipboard goes through IPC): refuse every request and check

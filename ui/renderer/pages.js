@@ -58,6 +58,32 @@ function restartBanner() {
   );
 }
 
+// The kill switch, from its home button, the Firewall screen or Network:
+// on at once while protection runs (fswin restarts in DNS-only mode, as the
+// kill switch needs the whole tunnel), or at the next start.
+function killSwitchOn() {
+  return App.status ? !!App.status.killSwitch : !!(App.settings && App.settings.killSwitch);
+}
+
+async function setKillSwitch(on) {
+  if (on) {
+    const ok = await confirmDialog(
+      'Turn on the kill switch?',
+      'Only port1897 can reach the internet. If protection stops or the app crashes, the internet stays blocked until you start protection again or use Network → Release kill switch.',
+      'Turn on'
+    );
+    if (!ok) return App.render();
+  }
+  const r = await App.port.killSwitch(on);
+  App.settings = await App.port.getSettings();
+  if (r.ok && r.applied !== 'next start') App.status = await App.port.status(); // the button shows the engine's state
+  if (!r.ok) toast('Kill switch: ' + r.error);
+  else if (r.applied === 'next start') toast(on ? 'Kill switch on from the next start of protection.' : 'Kill switch off.');
+  else if (r.applied === 'restarted') toast('Kill switch on: protection restarted with all traffic in the tunnel.');
+  else toast(on ? 'Kill switch on: only port1897 reaches the internet.' : 'Kill switch off.');
+  App.render();
+}
+
 async function save(patch, quiet) {
   await App.save(patch);
   if (!quiet) toast(App.status ? 'Saved. Restart protection to apply.' : 'Saved');
@@ -774,7 +800,7 @@ PAGES.network = () => {
     'Network',
     sectionLabel('Network'),
     card(
-      switchRow({ ico: 'ic_firewall_shield', title: 'Kill switch', sub: 'Block the internet outside the app. If the app crashes, the internet stays blocked until you start it again or release the kill switch below.', value: s.killSwitch, onchange: (v) => save({ killSwitch: v }) }),
+      switchRow({ ico: 'ic_firewall_shield', title: 'Kill switch', sub: 'Block the internet outside the app, at once. If the app crashes, the internet stays blocked until you start it again or release the kill switch below.', value: killSwitchOn(), onchange: (v) => setKillSwitch(v) }),
       switchRow({ ico: 'ic_private_network', title: 'Do not route Private IPs', sub: 'Let LAN, link-local and multicast traffic (printers, file shares, casting) through the kill switch.', value: s.allowLan, onchange: (v) => save({ allowLan: v }) }),
       row({ ico: 'ic_loopback', title: 'Release kill switch', sub: 'Removes a kill switch left behind by a crash. Asks Windows for permission.', right: chevron(), onclick: async () => {
         const r = await App.port.cleanup();
@@ -1181,8 +1207,15 @@ PAGES.about = () =>
     h(
       'div',
       { class: 'group pad' },
-      h('h2', { class: 'modal-title', text: 'Debug logs' }),
-      h('p', { class: 'desc', text: 'One zip for a bug report: the engine, WireGuard, WARP and usque logs, settings and rules, recent activity, and this PC’s adapters, routes, DNS and other VPNs. Private keys and passwords are left out; the logs do list the domains you visited.' }),
+      h('h2', { class: 'modal-title', text: 'Report a problem' }),
+      h(
+        'ol',
+        { class: 'desc steps' },
+        h('li', { text: 'Make the problem happen again, with protection on if it is about the internet or DNS.' }),
+        h('li', { text: 'Press Save debug zip below. The same button is in Settings → Logs, App Logs and Logs.' }),
+        h('li', { text: 'Attach the zip to a test report (the button above) or send it to whoever helps you.' })
+      ),
+      h('p', { class: 'desc', text: 'The zip has everything needed to debug: the engine log (DNS, firewall, WireGuard, WARP) and the app’s own log, both for this run and the one before, the usque (WARP over MASQUE) log, settings and rules, two days of activity, and this PC’s adapters, routes, DNS servers, other VPNs, Windows Firewall and recent crashes. Private keys, tokens and passwords are left out; the logs do list the sites and apps you used.' }),
       h('div', { class: 'actions' }, btn('Save debug zip', saveDebugZip, { primary: true }))
     ),
     h('div', { class: 'group pad' }, h('h2', { class: 'modal-title', text: 'Licenses' }), h('p', { class: 'desc', text: 'Mozilla Public License 2.0. Icons, layout and DNS lists from the Rethink Android app (Apache-2.0). usque (MIT). Kill switch rules adapted from WireGuard for Windows (MIT). Wintun © WireGuard LLC, prebuilt-binaries license.' }))

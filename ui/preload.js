@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('port', {
   start: call('engine:start'),
   stop: call('engine:stop'),
   cleanup: call('engine:cleanup'),
+  killSwitch: call('engine:killSwitch'),
   status: call('engine:status'),
   events: call('engine:events'),
   stats: call('engine:stats'),

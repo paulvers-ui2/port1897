@@ -159,6 +159,13 @@ function renderHome() {
   const paused = on && cfg.pausedUntil > Date.now();
   $('pause-btn').title = paused ? 'Paused: open' : 'Pause';
 
+  const kill = killSwitchOn();
+  const killBtn = $('kill-btn');
+  killBtn.classList.toggle('on', kill);
+  killBtn.setAttribute('aria-pressed', String(kill));
+  setText('kill-label', kill ? 'Kill switch on' : 'Kill switch off');
+  killBtn.title = kill ? 'Only port1897 reaches the internet. Click to turn off.' : 'Block the internet outside port1897. Click to turn on.';
+
   const prot = $('protection');
   prot.classList.toggle('on', on && !paused);
   if (paused) {
@@ -231,6 +238,7 @@ async function main() {
   $('start-main').addEventListener('click', () => toggleEngine());
   $('pause-btn').addEventListener('click', () => pauseProtection());
   $('mode-btn').addEventListener('click', () => chooseMode());
+  $('kill-btn').addEventListener('click', () => setKillSwitch(!killSwitchOn()));
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !document.querySelector('.modal-back')) App.back();
   });
@@ -281,6 +289,7 @@ function demoPort() {
     start: async () => ((running = true), { ok: true }),
     stop: async () => ((running = false), { ok: true }),
     cleanup: async () => ({ ok: true }),
+    killSwitch: async (on) => ((s.killSwitch = !!on), { ok: true, applied: running ? 'now' : 'next start' }),
     status: async () => {
       if (!running) return null;
       flows += 3;
