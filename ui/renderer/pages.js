@@ -958,6 +958,8 @@ async function saveDebugZip() {
     const r = await App.port.debugZip();
     if (r.ok) toast('Debug logs saved');
     else if (r.error) toast('Could not save the zip: ' + r.error);
+  } catch (e) {
+    toast('Could not save the zip: ' + ((e && e.message) || e));
   } finally {
     savingZip = false;
   }
@@ -1173,7 +1175,14 @@ PAGES.about = () =>
       h('p', { class: 'desc', text: 'Built on firestack, the open-source engine of the Rethink DNS + Firewall Android app, with usque for WARP over MASQUE.' }),
       h('p', { class: 'desc', text: 'Early test software. Unofficial: not affiliated with Celzero (Rethink), Cloudflare, WireGuard LLC or Microsoft.' }),
       h('p', { class: 'desc', text: 'Engine: ' + (App.status ? `fswin ${App.status.version}, running` : 'not running') }),
-      h('div', { class: 'actions' }, btn('Source code', () => App.port.openUrl('https://github.com/wowjes92jsj2oe0-star/port1897')), btn('Send a test report', () => App.port.openUrl('https://github.com/wowjes92jsj2oe0-star/port1897/issues/new?template=test_report.yml')))
+      h('div', { class: 'actions' }, btn('Source code', () => App.port.openUrl('https://github.com/paulvers-ui2/port1897')), btn('Send a test report', () => App.port.openUrl('https://github.com/paulvers-ui2/port1897/issues/new?template=test_report.yml')))
+    ),
+    h(
+      'div',
+      { class: 'group pad' },
+      h('h2', { class: 'modal-title', text: 'Debug logs' }),
+      h('p', { class: 'desc', text: 'One zip for a bug report: the engine, WireGuard, WARP and usque logs, settings and rules, recent activity, and this PC’s adapters, routes, DNS and other VPNs. Private keys and passwords are left out; the logs do list the domains you visited.' }),
+      h('div', { class: 'actions' }, btn('Save debug zip', saveDebugZip, { primary: true }))
     ),
     h('div', { class: 'group pad' }, h('h2', { class: 'modal-title', text: 'Licenses' }), h('p', { class: 'desc', text: 'Mozilla Public License 2.0. Icons, layout and DNS lists from the Rethink Android app (Apache-2.0). usque (MIT). Kill switch rules adapted from WireGuard for Windows (MIT). Wintun © WireGuard LLC, prebuilt-binaries license.' }))
   );

@@ -45,7 +45,7 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
 - **App window** (`ui/`): an Electron app styled after the Android home screen, with
   a tray icon. Download **port1897-setup-windows-x64** (installer) or
   **port1897-portable-windows-x64** from the
-  [App workflow](https://github.com/wowjes92jsj2oe0-star/port1897/actions/workflows/app.yml?query=branch%3Amain+is%3Asuccess).
+  [App workflow](https://github.com/paulvers-ui2/port1897/actions/workflows/app.yml?query=branch%3Amain+is%3Asuccess).
 
 Not yet: a background service, IPv6, country and network-provider stats.
 See the [roadmap](#roadmap).
@@ -53,7 +53,7 @@ See the [roadmap](#roadmap).
 ## Try it
 
 1. Open the latest successful
-   [Windows build](https://github.com/wowjes92jsj2oe0-star/port1897/actions/workflows/windows.yml?query=branch%3Amain+is%3Asuccess)
+   [Windows build](https://github.com/paulvers-ui2/port1897/actions/workflows/windows.yml?query=branch%3Amain+is%3Asuccess)
    and download **fswin-windows-amd64** (or **-arm64** for ARM PCs) under *Artifacts*.
    You need to be signed in to GitHub to download artifacts.
 2. Unzip it. It contains `fswin.exe` and `wintun.dll` (the official
@@ -89,7 +89,7 @@ Windows SmartScreen or antivirus may warn about `fswin.exe` because it is not
 code-signed yet.
 
 Please tell us how it went with a
-[test report](https://github.com/wowjes92jsj2oe0-star/port1897/issues/new?template=test_report.yml).
+[test report](https://github.com/paulvers-ui2/port1897/issues/new?template=test_report.yml).
 
 ### Options
 

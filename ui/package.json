@@ -7,7 +7,7 @@
   "license": "MPL-2.0",
   "private": true,
   "author": "port1897 contributors",
-  "homepage": "https://github.com/wowjes92jsj2oe0-star/port1897",
+  "homepage": "https://github.com/paulvers-ui2/port1897",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win --publish never"

@@ -41,6 +41,9 @@ type Binder struct {
 	idx4 uint32
 	idx6 uint32
 	at   time.Time
+
+	links  []netip.Prefix // on-link prefixes of the other interfaces (onlink_windows.go)
+	linkAt time.Time
 }
 
 // New returns a Binder that never picks interface tunIndex.

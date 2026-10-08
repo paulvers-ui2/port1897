@@ -39,7 +39,9 @@ import (
 
 	"github.com/celzero/firestack/intra"
 	x "github.com/celzero/firestack/intra/backend"
+	flog "github.com/celzero/firestack/intra/log"
 	"github.com/celzero/firestack/intra/netstack"
+	"github.com/celzero/firestack/intra/protect"
 	"github.com/celzero/firestack/intra/settings"
 	"github.com/celzero/firestack/win/dnspolicy"
 	"github.com/celzero/firestack/win/ifbind"
@@ -213,7 +215,7 @@ func run(o options) error {
 	}
 
 	if o.block != "" && !o.full {
-		fmt.Println("fswin: -block only affects traffic in the tunnel; without -full that is DNS only")
+		fmt.Println("fswin: -block needs -full: without it only DNS goes through the tunnel, and DNS is answered for every app")
 	}
 
 	tun.WintunTunnelType = "port1897"
@@ -238,6 +240,9 @@ func run(o options) error {
 		return fmt.Errorf("find adapter %s: %w", name, err)
 	}
 	binder := ifbind.New(uint32(ifc.Index))
+	// this PC and its attached networks never take the default route; pinning
+	// them to it would break DNS servers like Tor's on 127.0.0.1
+	protect.SkipBind = binder.OnLink
 	phys4, _ := binder.Indexes()
 	if o.full && phys4 == 0 {
 		_ = dev.Close()
@@ -338,8 +343,10 @@ func run(o options) error {
 			o.conflicts = append(o.conflicts, "another VPN sends all DNS elsewhere: "+r)
 		}
 	}
-	if n, d, vpn := ifbind.Describe(phys4); vpn {
-		o.conflicts = append(o.conflicts, fmt.Sprintf("internet traffic leaves through another VPN's adapter: %s (%s)", n, d))
+	physName, physDesc, physVPN := ifbind.Describe(phys4)
+	fmt.Printf("fswin: firestack's own traffic leaves via interface #%d %s (%s)\n", phys4, physName, physDesc)
+	if physVPN {
+		o.conflicts = append(o.conflicts, fmt.Sprintf("internet traffic leaves through another VPN's adapter: %s (%s)", physName, physDesc))
 	}
 	for _, c := range o.conflicts {
 		fmt.Printf("fswin: warning: %s; disconnect that VPN\n", c)
@@ -618,6 +625,7 @@ func redirectOutput(path string) error {
 	}
 	os.Stdout, os.Stderr = f, f
 	log.SetOutput(f)
+	flog.SetOutput(f) // firestack's own logs, which say why a DNS query or dial failed
 	_ = windows.SetStdHandle(windows.STD_OUTPUT_HANDLE, windows.Handle(f.Fd()))
 	_ = windows.SetStdHandle(windows.STD_ERROR_HANDLE, windows.Handle(f.Fd()))
 	return nil

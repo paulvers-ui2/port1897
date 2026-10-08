@@ -25,6 +25,7 @@ import (
 	x "github.com/celzero/firestack/intra/backend"
 	"github.com/celzero/firestack/win/ifbind"
 	"github.com/celzero/firestack/win/owner"
+	"github.com/miekg/dns"
 	"golang.org/x/sys/windows"
 )
 
@@ -334,10 +335,15 @@ func (b *bridge) Preflow(protocol, uid int32, src, dst *x.Gostr) *intra.PreMark 
 
 func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probableDomains, blocklists *x.Gostr) *intra.Mark {
 	cid := strconv.FormatInt(b.cid.Add(1), 10)
-	if dst.V() == fakedns4+":53" {
+	switch dst.V() {
+	case fakedns4 + ":53":
 		// a query to our DNS address: firestack answers it only when marked
 		// Base, whatever the exit, and it shows in the DNS log, not as a flow
 		return &intra.Mark{PIDCSV: x.Base, CID: cid, UID: strconv.Itoa(int(uid))}
+	case fakedns4 + ":853":
+		// DNS over TLS to our address, which we do not serve; as the Android
+		// app does, refuse it so Windows falls back to plain DNS on :53
+		return &intra.Mark{PIDCSV: x.Block, CID: cid, UID: strconv.Itoa(int(uid))}
 	}
 	path := b.apps.path(uid)
 	dap, _ := netip.ParseAddrPort(dst.V()) // zero if unparsable: IP rules then skip it
@@ -443,14 +449,18 @@ func (b *bridge) OnResponse(s *x.DNSSummary) {
 	if s == nil {
 		return
 	}
-	b.logf("dns   %s (type %d) -> %s via %s %.0fms status %d %s",
-		s.QName, s.QType, s.RData, s.ID, s.Latency*1000, s.Status, s.Msg)
+	b.logf("dns   %s (type %d) -> %s via %s (%s) %.0fms status %d rcode %d %s",
+		s.QName, s.QType, s.RData, s.ID, s.Server, s.Latency*1000, s.Status, s.RCode, s.Msg)
 	ms := int64(s.Latency * 1000)
 	b.log.dnsQueries.Add(1)
 	failure := ""
 	if s.Status != x.Complete {
 		b.log.dnsFailed.Add(1)
 		failure = dnsFailure(s)
+	} else if badRcode(s) {
+		// answered, but with an error such as SERVFAIL or REFUSED
+		b.log.dnsFailed.Add(1)
+		failure = fmt.Sprintf("%s answered %s", dnsServer(s), dns.RcodeToString[s.RCode])
 	} else {
 		b.log.dnsLastMs.Store(ms)
 		b.log.dnsTotalMs.Add(ms)
@@ -462,13 +472,42 @@ func (b *bridge) OnResponse(s *x.DNSSummary) {
 	if why == "" && s.Blocklists != "" {
 		why = "blocklists: " + s.Blocklists
 	}
-	b.log.add(event{Kind: "dns", Domain: strings.TrimSuffix(s.QName, "."), Answer: s.RData,
+	app := ""
+	if u, err := strconv.Atoi(s.UID); err == nil {
+		app = b.appName(int32(u)) // who asked; "?" if unknown
+	}
+	b.log.add(event{Kind: "dns", App: app, Domain: strings.TrimSuffix(s.QName, "."), Answer: s.RData,
 		Via: s.ID, LatencyMs: ms, Blocked: why != "" || (s.Status == x.Complete && isUnspecifiedAnswer(s.RData)),
 		Secure: s.AD, Cached: s.Cached, Rule: why, QType: s.QType, Error: failure})
 }
 
-// dnsFailure says why a query got no answer, from firestack's summary.
+// dnsFailure says why a query got no answer, from firestack's summary, in
+// words a user can act on: a timeout means the server was never reached.
 func dnsFailure(s *x.DNSSummary) string {
+	why := dnsFailureMsg(s)
+	switch {
+	case strings.Contains(why, "timeout"):
+		return fmt.Sprintf("no reply from %s in %.0f s (%s)", dnsServer(s), s.Latency, why)
+	case strings.HasPrefix(why, "http-status: "):
+		return fmt.Sprintf("%s answered HTTP %s", dnsServer(s), strings.TrimPrefix(why, "http-status: "))
+	}
+	return why
+}
+
+// badRcode reports an upstream answer that is an error. NXDOMAIN is a
+// real answer, and blocked names are answered by BlockAll on purpose.
+func badRcode(s *x.DNSSummary) bool {
+	return s.RCode != dns.RcodeSuccess && s.RCode != dns.RcodeNameError && !strings.HasSuffix(s.ID, x.BlockAll)
+}
+
+func dnsServer(s *x.DNSSummary) string {
+	if s.Server != "" {
+		return s.Server
+	}
+	return "the DNS server"
+}
+
+func dnsFailureMsg(s *x.DNSSummary) string {
 	if s.Msg != "" {
 		return s.Msg
 	}

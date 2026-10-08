@@ -1,0 +1,98 @@
+name: Simulate
+
+# Replays the failures users hit, on real machines: fswin on a Windows
+# runner (admin, Wintun, NRPT, Windows Firewall), and firestack's DoH
+# client against blackholed, refusing and misbehaving servers on Linux.
+# Results are in each job's summary and the sim-* artifacts.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: fswin end to end (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build fswin, fakedns and fetch Wintun
+        shell: bash
+        env:
+          CGO_ENABLED: "0"
+          WINTUN_SHA256: 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-checklinkname=0 -X main.version=${GITHUB_SHA:0:8}" -o dist/fswin.exe ./cmd/fswin
+          go build -trimpath -o dist/fakedns.exe ./tools/sim/fakedns
+          curl -sSfL -o wintun.zip https://www.wintun.net/builds/wintun-0.14.1.zip
+          echo "$WINTUN_SHA256  wintun.zip" | sha256sum -c -
+          unzip -q wintun.zip
+          cp wintun/bin/amd64/wintun.dll dist/
+      - name: Unit tests
+        shell: bash
+        run: go test -count=1 -ldflags=-checklinkname=0 ./cmd/fswin/ ./win/... 2>&1 | tee unit-tests.txt
+      - name: Simulate
+        shell: pwsh
+        run: ./tools/sim/e2e-windows.ps1 -Dist dist -Out sim-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sim-windows
+          path: |
+            sim-out/
+            unit-tests.txt
+          if-no-files-found: ignore
+
+  debug-zip:
+    name: Debug zip (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Simulate
+        # the app's real debug:zip handler, Electron stubbed, secrets planted
+        run: node tools/sim/debugzip.js
+
+  dns-linux:
+    name: DoH failures (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Simulate
+        env:
+          GOFLAGS: -tags=dnssim -ldflags=-checklinkname=0
+          SIM_ONLINE: "1"
+        run: |
+          cp tools/sim/dnssim/dnssim_*test.go intra/
+          go vet ./intra
+          # root for the iptables run that drops Cloudflare's tcp/443, as on the user's PC
+          sudo -E env "PATH=$PATH" "HOME=$HOME" "GOFLAGS=$GOFLAGS" "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" \
+            bash tools/sim/dnssim/run-dnssim.sh 2>&1 | tee dnssim.txt
+          {
+            echo '## DoH failure simulation (Linux)'
+            echo
+            echo '```'
+            grep -E '^#{16}|status|Msg|dnsFailure|DNS log|latency|FAIL|panic' dnssim.txt | head -400
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          ! grep -qE '^(--- FAIL|FAIL|panic:)' dnssim.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sim-dns-linux
+          path: dnssim.txt
+          if-no-files-found: ignore

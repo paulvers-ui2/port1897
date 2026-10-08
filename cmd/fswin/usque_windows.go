@@ -46,9 +46,9 @@ type usque struct {
 
 // usqueSetup holds what startUsque needs.
 type usqueSetup struct {
-	exe     string // usque.exe
-	dir     string // where warp1.json / warp2.json live
-	chainWG string // wg-quick file for the chain's middle hop; "" for plain MASQUE
+	exe     string   // usque.exe
+	dir     string   // where warp1.json / warp2.json live
+	chainWG string   // wg-quick file for the chain's middle hop; "" for plain MASQUE
 	extra   []string // more usque flags (SNI, MTU...), checked by usqueFlags
 	logf    func(string, ...any)
 }

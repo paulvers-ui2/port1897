@@ -72,11 +72,21 @@ func maybeGlobalUnicast(addr string, yn bool) bool {
 	return yn
 }
 
+// SkipBind, if set, reports destinations that need no binding because they
+// never take the default route: on Windows, this machine's own addresses
+// and networks on-link to an interface other than the tunnel. Pinning those
+// to the default interface breaks them (loopback fails with
+// WSAEADDRNOTAVAIL). Set once, before the tunnel starts.
+var SkipBind func(addr string) bool
+
 // Binds a socket to a particular network interface.
 func ifbind(who string, ctl Controller) func(string, string, syscall.RawConn) error {
 	return func(network, addr string, c syscall.RawConn) (err error) {
 		// addr may be a wildcard aka ":<port>", in which case dst is a zero address.
 		log.VV("control: netbinder: %s: %s(%s); err? %v", who, network, addr, err)
+		if SkipBind != nil && SkipBind(addr) {
+			return nil
+		}
 		return c.Control(func(fd uintptr) {
 			sock := int(fd)
 			if !maybeGlobalUnicast(addr, true) {

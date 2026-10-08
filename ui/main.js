@@ -646,10 +646,18 @@ async function startEngine() {
   if (s.exit === 'wg' && !wgFile(s.wgActive)) return { ok: false, error: 'Choose a WireGuard config first (Proxy → Setup WireGuard).' };
   ensureToken();
   logOffset = 0;
-  // the engine truncates its log; keep the last run's for the debug zip
-  try {
-    fs.renameSync(logFile(), prevLogFile());
-  } catch {}
+  // The engine truncates its log; keep the last run's for the debug zip. A
+  // stopping engine holds engine.log open until its cleanup (NRPT rule,
+  // adapter) ends, a few seconds after its API went away, so wait for it.
+  for (let i = 0; i < 40; i++) {
+    try {
+      fs.renameSync(logFile(), prevLogFile());
+      break;
+    } catch (e) {
+      if (e.code === 'ENOENT') break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
   try {
     await launchElevated(exe, engineArgs(s));
   } catch (e) {
@@ -970,7 +978,7 @@ function saveBuckets(s) {
 
 // ---------- app updates (Android: "Check for app updates", weekly) ----------
 
-const RELEASES = 'https://api.github.com/repos/wowjes92jsj2oe0-star/port1897/releases/latest';
+const RELEASES = 'https://api.github.com/repos/paulvers-ui2/port1897/releases/latest';
 
 // newer reports whether version a is above b ("0.2.0" > "0.1.9").
 function newer(a, b) {
@@ -1461,24 +1469,32 @@ ipcMain.handle('backup:restore', async () => {
 // ---------- debug zip ----------
 
 // Keys whose values must never leave the PC: WireGuard and WARP private
-// keys, tokens, proxy passwords.
-const SECRET_KEY = /key|token|secret|pass|license|auth/i;
+// keys, tokens, proxy passwords (socks.pass, http.pass). Not "dnsBypass".
+const SECRET_KEY = /key|token|secret|^pass(word)?$|license|auth/i;
+
+// Passwords inside URLs (socks5://user:pass@host), under any key and in logs.
+const redactUrlAuth = (t) => String(t).replace(/(\/\/[^/\s:@"']*):[^@/\s"']*@/g, '$1:(hidden)@');
 
 function redactJSON(v) {
   if (Array.isArray(v)) return v.map(redactJSON);
   if (v && typeof v === 'object') {
     return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, SECRET_KEY.test(k) && typeof x !== 'object' && x !== '' ? '(hidden)' : redactJSON(x)]));
   }
-  return v;
+  return typeof v === 'string' ? redactUrlAuth(v) : v;
 }
 
 // wg-quick configs keep their shape; only key lines are hidden.
-const redactWg = (text) => String(text).replace(/^(\s*(PrivateKey|PresharedKey)\s*=).*$/gim, '$1 (hidden)');
+const redactWg = (text) => String(text).replace(/^(\s*(PrivateKey|PresharedKey)\s*=)[^\r\n]*/gim, '$1 (hidden)');
 
-function psText(script) {
+// psRun runs a PowerShell script; Windows PowerShell writes redirected output
+// in the console code page unless told to use UTF-8.
+function psRun(script, timeout = 30000) {
   return new Promise((resolve) => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 30000, maxBuffer: 8 << 20 }, (err, stdout, stderr) =>
-      resolve(`${stdout || ''}${stderr || ''}${err && !stdout ? String(err.message) : ''}`)
+    execFile(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ' + script],
+      { windowsHide: true, timeout, maxBuffer: 8 << 20 },
+      (err, stdout, stderr) => resolve({ ok: !err, text: `${stdout || ''}${stderr || ''}${err && !stdout ? String(err.message) : ''}` })
     );
   });
 }
@@ -1499,8 +1515,27 @@ async function systemReport() {
     ['Lookup of cloudflare.com by Windows', 'Resolve-DnsName cloudflare.com -Type A -QuickTimeout -ErrorAction Continue | Out-String -Width 220'],
   ];
   const out = [`port1897 ${app.getVersion()} debug report, ${new Date().toISOString()}`, ''];
-  for (const [title, cmd] of parts) out.push(`===== ${title} =====`, (await psText(cmd)).trim(), '');
+  for (const [title, cmd] of parts) out.push(`===== ${title} =====`, (await psRun(cmd)).text.trim(), '');
   return out.join('\r\n');
+}
+
+// readTail reads at most max bytes from the end of f, so a huge verbose log
+// still makes it into the zip; null if f can't be read.
+function readTail(f, max) {
+  let fd;
+  try {
+    fd = fs.openSync(f, 'r');
+    const size = fs.fstatSync(fd).size;
+    const n = Math.min(size, max);
+    const buf = Buffer.alloc(n);
+    fs.readSync(fd, buf, 0, n, size - n);
+    const text = buf.toString('utf8');
+    return n < size ? `(the oldest ${Math.ceil((size - n) / 1048576)} MB of this file left out)\n` + text.slice(text.indexOf('\n') + 1) : text;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
 }
 
 ipcMain.handle('debug:zip', async () => {
@@ -1511,21 +1546,15 @@ ipcMain.handle('debug:zip', async () => {
     filters: [{ name: 'Zip', extensions: ['zip'] }],
   });
   if (r.canceled) return { ok: false };
-  const tmp = fs.mkdtempSync(path.join(app.getPath('temp'), 'port1897-debug-'));
+  let tmp = '';
+  // every file goes through redactUrlAuth: logs print proxy and DNS URLs
   const put = (name, text) => {
     const f = path.join(tmp, name);
     fs.mkdirSync(path.dirname(f), { recursive: true });
-    fs.writeFileSync(f, text);
-  };
-  const read = (f) => {
-    try {
-      return fs.readFileSync(f, 'utf8');
-    } catch {
-      return null;
-    }
+    fs.writeFileSync(f, redactUrlAuth(text));
   };
   const putFile = (name, f, redact) => {
-    const t = read(f);
+    const t = readTail(f, 64 << 20);
     if (t !== null) put(name, redact ? redact(t) : t);
   };
   const putJSON = (name, f) =>
@@ -1537,6 +1566,8 @@ ipcMain.handle('debug:zip', async () => {
       }
     });
   try {
+    // only [A-Za-z0-9-] in the generated part, so PowerShell sees no wildcards
+    tmp = fs.mkdtempSync(path.join(app.getPath('temp'), 'port1897-debug-'));
     putFile('engine.log', logFile());
     putFile('engine.prev.log', prevLogFile());
     putFile('usque/usque.log', usqueLog());
@@ -1554,7 +1585,7 @@ ipcMain.handle('debug:zip', async () => {
     // the last two days of activity, newest lines only
     for (const back of [1, 0]) {
       const day = new Date(Date.now() - back * 24 * HOUR).toISOString().slice(0, 10);
-      const t = read(path.join(histDir(), `events-${day}.jsonl`));
+      const t = readTail(path.join(histDir(), `events-${day}.jsonl`), 16 << 20);
       if (t !== null) put(`history/events-${day}.jsonl`, t.split('\n').slice(-20000).join('\n'));
     }
     put('status.json', JSON.stringify((await engineStatus()) || { running: false }, null, 2));
@@ -1565,18 +1596,24 @@ ipcMain.handle('debug:zip', async () => {
         'port1897 debug logs',
         '',
         'Private keys, tokens and passwords are replaced with "(hidden)".',
-        'history/ lists the apps, domains and addresses this PC used; remove it before sharing if you prefer.',
+        'engine.log, engine.prev.log and history/ list the apps, domains and addresses this PC used; remove them before sharing if you prefer.',
       ].join('\r\n')
     );
-    fs.rmSync(r.filePath, { force: true });
-    const zip = await psText(`$ErrorActionPreference = 'Stop'; Compress-Archive -Path ${psQuote(path.join(tmp, '*'))} -DestinationPath ${psQuote(r.filePath)} -Force`);
-    if (!fs.existsSync(r.filePath)) return { ok: false, error: zip.trim() || 'Could not write the zip.' };
+    // zip next to the temp folder, then copy over the chosen file: the user's
+    // path never reaches PowerShell, and a failed zip leaves it untouched
+    const tmpZip = tmp + '.zip';
+    const zip = await psRun(`$ErrorActionPreference = 'Stop'; Compress-Archive -Path ${psQuote(path.join(tmp, '*'))} -DestinationPath ${psQuote(tmpZip)} -Force`, 120000);
+    if (!zip.ok || !fs.existsSync(tmpZip)) return { ok: false, error: zip.text.trim() || 'Could not write the zip.' };
+    fs.copyFileSync(tmpZip, r.filePath);
     shell.showItemInFolder(r.filePath);
     return { ok: true, file: r.filePath };
   } catch (e) {
     return { ok: false, error: e.message };
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    if (tmp) {
+      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp + '.zip', { force: true });
+    }
   }
 });
 
