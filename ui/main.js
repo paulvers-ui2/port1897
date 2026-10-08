@@ -29,6 +29,7 @@ const DEFAULTS = {
   proxy: '',
   full: true,
   nrpt: true,
+  killSwitch: false,
   blocked: [],
 };
 
@@ -127,6 +128,7 @@ function engineArgs(s) {
   ];
   if (s.full) a.push('-full');
   if (s.nrpt) a.push('-nrpt');
+  if (s.killSwitch) a.push('-killswitch');
   if (s.exit === 'warp') a.push('-warp');
   if (s.exit === 'masque') a.push('-masque', '-usque-dir', path.join(dataDir(), 'usque'));
   if (s.exit === 'chain' && s.wgFile) a.push('-chain', s.wgFile, '-usque-dir', path.join(dataDir(), 'usque'));
@@ -310,6 +312,16 @@ ipcMain.handle('settings:set', (_e, s) => {
 });
 ipcMain.handle('engine:start', () => startEngine());
 ipcMain.handle('engine:stop', () => stopEngine());
+// Removes a kill switch (and DNS rule) left behind if the engine crashed.
+ipcMain.handle('engine:cleanup', async () => {
+  if (await engineStatus()) return { ok: false, error: 'Stop protection first.' };
+  try {
+    await launchElevated(enginePath(), ['-cleanup']);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
 ipcMain.handle('engine:status', () => engineStatus());
 ipcMain.handle('engine:events', async (_e, after) => {
   try {

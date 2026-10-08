@@ -37,6 +37,7 @@ type apiStatus struct {
 	Firewall  fwStat   `json:"firewall"`
 	Traffic   trafStat `json:"traffic"`
 	NRPT      bool     `json:"nrpt"`
+	Kill      bool     `json:"killSwitch"`
 }
 
 type dnsStat struct {
@@ -173,6 +174,7 @@ func statusOf(b *bridge, o options, started time.Time, exitID string) apiStatus 
 		StartedAt: started.UnixMilli(),
 		Mode:      "dns",
 		NRPT:      o.nrpt,
+		Kill:      o.kill,
 		DNS: dnsStat{
 			Server:  o.doh,
 			Queries: l.dnsQueries.Load(),

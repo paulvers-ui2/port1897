@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('port', {
   setSettings: (s) => ipcRenderer.invoke('settings:set', s),
   start: () => ipcRenderer.invoke('engine:start'),
   stop: () => ipcRenderer.invoke('engine:stop'),
+  cleanup: () => ipcRenderer.invoke('engine:cleanup'),
   status: () => ipcRenderer.invoke('engine:status'),
   events: (after) => ipcRenderer.invoke('engine:events', after),
   stats: () => ipcRenderer.invoke('engine:stats'),

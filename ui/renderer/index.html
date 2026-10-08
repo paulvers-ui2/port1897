@@ -140,6 +140,11 @@
         <h2><span class="ico" data-icon="firewall"></span>Protection</h2>
         <label class="toggle"><input type="checkbox" id="opt-full"><span><b>Firewall all apps</b><small>Send all IPv4 traffic through the firewall, not only DNS</small></span></label>
         <label class="toggle"><input type="checkbox" id="opt-nrpt"><span><b>Stop DNS leaks</b><small>Force every DNS lookup through the app, even if another app sets its own DNS</small></span></label>
+        <label class="toggle"><input type="checkbox" id="opt-kill"><span><b>Kill switch</b><small>Block the internet outside the app. If the app crashes, the internet stays blocked until you start it again or release the kill switch below</small></span></label>
+        <div class="row">
+          <button class="btn" id="kill-release" type="button">Release kill switch</button>
+          <span class="path" id="kill-msg"></span>
+        </div>
       </div>
 
       <div class="panel">

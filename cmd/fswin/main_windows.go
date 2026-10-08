@@ -42,6 +42,7 @@ import (
 	"github.com/celzero/firestack/intra/netstack"
 	"github.com/celzero/firestack/win/dnspolicy"
 	"github.com/celzero/firestack/win/ifbind"
+	"github.com/celzero/firestack/win/wfp"
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/tun"
 )
@@ -63,6 +64,7 @@ type options struct {
 	full      bool
 	nrpt      bool
 	cleanup   bool
+	kill      bool
 	block     string
 	wg        string
 	warp      bool
@@ -88,6 +90,7 @@ func main() {
 	flag.BoolVar(&o.setdns, "set-dns", true, "point the adapter's DNS at the tunnel and give it the lowest metric")
 	flag.BoolVar(&o.full, "full", false, "route all IPv4 traffic through the tunnel, not just DNS")
 	flag.BoolVar(&o.nrpt, "nrpt", false, "send every DNS query to the tunnel with an NRPT rule, whatever other adapters use; removed on exit")
+	flag.BoolVar(&o.kill, "killswitch", false, "block all traffic outside the tunnel, and keep blocking if fswin crashes until it starts again or -cleanup runs (implies -full)")
 	flag.BoolVar(&o.cleanup, "cleanup", false, "remove fswin's NRPT rule (left behind if fswin was killed) and exit")
 	flag.StringVar(&o.block, "block", "", "comma-separated programs to block (exe names like chrome.exe, or full paths); needs -full")
 	flag.StringVar(&o.wg, "wg", "", "send all traffic through the WireGuard server in this wg-quick .conf file (implies -full)")
@@ -125,10 +128,12 @@ func main() {
 
 func run(o options) error {
 	if o.cleanup {
-		if err := dnspolicy.Remove(); err != nil {
+		errDNS := dnspolicy.Remove()
+		errKill := wfp.Disable()
+		if err := errors.Join(errDNS, errKill); err != nil {
 			return err
 		}
-		fmt.Println("fswin: removed fswin's NRPT rule, if any")
+		fmt.Println("fswin: removed fswin's NRPT rule and kill switch, if any")
 		return nil
 	}
 
@@ -140,8 +145,8 @@ func run(o options) error {
 		return err
 	}
 	defer uq.stop()
-	if exitID != "" {
-		o.full = true // a VPN exit only sees traffic in the tunnel
+	if exitID != "" || o.kill {
+		o.full = true // a VPN exit and the kill switch need all traffic in the tunnel
 	}
 
 	if o.block != "" && !o.full {
@@ -231,6 +236,25 @@ func run(o options) error {
 			return err
 		}
 		mode = fmt.Sprintf("all IPv4; firestack's own traffic leaves via interface #%d", phys4)
+	}
+	if o.kill {
+		nt, ok := dev.(*tun.NativeTun)
+		if !ok {
+			return errors.New("-killswitch: the tunnel is not a Wintun adapter")
+		}
+		var allow []string
+		if uq != nil {
+			allow = append(allow, uq.path)
+		}
+		if err := wfp.Enable(wfp.Options{TunLUID: nt.LUID(), Allow: allow, Persistent: true}); err != nil {
+			return fmt.Errorf("-killswitch: %w", err)
+		}
+		defer func() {
+			if err := wfp.Disable(); err != nil {
+				fmt.Fprintln(os.Stderr, "fswin: remove kill switch (run fswin -cleanup):", err)
+			}
+		}()
+		mode += "; kill switch on"
 	}
 	if exitID != "" {
 		mode += "; exit: " + exitName(exitID)

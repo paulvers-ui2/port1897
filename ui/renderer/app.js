@@ -154,6 +154,7 @@ function renderHome() {
     const parts = ['encrypted DNS'];
     if (s.mode === 'full') parts.push('firewall');
     if (s.exit) parts.push(s.exit);
+    if (s.killSwitch) parts.push('kill switch');
     prot.textContent = 'Protected: ' + parts.join(' · ');
   } else {
     prot.textContent = 'Not protected';
@@ -300,6 +301,7 @@ function renderConfigure() {
 
   $('opt-full').checked = settings.full;
   $('opt-nrpt').checked = settings.nrpt;
+  $('opt-kill').checked = !!settings.killSwitch;
   $('cfg-restart').hidden = !(restartNeeded && status);
   renderBlocked();
 }
@@ -379,6 +381,12 @@ function wire() {
   $('proxy-url').addEventListener('change', () => save({ proxy: $('proxy-url').value.trim() }));
   $('opt-full').addEventListener('change', () => save({ full: $('opt-full').checked }));
   $('opt-nrpt').addEventListener('change', () => save({ nrpt: $('opt-nrpt').checked }));
+  $('opt-kill').addEventListener('change', () => save({ killSwitch: $('opt-kill').checked }));
+  $('kill-release').addEventListener('click', async () => {
+    setText('kill-msg', 'Asking Windows for permission…');
+    const r = await port.cleanup();
+    setText('kill-msg', r.ok ? 'Released. The internet works without the app again.' : r.error);
+  });
   $('block-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const name = $('block-name').value.trim();
@@ -413,13 +421,14 @@ function demoPort() {
     getSettings: async () => ({ ...s }),
     setSettings: async (p) => (s = { ...s, ...p }),
     start: async () => ((running = true), { ok: true }),
+    cleanup: async () => ({ ok: true }),
     stop: async () => ((running = false), { ok: true }),
     status: async () => {
       if (!running) return null;
       flows += 3;
       queries += 2;
       return {
-        version: 'demo', startedAt: Date.now(), mode: s.full ? 'full' : 'dns', nrpt: s.nrpt,
+        version: 'demo', startedAt: Date.now(), mode: s.full ? 'full' : 'dns', nrpt: s.nrpt, killSwitch: !!s.killSwitch,
         exit: s.exit === 'none' ? '' : EXIT_NAMES[s.exit],
         dns: { server: s.doh, queries, failed: 0, lastMs: 18, avgMs: 21 },
         firewall: { flows, blocked: Math.floor(flows / 9), blockedApps: s.blocked, appsSeen: 6 },
