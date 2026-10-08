@@ -51,6 +51,8 @@ contextBridge.exposeInMainWorld('port', {
     importFile: call('wg:importFile'),
   },
   checkExit: call('net:checkExit'),
+  ping: call('net:ping'),
+  checkUpdate: call('app:checkUpdate'),
   engineLog: call('log:engine'),
   clearLog: call('log:clear'),
   copy: call('clip:copy'),

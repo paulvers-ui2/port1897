@@ -326,7 +326,8 @@ PAGES['app-info'] = ({ app }) => {
         : null,
       row({ ico: 'ic_ip_address', title: 'IP Rules', sub: countRules('ips', app), right: chevron(), onclick: () => ((rulesTab = 'ips'), App.go('custom-rules', { app })) }),
       row({ ico: 'dns_home_screen', title: 'Domain Rules', sub: countRules('domains', app), right: chevron(), onclick: () => ((rulesTab = 'domains'), App.go('custom-rules', { app })) }),
-      switchRow({ ico: 'ic_proxy_white', title: 'Bypass app from all proxies', sub: 'Connect directly, not through the WARP, WireGuard or proxy exit.', value: !!a.noProxy || a.mode === 'exclude', onchange: (v) => setAppRule(app, { noProxy: v }).then(() => App.render()) })
+      switchRow({ ico: 'ic_proxy_white', title: 'Bypass app from all proxies', sub: 'Connect directly, not through the WARP, WireGuard or proxy exit.', value: !!a.noProxy || a.mode === 'exclude', onchange: (v) => setAppRule(app, { noProxy: v }).then(() => App.render()) }),
+      a.noProxy || a.mode === 'exclude' ? null : routeRow(app, a)
     ),
     h('div', { class: 'stat-head' }, h('h3', { text: 'Top active connections' }), h('div', { class: 'actions' }, btn('Refresh', loadConns), btn('Close All', async () => {
       const r = await App.port.closeConns(app);
@@ -337,6 +338,28 @@ PAGES['app-info'] = ({ app }) => {
     stats
   );
 };
+
+// Per-app route (Android: WireGuard advanced mode, proxy app lists): this
+// app leaves through its own WireGuard config or proxy, the rest through
+// the main exit.
+function routeRow(app, a) {
+  const s = App.settings;
+  const sel = h('select', { class: 'fld-input', 'aria-label': 'Route' }, h('option', { value: '', text: 'Main VPN / proxy (default)' }));
+  if (s.socks && s.socks.host) sel.append(h('option', { value: 'socks', text: `SOCKS5 ${s.socks.host}:${s.socks.port}` }));
+  if (s.http && s.http.host) sel.append(h('option', { value: 'http', text: `HTTP ${s.http.host}:${s.http.port}` }));
+  sel.value = a.route || '';
+  App.port.wg.list().then((wgs) => {
+    for (const w of wgs) sel.append(h('option', { value: 'wg:' + w.id, text: 'WireGuard: ' + w.name }));
+    sel.value = a.route || '';
+  });
+  sel.addEventListener('change', async () => {
+    await setAppRule(app, { route: sel.value || undefined });
+    App.restartNeeded = true;
+    toast(App.status ? 'Saved. Restart protection to use the new route.' : 'Saved');
+    App.render();
+  });
+  return row({ ico: 'ic_wireguard_icon', title: 'Route through', sub: 'Send this app through its own WireGuard config or proxy instead of the main one (split tunnel).', right: sel });
+}
 
 function countRules(kind, app) {
   const n = (App.settings.rules[kind] || []).filter((r) => (r.app || '') === app).length;

@@ -360,3 +360,12 @@ select.fld-input { background: var(--row); }
 .round-btn.stop { width: 72px; height: 72px; border-color: var(--good); background: var(--good); color: #fff; }
 .round-btn svg { width: 26px; height: 26px; }
 select.fld-input { width: auto; min-width: 150px; }
+
+/* ---- welcome, ping (tools.js) ---- */
+.modal.welcome { max-width: 460px; text-align: center; }
+.welcome-ico { display: inline-flex; width: 72px; height: 72px; margin: 6px 0 10px; color: var(--good); }
+.welcome-ico svg { width: 72px; height: 72px; }
+.welcome-dots { display: flex; justify-content: center; gap: 8px; margin: 16px 0 4px; }
+.welcome-dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.welcome-dots span.on { background: var(--good); }
+.chips.center { justify-content: center; margin-bottom: 14px; }

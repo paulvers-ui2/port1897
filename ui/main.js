@@ -18,6 +18,8 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const http = require('node:http');
 const { execFile } = require('node:child_process');
+const nodeNet = require('node:net');
+const dnsPromises = require('node:dns').promises;
 
 const API_HOST = '127.0.0.1';
 const API_PORT = 47897;
@@ -95,6 +97,9 @@ const DEFAULTS = {
   theme: 'darkplus',
   autostart: false,
   wasRunning: false,
+  checkUpdates: true, // Android: "Check for app updates" once a week
+  lastUpdateCheck: 0,
+  welcomed: false,
 };
 
 let win = null;
@@ -200,10 +205,39 @@ function migrate(s) {
 
 let screenLocked = false;
 
+// Per-app routes: "wg:<id>" (a saved WireGuard config), "socks" or "http"
+// (the proxies set up in Proxy), as fswin's route ids (routes_windows.go).
+function routeID(r) {
+  if (/^wg:[a-f0-9]{16}$/.test(r)) return 'wgapp' + r.slice(3);
+  if (r === 'socks') return 'pxsocks';
+  if (r === 'http') return 'pxhttp';
+  return '';
+}
+
+function routesOf(s) {
+  const out = [];
+  const seen = new Set();
+  const names = Object.fromEntries(wgIndex().map((e) => [e.id, e.name]));
+  for (const a of Object.values(s.rules.apps)) {
+    const id = routeID(a.route || '');
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    if (a.route.startsWith('wg:')) {
+      const f = wgFile(a.route.slice(3));
+      if (f) out.push({ id, name: 'WireGuard: ' + (names[a.route.slice(3)] || 'config'), kind: 'wg', file: f });
+    } else if (s[a.route] && s[a.route].host) {
+      out.push({ id, name: a.route === 'socks' ? 'SOCKS5 proxy' : 'HTTP proxy', kind: 'proxy', url: proxyURL(a.route, s[a.route]) });
+    }
+  }
+  return out;
+}
+
 // The rule set fswin applies (cmd/fswin/rules_windows.go).
 function ruleSet(s) {
+  const apps = {};
+  for (const [k, a] of Object.entries(s.rules.apps)) apps[k] = a.route ? { ...a, route: routeID(a.route) } : a;
   return {
-    apps: s.rules.apps,
+    apps,
     ips: s.rules.ips,
     domains: s.rules.domains,
     universal: s.universal,
@@ -541,6 +575,12 @@ function engineArgs(s) {
   }
   writeRules(s);
   a.push('-rules', rulesFile());
+  const routes = routesOf(s);
+  if (routes.length) {
+    const f = path.join(dataDir(), 'routes.json');
+    fs.writeFileSync(f, JSON.stringify(routes, null, 2), { mode: 0o600 });
+    a.push('-routes', f);
+  }
   a.push('-dial-strategy', s.dialStrategy || 'never');
   if (s.dialRetry) a.push('-dial-retry', s.dialRetry);
   if (s.dialTimeout > 0) a.push('-dial-timeout', String(s.dialTimeout));
@@ -919,6 +959,91 @@ function saveBuckets(s) {
   });
 }
 
+// ---------- app updates (Android: "Check for app updates", weekly) ----------
+
+const RELEASES = 'https://api.github.com/repos/wowjes92jsj2oe0-star/port1897/releases/latest';
+
+// newer reports whether version a is above b ("0.2.0" > "0.1.9").
+function newer(a, b) {
+  const pa = String(a).split(/[.-]/).map((x) => parseInt(x, 10) || 0);
+  const pb = String(b).split(/[.-]/).map((x) => parseInt(x, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
+  }
+  return false;
+}
+
+async function checkUpdate() {
+  const current = app.getVersion();
+  try {
+    const res = await net.fetch(RELEASES, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
+    if (res.status === 404) return { ok: true, current, latest: '', newer: false };
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const j = await res.json();
+    const latest = String(j.tag_name || '').replace(/^v/, '');
+    return { ok: true, current, latest, newer: newer(latest, current), url: String(j.html_url || '') };
+  } catch (e) {
+    return { ok: false, current, error: e.message };
+  }
+}
+
+async function weeklyUpdateCheck() {
+  const s = readSettings();
+  if (!s.checkUpdates || Date.now() - s.lastUpdateCheck < 7 * 24 * HOUR) return;
+  const r = await checkUpdate();
+  if (!r.ok) return;
+  writeSettings({ ...readSettings(), lastUpdateCheck: Date.now() });
+  if (r.newer && s.notify) notify(`port1897 ${r.latest} is available: Settings → Check for app updates.`);
+}
+
+// ---------- ping test (Android: PingTestActivity) ----------
+
+function tcpPing(host, port, ms) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    const sock = nodeNet.connect({ host, port, timeout: ms });
+    const done = (ok, error) => {
+      sock.destroy();
+      resolve({ ok, ms: Date.now() - t0, error });
+    };
+    sock.once('connect', () => done(true));
+    sock.once('timeout', () => done(false, 'timed out'));
+    sock.once('error', (e) => done(false, e.code || e.message));
+  });
+}
+
+async function pingTest(q) {
+  const out = {};
+  const ip = String(q.ip || '').trim();
+  const host = String(q.host || '').trim();
+  const url = String(q.url || '').trim();
+  if (ip) out.ip = nodeNet.isIP(ip) ? await tcpPing(ip, 443, 5000) : { ok: false, error: 'not an IP address' };
+  if (host) {
+    const t0 = Date.now();
+    try {
+      if (!/^[a-z0-9.-]+$/i.test(host)) throw new Error('not a host name');
+      const a = await dnsPromises.lookup(host, { all: true });
+      out.host = { ok: true, ms: Date.now() - t0, answer: a.map((x) => x.address).join(', ') };
+    } catch (e) {
+      out.host = { ok: false, ms: Date.now() - t0, error: e.code || e.message };
+    }
+  }
+  if (url) {
+    const t0 = Date.now();
+    try {
+      if (!/^https?:\/\/[^\s]+$/.test(url)) throw new Error('not a web address');
+      const ac = new AbortController();
+      const t = setTimeout(() => ac.abort(), 10000);
+      const res = await net.fetch(url, { method: 'HEAD', signal: ac.signal, cache: 'no-store' });
+      clearTimeout(t);
+      out.url = { ok: res.status < 500, ms: Date.now() - t0, answer: 'HTTP ' + res.status };
+    } catch (e) {
+      out.url = { ok: false, ms: Date.now() - t0, error: e.name === 'AbortError' ? 'timed out' : e.message };
+    }
+  }
+  return out;
+}
+
 // ---------- notifications and the status loop ----------
 
 function notify(body) {
@@ -1245,6 +1370,12 @@ ipcMain.handle('net:checkExit', async () => {
   }
 });
 
+ipcMain.handle('net:ping', (_e, q) => pingTest(q || {}));
+ipcMain.handle('app:checkUpdate', async () => {
+  const r = await checkUpdate();
+  if (r.ok) writeSettings({ ...readSettings(), lastUpdateCheck: Date.now() });
+  return r;
+});
 ipcMain.handle('log:engine', (_e, filter) => engineLogText(String(filter || '')));
 ipcMain.handle('log:clear', () => {
   try {
@@ -1342,6 +1473,8 @@ if (!app.requestSingleInstanceLock()) {
     powerMonitor.on('unlock-screen', () => onLock(false));
     setInterval(statusLoop, 1500);
     setInterval(() => saveBuckets(readSettings()), 60 * 1000);
+    setTimeout(weeklyUpdateCheck, 30 * 1000);
+    setInterval(weeklyUpdateCheck, 6 * HOUR);
     if (autostart && readSettings().wasRunning) {
       const r = await startEngine();
       if (!r.ok) notify('Could not resume protection: ' + r.error);

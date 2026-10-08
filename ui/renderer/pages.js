@@ -511,7 +511,7 @@ PAGES.wireguard = () => {
               row({
                 ico: 'ic_wireguard_icon',
                 title: w.name,
-                sub: w.endpoint ? `Endpoint ${w.endpoint}` : 'WireGuard',
+                sub: (w.endpoint ? `Endpoint ${w.endpoint}` : 'WireGuard') + wgUsers(w.id),
                 onclick: () => App.go('wg-edit', { id: w.id }),
                 right: toggle(s.exit === 'wg' && s.wgActive === w.id, (on) => save(on ? { exit: 'wg', wgActive: w.id } : { exit: 'none' })),
               })
@@ -537,8 +537,16 @@ PAGES.wireguard = () => {
       items.style.gap = '14px';
     } })
   );
-  return screen('WireGuard', list, note('Free WireGuard configs: Proton VPN’s free plan and many providers let you download a .conf file.'), menu);
+  return screen('WireGuard', list, note('Free WireGuard configs: Proton VPN’s free plan and many providers let you download a .conf file.'), note('Split tunnel: to send only some apps through a config, open the app (Apps → app → Route through). The switch here makes a config the main VPN for every other app.'), menu);
 };
+
+// Apps routed through WireGuard config id (App info → Route through).
+function wgUsers(id) {
+  const users = Object.entries(App.settings.rules.apps)
+    .filter(([, r]) => r.route === 'wg:' + id)
+    .map(([n]) => n);
+  return users.length ? ` · used by ${users.join(', ')}` : '';
+}
 
 async function importWg() {
   const r = await App.port.wg.importFile();
@@ -751,6 +759,7 @@ PAGES.network = () => {
     ),
     card(
       row({ ico: 'ic_fallback', title: 'Choose fallback DNS', sub: `In rare cases when your chosen DNS can't be reached, fallback DNS is used. Now: ${s.fallbackName}`, right: chevron(), onclick: chooseFallback }),
+      row({ ico: 'ic_connectivity_checks', title: 'Ping test', sub: 'Check what this PC can reach: an IP, a DNS lookup and a website.', right: chevron(), onclick: () => App.go('ping') }),
       row({ ico: 'ic_ip_network', title: 'Choose IP version', sub: 'IPv4 (IPv6 support comes later; IPv6 is blocked while the kill switch is on)', right: chevron(), onclick: () => toast('IPv4 only for now') })
     ),
     sectionLabel('Anti-censorship'),
@@ -866,6 +875,9 @@ PAGES.settings = () => {
         )
       )
     ),
+    card(
+      row({ ico: 'ic_refresh_white', title: 'Check for app updates', sub: 'Automatically check for app updates once a week, on github.com.', right: h('div', { class: 'actions' }, btn('Check now', checkUpdateNow), toggle(s.checkUpdates, (v) => save({ checkUpdates: v }, true), 'Check for app updates')) })
+    ),
     sectionLabel('Logs'),
     card(
       switchRow({ ico: 'ic_logs', title: 'Enable on-device logging', sub: 'Store DNS and firewall logs and stats on this PC (7 days), for the Stats and Logs screens.', value: s.history, onchange: (v) => save({ history: v }, true) }),
@@ -914,6 +926,7 @@ PAGES.applogs = () => {
 // ---------- Logs ----------
 
 let logFilter = 'flow';
+let logShow = 'all';
 PAGES.logs = () => {
   const list = h('div', { class: 'group' });
   const search = field({ placeholder: 'Search app or domain', oninput: () => fillLog(list, search.input.value) });
@@ -934,9 +947,18 @@ PAGES.logs = () => {
       )
     )
   );
+  const shows = h(
+    'div',
+    { class: 'chips center' },
+    [['all', 'All'], ['allowed', 'Allowed'], ['blocked', 'Blocked']].map(([id, name]) => h('button', { class: 'chip' + (logShow === id ? ' on' : ''), type: 'button', text: name, onclick: () => {
+      logShow = id;
+      shows.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c.textContent === name));
+      fillLog(list, search.input.value);
+    } }))
+  );
   PAGE_TICK.logs = () => fillLog(list, search.input.value);
   fillLog(list, '');
-  return screen('Logs', tabs, h('div', { class: 'field-row' }, search), list);
+  return screen('Logs', tabs, shows, h('div', { class: 'field-row' }, search), list);
 };
 
 // Website icon from DuckDuckGo when "Show website icon" is on; else the DNS
@@ -954,7 +976,7 @@ function siteIcon(domain) {
 function fillLog(list, q) {
   q = (q || '').trim().toLowerCase();
   const rows = App.events
-    .filter((e) => e.kind === logFilter)
+    .filter((e) => e.kind === logFilter && (logShow === 'all' || (logShow === 'blocked') === !!e.blocked))
     .filter((e) => !q || (e.app || '').toLowerCase().includes(q) || (e.domain || '').toLowerCase().includes(q) || (e.dst || '').includes(q))
     .slice(-300)
     .reverse();

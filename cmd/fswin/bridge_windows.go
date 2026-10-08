@@ -80,6 +80,8 @@ type bridge struct {
 	bypass atomic.Value // string: lowercased exe path let straight out (usque)
 	dnsTID atomic.Value // string: transport DNS queries go to
 
+	routes atomic.Pointer[map[string]string] // per-app routes that loaded: id -> name
+
 	dnsDirect bool // never send DNS through the exit
 	dnsCache  bool // "DNS booster": answer repeat lookups from the cache
 	dnssec    bool // block bogus (bogon) answers, as DnsSecGuard does
@@ -342,8 +344,14 @@ func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probable
 		verdict = " BLOCKED"
 	} else if d.noProxy {
 		pid = x.Base
+	} else if d.route != "" && b.routeName(d.route) != "" {
+		pid = d.route
 	}
 	app := b.appName(uid)
+	via := exitName(pid)
+	if n := b.routeName(pid); n != "" {
+		via = n
+	}
 	b.logf("flow  #%s %s %s %s -> %s [%s]%s %s",
 		cid, proto(protocol), app, src.V(), dst.V(), strings.Join(doms, ","), verdict, d.why)
 	domain := ""
@@ -357,7 +365,7 @@ func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probable
 		b.conns.add(cid, liveConn{uid: uid, proto: protocol, dst: dap, domains: doms, app: app, at: time.Now().UnixMilli()})
 	}
 	b.log.add(event{Kind: "flow", App: app, Proto: proto(protocol), Dst: dst.V(),
-		Domain: domain, Via: exitName(pid), Blocked: d.block, Rule: d.why, CID: cid})
+		Domain: domain, Via: via, Blocked: d.block, Rule: d.why, CID: cid})
 	return &intra.Mark{PIDCSV: pid, CID: cid, UID: strconv.Itoa(int(uid))}
 }
 

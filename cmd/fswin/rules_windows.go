@@ -53,6 +53,7 @@ type appRule struct {
 	Mode       string `json:"mode,omitempty"`
 	AllowUntil int64  `json:"allowUntil,omitempty"` // unix millis: "Allow for 15 minutes"
 	NoProxy    bool   `json:"noProxy,omitempty"`    // "Bypass app from all proxies"
+	Route      string `json:"route,omitempty"`      // a per-app route (routes_windows.go) instead of the exit
 }
 
 type ipRule struct {
@@ -348,6 +349,7 @@ func (r *rules) dnsVerdict(domain string, qtyp int, now int64) (block, trust boo
 type decision struct {
 	block   bool
 	noProxy bool   // leave directly, not through the VPN exit
+	route   string // leave through this per-app route, if loaded
 	why     string // the rule that decided, for the logs
 }
 
@@ -364,9 +366,9 @@ func (r *rules) decide(protocol int32, path string, known bool, dst netip.AddrPo
 	case modeExclude:
 		return decision{noProxy: true, why: "app excluded"}
 	case modeBypass:
-		return decision{noProxy: a.NoProxy, why: "app bypasses DNS & firewall"}
+		return decision{noProxy: a.NoProxy, route: a.Route, why: "app bypasses DNS & firewall"}
 	}
-	allow := func(why string) decision { return decision{noProxy: a.NoProxy, why: why} }
+	allow := func(why string) decision { return decision{noProxy: a.NoProxy, route: a.Route, why: why} }
 	blocked := func(why string) decision { return decision{block: true, why: why} }
 
 	if r.isPaused(ms) {

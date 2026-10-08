@@ -104,6 +104,7 @@ type options struct {
 	filetag        string // filetag.json naming the lists a RethinkDNS server blocks by
 
 	rulesFile    string
+	routesFile   string // per-app WireGuard and proxy routes
 	dialStrategy string // anti-censorship: never, auto, split-tcp, split-tls
 	dialRetry    string // never, split (retry with split), plain (retry as-is)
 	dialTimeout  int    // seconds; 0 for the default
@@ -157,6 +158,7 @@ func main() {
 	flag.StringVar(&o.blocklistDir, "blocklists", "", "folder with the on-device RethinkDNS blocklists (td.txt, rd.txt, basicconfig.json, filetag.json)")
 	flag.StringVar(&o.blocklistStamp, "blocklist-stamp", "", "RethinkDNS stamp of the on-device blocklists to block, e.g. 1-...")
 	flag.StringVar(&o.filetag, "filetag", "", "filetag.json, to name the blocklists a RethinkDNS server blocked a domain by")
+	flag.StringVar(&o.routesFile, "routes", "", "per-app routes (JSON list of {id, name, kind: wg|proxy, file|url}): extra WireGuard tunnels or proxies that apps with a route rule use instead of the exit")
 	flag.StringVar(&o.rulesFile, "rules", "", "firewall rules (JSON, as the app writes them) to start with; the app updates them through -api")
 	flag.StringVar(&o.dialStrategy, "dial-strategy", dialNever, "anti-censorship: never (connect as-is), auto, split-tcp (split the first TCP segment) or split-tls (fragment the TLS ClientHello)")
 	flag.StringVar(&o.dialRetry, "dial-retry", "", "when a connection fails: never, split (retry with the split) or plain (retry as-is); default: never for -dial-strategy never, else plain")
@@ -303,6 +305,17 @@ func run(o options) error {
 			return fmt.Errorf("add exit %s: %w", exitID, err)
 		}
 		b.setExit(exitID)
+	}
+
+	if o.routesFile != "" {
+		r, err := loadRoutes(t, o.routesFile)
+		if err != nil {
+			fmt.Println("fswin: routes:", err)
+		}
+		b.setRoutes(r)
+		if len(r) > 0 {
+			o.full = true // routes only see traffic in the tunnel
+		}
 	}
 
 	if o.nrpt {

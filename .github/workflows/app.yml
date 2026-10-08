@@ -52,6 +52,11 @@ jobs:
       - name: Check scripts
         shell: bash
         run: for f in ui/main.js ui/preload.js ui/renderer/*.js; do node --check "$f"; done
+      - name: Version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        working-directory: ui
+        run: npm pkg set version="${GITHUB_REF_NAME#v}"
       - name: Build installer and portable exe
         shell: bash
         working-directory: ui
@@ -64,3 +69,28 @@ jobs:
         with:
           name: port1897-app-windows-x64
           path: ui/dist/*.exe
+
+  # Pushing a tag like v0.2.0 publishes the build as a GitHub release.
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: app
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: port1897-app-windows-x64
+          path: dist
+      - name: Checksums
+        run: cd dist && sha256sum *.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --repo "$GITHUB_REPOSITORY"
+          --title "port1897 $GITHUB_REF_NAME"
+          --generate-notes
+          --prerelease

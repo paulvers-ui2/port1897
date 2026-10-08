@@ -234,6 +234,7 @@ async function main() {
   await poll();
   App.render();
   setInterval(poll, 1000);
+  if (!App.settings.welcomed) showWelcome();
 }
 
 main();
@@ -357,6 +358,8 @@ function demoPort() {
       importFile: async () => ({}),
     },
     checkExit: async () => ({ ip: '104.28.0.1', loc: 'DE', colo: 'FRA', warp: 'on' }),
+    ping: async () => ({ ip: { ok: true, ms: 18 }, host: { ok: true, ms: 9, answer: '142.250.74.36' }, url: { ok: false, ms: 10000, error: 'timed out' } }),
+    checkUpdate: async () => ({ ok: true, current: '0.1.0', latest: '', newer: false }),
     engineLog: async () => 'usque: demo log line',
     clearLog: async () => {},
     copy: async () => {},
