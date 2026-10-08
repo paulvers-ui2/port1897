@@ -31,6 +31,17 @@ on:
         description: "SBOM info JSON blob with subjects and digest"
         required: false
         type: string
+    secrets:
+      OSSRH_USERNAME:
+        required: false
+      OSSRH_TOKEN:
+        required: false
+      OSSRH_CELZERO_NAMESPACE:
+        required: false
+      OSSRH_CELZERO_GPG_PRIVATE_KEY:
+        required: false
+      OSSRH_CELZERO_GPG_PASSPHRASE:
+        required: false
 
 jobs:
 

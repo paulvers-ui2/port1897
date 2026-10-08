@@ -83,7 +83,8 @@ func startUsque(s usqueSetup) (*usque, error) {
 	args = append(args, "-b", "127.0.0.1", "-p", fmt.Sprint(port), "-u", user, "-w", pass)
 	args = append(args, s.extra...)
 
-	cmd := exec.Command(s.exe, args...)
+	// usque.exe beside fswin.exe; argv only, no shell; flags checked by usqueFlags
+	cmd := exec.Command(s.exe, args...) // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd.Dir = s.dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 	out, err := cmd.StdoutPipe()
@@ -130,7 +131,8 @@ func usqueRegister(s usqueSetup, cfg string) error {
 		return nil
 	}
 	s.logf("usque: registering a free WARP identity in %s", cfg)
-	cmd := exec.Command(s.exe, "-c", cfg, "register", "--accept-tos")
+	// usque.exe beside fswin.exe; argv only, no shell
+	cmd := exec.Command(s.exe, "-c", cfg, "register", "--accept-tos") // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd.Dir = s.dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 	b, err := cmd.CombinedOutput()
@@ -224,6 +226,8 @@ var coreFlags = map[string]bool{
 	"-b": true, "--bind": true, "-p": true, "--port": true,
 	"-u": true, "--username": true, "-w": true, "--password": true,
 	"-c": true, "--config": true, "--wg": true, "--exit-config": true,
+	// usque runs these paths as programs, as admin under fswin
+	"--on-connect": true, "--on-disconnect": true,
 }
 
 // usqueFlags splits extra, space-separated usque flags and refuses the
@@ -232,7 +236,13 @@ func usqueFlags(s string) ([]string, error) {
 	f := strings.Fields(s)
 	for _, a := range f {
 		name, _, _ := strings.Cut(a, "=")
-		if coreFlags[name] {
+		if len(name) > 2 && name[0] == '-' && name[1] != '-' {
+			// pflag reads -b0.0.0.0, and -6b 0.0.0.0 after bool shorthands, as -b
+			if i := strings.IndexAny(name[1:], "bpuwc"); i >= 0 {
+				name = "-" + name[1+i:2+i]
+			}
+		}
+		if coreFlags[name] || strings.HasSuffix(name, "-on-connect") || strings.HasSuffix(name, "-on-disconnect") {
 			return nil, fmt.Errorf("usque flag %s belongs to the fixed core", name)
 		}
 		switch a {

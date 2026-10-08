@@ -1,0 +1,6 @@
+# Passed with --config by .github/workflows/security.yml (without --config,
+# osv-scanner only reads an osv-scanner.toml next to each scanned file).
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "Covers only golang.org/x/crypto/openpgp/* and has no fixed version; nothing imports those packages (only curve25519, ed25519, nacl/box, nacl/secretbox). govulncheck: module required, package not imported."

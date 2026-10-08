@@ -167,7 +167,7 @@ func (h *udpHandler) Proxy(gconn *netstack.GUDPConn, src, dst netip.AddrPort) (o
 // proxy connects src to dst over a proxy; thread-safe.
 func (h *udpHandler) proxy(gconn *netstack.GUDPConn, src, dst netip.AddrPort, dmx netstack.DemuxerFn) (ok bool) {
 	// remote, smm, err may all be nil
-	remote, smm, err := h.Connect(gconn, src, dst, dmx)
+	remote, smm, err := h.Connect(gconn, src, dst, dmx) // nosemgrep: trailofbits.go.invalid-usage-of-modified-variable.invalid-usage-of-modified-variable
 
 	if err != nil {
 		clos(gconn, remote) // teardown

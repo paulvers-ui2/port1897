@@ -221,7 +221,8 @@ func (sed *sedialer) Dial(network, dest string) (conn net.Conn, err error) {
 	}
 
 	// Verify peer cert chain with missing cert ourselves
-	conn = tls.Client(conn, &tls.Config{
+	// SE RPN only (unused by fswin); chain verified in tlsVerify
+	conn = tls.Client(conn, &tls.Config{ // nosemgrep: problem-based-packs.insecure-transport.go-stdlib.bypass-tls-verification.bypass-tls-verification, go.lang.security.audit.crypto.missing-ssl-minversion.missing-ssl-minversion
 		ServerName:         "", // avoid sending sni
 		InsecureSkipVerify: true,
 		VerifyConnection:   sed.tlsVerify,

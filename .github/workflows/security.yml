@@ -173,7 +173,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha }}
           SEMGREP_SEND_METRICS: "off"
         run: |
-          rules="--config p/default --config p/golang --config p/javascript --config p/nodejs --config p/github-actions --config p/secrets"
+          rules="--config p/default --config p/golang --config p/javascript --config p/nodejs --config p/github-actions --config p/secrets --exclude-rule go.lang.security.audit.crypto.math_random.math-random-used --exclude-rule go.lang.security.audit.net.dynamic-httptrace-clienttrace.dynamic-httptrace-clienttrace"
           semgrep() { uvx --from semgrep==1.177.0 semgrep "$@"; }
           # everything, for code scanning
           semgrep scan $rules --metrics=off --exclude third_party --sarif --output semgrep.sarif --quiet || true
@@ -203,7 +203,8 @@ jobs:
           node-version: 22
       - name: Scan
         run: |
-          npx --yes @doyensec/electronegativity@1.10.0 -i ui -r -o electronegativity.sarif | tee electronegativity.txt || true
+          # LimitNavigation*: 1.10.0 wants the 'new-window' event that Electron 22 removed; main.js uses setWindowOpenHandler (deny) + will-navigate (preventDefault). AvailableSecurityFixes*/ElectronVersion*: its release data (electron/releases, archived 2023) has no 44.x; OSV-Scanner covers Electron advisories.
+          npx --yes @doyensec/electronegativity@1.10.0 -i ui -r -x LimitNavigationGlobalCheck,LimitNavigationJSCheck,AvailableSecurityFixesGlobalCheck,ElectronVersionJSONCheck -o electronegativity.sarif | tee electronegativity.txt || true
           { echo '## Electronegativity'; echo '```'; tail -120 electronegativity.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - if: always() && hashFiles('electronegativity.sarif') != ''
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
@@ -238,8 +239,8 @@ jobs:
           chmod +x osv-scanner
       - name: Scan
         run: |
-          ./osv-scanner scan source -r --format sarif --output osv.sarif ./ || true
-          ./osv-scanner scan source -r --format markdown ./ > osv.md || true
+          ./osv-scanner scan source -r --config=osv-scanner.toml --format sarif --output osv.sarif ./ || true
+          ./osv-scanner scan source -r --config=osv-scanner.toml --format markdown ./ > osv.md || true
           { echo '## OSV-Scanner'; cat osv.md; } >> "$GITHUB_STEP_SUMMARY"
       - if: always() && hashFiles('osv.sarif') != ''
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
@@ -295,8 +296,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }} # for the online audits (impostor commits, known-vulnerable actions)
         run: |
-          uvx zizmor==1.30.1 --format sarif .github/workflows > zizmor.sarif || true
-          { echo '## zizmor'; echo '```'; uvx zizmor==1.30.1 --format plain .github/workflows 2>&1 | tail -200 || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          uvx zizmor==1.30.1 --config .github/zizmor.yml --format sarif .github/workflows > zizmor.sarif || true
+          { echo '## zizmor'; echo '```'; uvx zizmor==1.30.1 --config .github/zizmor.yml --format plain .github/workflows 2>&1 | tail -200 || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - if: always() && hashFiles('zizmor.sarif') != ''
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
         with:

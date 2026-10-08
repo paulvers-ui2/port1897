@@ -62,8 +62,17 @@ func setupDNS(t intra.Tunnel, o options, binder *ifbind.Binder) (tid, label stri
 		if o.dot == "" {
 			return "", "", fmt.Errorf("-dns dot needs -dot")
 		}
-		err = intra.AddDoTTransport(t, x.StrOf(x.Preferred), x.StrOf(o.dot), x.StrOf(o.dotIPs))
-		return x.Preferred, o.dot, err
+		// firestack checks the server certificate only for tls: URLs; a bare
+		// host[:port] means no PKI, so always send tls://host[:port]
+		dot := o.dot
+		if l := strings.ToLower(dot); strings.HasPrefix(l, "tls://") {
+			dot = dot[len("tls://"):]
+		} else if strings.HasPrefix(l, "tls:") {
+			dot = dot[len("tls:"):]
+		}
+		dot = "tls://" + dot
+		err = intra.AddDoTTransport(t, x.StrOf(x.Preferred), x.StrOf(dot), x.StrOf(o.dotIPs))
+		return x.Preferred, dot, err
 	case dnsDNSCrypt:
 		if o.dnscrypt == "" {
 			return "", "", fmt.Errorf("-dns dnscrypt needs -dnscrypt")

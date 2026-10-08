@@ -3,6 +3,11 @@ name: Cryptography BoM
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: read
+  security-events: read
+
 jobs:
 
   # github.com/advanced-security/cbom-action

@@ -399,7 +399,7 @@ func (b *bridge) OnSocketClosed(s *intra.SocketSummary) {
 	b.log.rx.Add(s.Rx)
 	b.log.tx.Add(s.Tx)
 	app := "?"
-	if u, err := strconv.Atoi(s.UID); err == nil {
+	if u, err := strconv.ParseInt(s.UID, 10, 32); err == nil {
 		app = b.appName(int32(u))
 	}
 	b.log.add(event{Kind: "close", App: app, Proto: s.Proto, Dst: s.Target,
@@ -473,7 +473,7 @@ func (b *bridge) OnResponse(s *x.DNSSummary) {
 		why = "blocklists: " + s.Blocklists
 	}
 	app := ""
-	if u, err := strconv.Atoi(s.UID); err == nil {
+	if u, err := strconv.ParseInt(s.UID, 10, 32); err == nil {
 		app = b.appName(int32(u)) // who asked; "?" if unknown
 	}
 	b.log.add(event{Kind: "dns", App: app, Domain: strings.TrimSuffix(s.QName, "."), Answer: s.RData,

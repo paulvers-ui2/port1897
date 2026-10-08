@@ -108,7 +108,8 @@ func NewSEasyClient(d protect.RDialer) (sec *SEApi, err error) {
 		IdleConnTimeout:       2 * time.Minute,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
-		TLSClientConfig: &tls.Config{
+		// SE RPN API, unused by fswin; reported upstream
+		TLSClientConfig: &tls.Config{ // nosemgrep: problem-based-packs.insecure-transport.go-stdlib.bypass-tls-verification.bypass-tls-verification, go.lang.security.audit.crypto.missing-ssl-minversion.missing-ssl-minversion
 			InsecureSkipVerify:     true, // custom validation
 			SessionTicketsDisabled: false,
 			ClientSessionCache:     core.TlsSessionCache(),

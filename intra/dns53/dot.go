@@ -62,7 +62,8 @@ var _ dnsx.Transport = (*dot)(nil)
 
 // NewTLSTransport returns a DNS over TLS transport, ready for use.
 func NewTLSTransport(ctx context.Context, id, rawurl string, addrs []string, px ipn.ProxyProvider) (t *dot, err error) {
-	tlscfg := &tls.Config{
+	// no-PKI only for non-tls: URLs; fswin always passes tls://
+	tlscfg := &tls.Config{ // nosemgrep: problem-based-packs.insecure-transport.go-stdlib.bypass-tls-verification.bypass-tls-verification
 		MinVersion:             tls.VersionTLS12,
 		SessionTicketsDisabled: false,
 	}
@@ -434,8 +435,7 @@ func url2addrport(url string) (string, uint16) {
 	if _, p, err := net.SplitHostPort(url); err != nil {
 		url = net.JoinHostPort(url, DotPort)
 	} else {
-		v, err := strconv.Atoi(p)
-		if err != nil && v > 0 {
+		if v, err := strconv.ParseUint(p, 10, 16); err == nil && v > 0 {
 			port = uint16(v)
 		}
 	}

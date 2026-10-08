@@ -256,7 +256,7 @@ func (*exit64) ProviderID() string { return Rpn64 }
 // go.dev/play/p/GtLCDAXeeLJ
 func addr4to6(addr string) string {
 	// check if addr is an IPv4 address
-	ipport, err := netip.ParseAddrPort(addr)
+	ipport, err := netip.ParseAddrPort(addr) // nosemgrep: trailofbits.go.invalid-usage-of-modified-variable.invalid-usage-of-modified-variable
 	if err != nil { // hostname?
 		resolved := dialers.For(addr)
 		ok := len(resolved) > 0

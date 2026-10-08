@@ -14,17 +14,21 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 'Attach AAR to release'; the rethink-app push uses RETHINK_APP_PUSH_TOKEN
     steps:
       - name: Checkout firestack
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: "1.26.x"
           check-latest: true
+          cache: false # release build
 
       - name: Set up JDK (for Android/gomobile toolchain)
         uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
@@ -70,7 +74,8 @@ jobs:
             build/intra/tun2socks-sources.jar
 
       # --- 2. Push AAR into paulvers-ui/rethink-app:app/firestack ---
-      - name: Checkout rethink-app
+      # credentials must persist: the 'Commit and push' step pushes with this PAT; nothing uploads or runs third-party code after it
+      - name: Checkout rethink-app # zizmor: ignore[artipacked]
         if: github.event_name == 'release'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -88,6 +93,8 @@ jobs:
       - name: Commit and push to rethink-app
         if: github.event_name == 'release'
         working-directory: rethink-app
+        env:
+          TAG: ${{ github.event.release.tag_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -95,6 +102,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
-            git commit -m "chore: update firestack AAR to ${{ github.event.release.tag_name }}"
+            git commit -m "chore: update firestack AAR to ${TAG}"
             git push origin HEAD
           fi
