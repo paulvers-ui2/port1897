@@ -9,7 +9,7 @@
 // programs it names. Adapted from wireguard-windows' tunnel/firewall (MIT;
 // helpers.go, rules.go, syscall_windows.go, types_windows*.go and
 // zsyscall_windows.go are its files, unchanged except for the package name,
-// build tags and fwpmFilterAdd0 renamed to fwpmFilterAdd0Raw). Unlike
+// build tags (windows added) and fwpmFilterAdd0 renamed to fwpmFilterAdd0Raw). Unlike
 // WireGuard's dynamic session, the rules here can be persistent, so traffic
 // stays blocked if the engine crashes. Windows only.
 package wfp
