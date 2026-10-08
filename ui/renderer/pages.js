@@ -1175,7 +1175,7 @@ PAGES.about = () =>
       h('p', { class: 'desc', text: 'Built on firestack, the open-source engine of the Rethink DNS + Firewall Android app, with usque for WARP over MASQUE.' }),
       h('p', { class: 'desc', text: 'Early test software. Unofficial: not affiliated with Celzero (Rethink), Cloudflare, WireGuard LLC or Microsoft.' }),
       h('p', { class: 'desc', text: 'Engine: ' + (App.status ? `fswin ${App.status.version}, running` : 'not running') }),
-      h('div', { class: 'actions' }, btn('Source code', () => App.port.openUrl('https://github.com/wowjes92jsj2oe0-star/port1897')), btn('Send a test report', () => App.port.openUrl('https://github.com/wowjes92jsj2oe0-star/port1897/issues/new?template=test_report.yml')))
+      h('div', { class: 'actions' }, btn('Source code', () => App.port.openUrl('https://github.com/paulvers-ui2/port1897')), btn('Send a test report', () => App.port.openUrl('https://github.com/paulvers-ui2/port1897/issues/new?template=test_report.yml')))
     ),
     h(
       'div',

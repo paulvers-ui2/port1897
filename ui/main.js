@@ -978,7 +978,7 @@ function saveBuckets(s) {
 
 // ---------- app updates (Android: "Check for app updates", weekly) ----------
 
-const RELEASES = 'https://api.github.com/repos/wowjes92jsj2oe0-star/port1897/releases/latest';
+const RELEASES = 'https://api.github.com/repos/paulvers-ui2/port1897/releases/latest';
 
 // newer reports whether version a is above b ("0.2.0" > "0.1.9").
 function newer(a, b) {

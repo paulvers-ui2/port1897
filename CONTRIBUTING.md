@@ -5,12 +5,12 @@ Thanks for helping bring firestack to Windows. Every kind of help counts.
 ## Test it
 
 The most useful thing right now. Follow [Try it](README.md#try-it), then open a
-[test report](https://github.com/wowjes92jsj2oe0-star/port1897/issues/new?template=test_report.yml),
+[test report](https://github.com/paulvers-ui2/port1897/issues/new?template=test_report.yml),
 whether it worked or not. Reports from different setups matter most: Windows 10 and
 11, x64 and ARM, Wi-Fi and Ethernet, other VPNs or antivirus installed.
 
 Found something broken? Open a
-[bug report](https://github.com/wowjes92jsj2oe0-star/port1897/issues/new?template=bug_report.yml)
+[bug report](https://github.com/paulvers-ui2/port1897/issues/new?template=bug_report.yml)
 with the `fswin -version` output and the log.
 
 ## Write code
@@ -68,7 +68,7 @@ duplicated.
 ## Security issues
 
 Do not open a public issue. Use GitHub's private
-[security advisory](https://github.com/wowjes92jsj2oe0-star/port1897/security/advisories/new)
+[security advisory](https://github.com/paulvers-ui2/port1897/security/advisories/new)
 form for problems in this repository. Problems in firestack itself that also affect
 the Android app belong with [celzero/firestack](https://github.com/celzero/firestack/security).
 
