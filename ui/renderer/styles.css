@@ -10,9 +10,25 @@
   --good: #00A859;          /* accentGoodBlackPlus */
   --bad: #FF5A5E;           /* accentBadBlackPlus */
   --line: rgba(208, 225, 242, 0.12);
+  --row: #1C2A33;           /* list cards on settings screens */
   --radius: 20px;
   font-family: "Segoe UI", system-ui, sans-serif;
   color-scheme: dark;
+}
+
+/* Other Android themes (AppThemeTrueBlack, AppTheme, AppThemeWhite). */
+:root[data-theme="trueblack"] {
+  --bg: #121212; --card-a: #1b1818; --card-b: #2e2c2c; --nav: #000000; --row: #1e1e1e;
+  --text: #FDFDFD; --text-2: #4fc3f7; --good: #4fc3f7; --bad: #ff4081; --line: rgba(255, 255, 255, 0.12);
+}
+:root[data-theme="dark"] {
+  --bg: #393939; --card-a: #636363; --card-b: #444444; --nav: #2d2c2c; --row: #444444;
+  --text: #FDFDFD; --text-2: #b8f9f9; --good: #18ffff; --bad: #ff4081; --line: rgba(255, 255, 255, 0.14);
+}
+:root[data-theme="light"] {
+  --bg: #fafafa; --card-a: #ffffff; --card-b: #eaf1f8; --nav: #eceff1; --row: #ffffff;
+  --text: #111111; --text-2: #005cb2; --good: #005cb2; --bad: #ff1744; --line: rgba(0, 0, 0, 0.12);
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -193,105 +209,10 @@ button { cursor: pointer; }
   color: var(--bad);
 }
 
-/* ---- other pages ---- */
-.page-title {
-  margin: 0 0 20px;
-  font-size: 22px;
-  font-weight: 300;
-  letter-spacing: 0.1em;
-}
-.panel {
-  margin-bottom: 16px;
-  padding: 18px 20px;
-  border-radius: var(--radius);
-  background: linear-gradient(45deg, var(--card-a), var(--card-b));
-}
-.panel h2 {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 0 0 10px;
-  font-size: 18px;
-  font-weight: 300;
-}
+/* ---- text shared by several screens ---- */
 .desc { margin: 6px 0; color: var(--text-2); font-size: 14px; line-height: 1.45; }
-.hint { color: var(--text-2); font-size: 14px; text-align: center; }
-
-.choices { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; margin-top: 10px; }
-.choice, .toggle {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  cursor: pointer;
-}
-.toggle { margin-top: 8px; }
-.choice:has(input:checked) { border-color: var(--good); }
-.choice span, .toggle span { display: flex; flex-direction: column; gap: 2px; }
-.choice small, .toggle small { color: var(--text-2); font-size: 12px; }
-input[type="radio"], input[type="checkbox"] { accent-color: var(--good); margin-top: 3px; }
-
-.row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin-top: 12px; }
-.row label { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 200px; font-size: 13px; color: var(--text-2); }
-input[type="text"], input[type="url"], input[type="search"] {
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.25);
-  color: var(--text);
-}
-.path { flex: 1; color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; }
-.btn {
-  padding: 8px 16px;
-  border: 1px solid var(--good);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text);
-}
-.btn:hover { background: rgba(0, 168, 89, 0.15); }
-
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
-.chips li {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px 4px 12px;
-  border-radius: 999px;
-  background: rgba(255, 90, 94, 0.15);
-}
-.chips button { border: 0; background: none; font-size: 16px; line-height: 1; padding: 2px 6px; }
-.chips .empty { background: none; padding: 0; color: var(--text-2); font-size: 14px; }
-
-/* stats */
-.stats-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.bars { margin: 0; padding: 0; list-style: none; }
-.bars li { position: relative; display: flex; justify-content: space-between; gap: 8px; padding: 6px 8px; margin-bottom: 4px; border-radius: 6px; font-size: 14px; overflow: hidden; }
-.bars .bar { position: absolute; inset: 0 auto 0 0; background: rgba(0, 168, 89, 0.18); z-index: 0; }
-.bars span { position: relative; z-index: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* logs */
-.tabs { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
-.tab { padding: 6px 14px; border: 1px solid var(--line); border-radius: 999px; background: none; }
-.tab.active { border-color: var(--good); background: rgba(0, 168, 89, 0.15); }
-.search { margin-left: auto; min-width: 220px; }
-.log { margin: 0; padding: 0; list-style: none; }
-.log li {
-  display: grid;
-  grid-template-columns: 64px 140px 1fr auto;
-  gap: 10px;
-  align-items: center;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line);
-  font-size: 13px;
-}
-.log .t { color: var(--text-2); font-variant-numeric: tabular-nums; }
-.log .a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.log .d { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
-.log .d b { color: var(--text); font-weight: 400; }
-.log .blocked { color: var(--bad); }
-.log .act { padding: 3px 10px; border: 1px solid var(--line); border-radius: 8px; background: none; font-size: 12px; }
+input[type="radio"], input[type="checkbox"] { accent-color: var(--good); }
+.row.blocked .row-title { color: var(--bad); }
 
 /* ---- bottom navigation ---- */
 .bottom-nav {
@@ -320,6 +241,4 @@ input[type="text"], input[type="url"], input[type="search"] {
 @media (max-width: 860px) {
   .page { padding: 20px 20px 28px; }
   .apps-grid { grid-template-columns: repeat(2, minmax(80px, 1fr)); }
-  .stats-cols { grid-template-columns: 1fr; }
-  .log li { grid-template-columns: 56px 100px 1fr auto; }
 }

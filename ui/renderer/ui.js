@@ -1,0 +1,197 @@
+// Copyright (c) 2026 RethinkDNS and its authors.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+// Small DOM builders that mimic the Android app's Material widgets: section
+// labels, grouped cards with icon rows, switches, outlined buttons, fields.
+// Text always goes in as text nodes; only ICONS (static) are set as HTML.
+
+'use strict';
+
+// h('div', {class: 'x', onclick: f}, child, 'text', ...)
+function h(tag, attrs, ...children) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === 'class') e.className = v;
+    else if (k === 'text') e.textContent = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (k === 'value') e.value = v;
+    else if (k === 'checked') e.checked = !!v;
+    else e.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of children.flat()) {
+    if (c === null || c === undefined || c === false) continue;
+    e.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return e;
+}
+
+function icon(name, cls) {
+  const s = h('span', { class: 'ico ' + (cls || '') });
+  s.innerHTML = ICONS[name] || ''; // static icon markup only
+  return s;
+}
+
+function sectionLabel(text) {
+  return h('h3', { class: 'section-label', text });
+}
+
+function card(...children) {
+  return h('div', { class: 'group' }, ...children);
+}
+
+// A settings row: icon, title, subtitle, and something on the right.
+function row({ ico, title, sub, right, onclick, cls }) {
+  const r = h(
+    onclick ? 'button' : 'div',
+    { class: 'row ' + (cls || ''), onclick, type: onclick ? 'button' : undefined },
+    ico ? icon(ico, 'row-ico') : h('span', { class: 'row-ico' }),
+    h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: title }), sub ? h('span', { class: 'row-sub', text: sub }) : null),
+    right || null
+  );
+  return r;
+}
+
+function chevron() {
+  return icon('ic_right_arrow_white', 'chev');
+}
+
+// Material-style switch. onchange gets the new value.
+function toggle(checked, onchange, label) {
+  const input = h('input', { type: 'checkbox', checked, 'aria-label': label || 'toggle' });
+  input.addEventListener('change', (e) => {
+    e.stopPropagation();
+    onchange(input.checked);
+  });
+  const sw = h('label', { class: 'switch', onclick: (e) => e.stopPropagation() }, input, h('span', { class: 'track' }), h('span', { class: 'thumb' }));
+  return sw;
+}
+
+function btn(text, onclick, opts) {
+  opts = opts || {};
+  return h('button', {
+    class: 'obtn ' + (opts.primary ? 'primary ' : '') + (opts.wide ? 'wide ' : '') + (opts.cls || ''),
+    onclick,
+    type: 'button',
+    disabled: opts.disabled,
+    text,
+  });
+}
+
+function field({ label, value, placeholder, multiline, mono, oninput, type }) {
+  const input = multiline
+    ? h('textarea', { class: 'fld-input' + (mono ? ' mono' : ''), placeholder, spellcheck: 'false', rows: 8 })
+    : h('input', { class: 'fld-input' + (mono ? ' mono' : ''), type: type || 'text', placeholder, spellcheck: 'false' });
+  input.value = value || '';
+  if (oninput) input.addEventListener('input', () => oninput(input.value));
+  const wrap = h('label', { class: 'fld' }, label ? h('span', { class: 'fld-label', text: label }) : null, input);
+  wrap.input = input;
+  return wrap;
+}
+
+function note(text, cls) {
+  return h('p', { class: 'note ' + (cls || ''), text });
+}
+
+function dot(state) {
+  return h('span', { class: 'dot ' + (state || '') });
+}
+
+// Collapsible "Advanced" section.
+function expander(title, build) {
+  const body = h('div', { class: 'exp-body', hidden: true });
+  const head = h(
+    'button',
+    {
+      class: 'exp-head',
+      type: 'button',
+      onclick: () => {
+        const open = body.hidden;
+        body.hidden = !open;
+        head.classList.toggle('open', open);
+        if (open && !body.childElementCount) body.append(...[build()].flat());
+      },
+    },
+    h('span', { text: title }),
+    icon('ic_keyboard_arrow_down', 'exp-arrow')
+  );
+  return h('div', { class: 'exp' }, head, body);
+}
+
+// Modal dialog; resolves with true (OK) or false.
+function dialog({ title, body, ok, cancel }) {
+  return new Promise((resolve) => {
+    const close = (v) => {
+      back.remove();
+      resolve(v);
+    };
+    const back = h(
+      'div',
+      { class: 'modal-back', onclick: (e) => e.target === back && close(false) },
+      h(
+        'div',
+        { class: 'modal', role: 'dialog' },
+        h('h2', { class: 'modal-title', text: title }),
+        h('div', { class: 'modal-body' }, body),
+        h('div', { class: 'modal-actions' }, cancel === null ? null : btn(cancel || 'Cancel', () => close(false)), btn(ok || 'OK', () => close(true), { primary: true }))
+      )
+    );
+    document.body.append(back);
+    const first = back.querySelector('input, textarea, button.primary');
+    if (first) first.focus();
+  });
+}
+
+function confirmDialog(title, text, ok) {
+  return dialog({ title, body: h('p', { class: 'desc', text }), ok });
+}
+
+let toastTimer = 0;
+function toast(text) {
+  let t = document.getElementById('toast');
+  if (!t) {
+    t = h('div', { id: 'toast', class: 'toast' });
+    document.body.append(t);
+  }
+  t.textContent = text;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
+}
+
+function fmtTime(ms) {
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
+// First letter avatar for an app (no real icons for Windows apps yet).
+function avatar(name) {
+  const n = String(name || '?').replace(/\.exe$/i, '');
+  let hash = 0;
+  for (const ch of n) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
+  const hue = Math.abs(hash) % 360;
+  const a = h('span', { class: 'avatar', text: n.charAt(0).toUpperCase() || '?' });
+  a.style.background = `hsl(${hue} 45% 32%)`;
+  return a;
+}
