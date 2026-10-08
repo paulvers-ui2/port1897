@@ -26,6 +26,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"net"
 	"net/netip"
 	"os"
@@ -33,6 +34,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/celzero/firestack/intra"
@@ -40,6 +42,7 @@ import (
 	"github.com/celzero/firestack/intra/netstack"
 	"github.com/celzero/firestack/win/dnspolicy"
 	"github.com/celzero/firestack/win/ifbind"
+	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/tun"
 )
 
@@ -52,19 +55,23 @@ const (
 )
 
 type options struct {
-	name    string
-	mtu     int
-	doh     string
-	dohips  string
-	setdns  bool
-	full    bool
-	nrpt    bool
-	cleanup bool
-	block   string
-	wg      string
-	warp    bool
-	proxy   string
-	golog   int32
+	name      string
+	mtu       int
+	doh       string
+	dohips    string
+	setdns    bool
+	full      bool
+	nrpt      bool
+	cleanup   bool
+	block     string
+	wg        string
+	warp      bool
+	proxy     string
+	warpFile  string
+	api       string
+	tokenFile string
+	logFile   string
+	golog     int32
 }
 
 func main() {
@@ -83,6 +90,10 @@ func main() {
 	flag.BoolVar(&o.warp, "warp", false, "send all traffic through free Cloudflare WARP; registers on first use and saves fswin-warp.json next to fswin.exe (implies -full)")
 	flag.StringVar(&o.proxy, "proxy", "", "send all traffic through this proxy: socks5://[user:pass@]host:port or http://... (implies -full)")
 	flag.IntVar(&golog, "log", 3, "firestack log level: 0 very verbose ... 5 errors, 8 none")
+	flag.StringVar(&o.warpFile, "warp-file", "", "where -warp keeps its account (default: fswin-warp.json next to fswin.exe)")
+	flag.StringVar(&o.api, "api", "", "serve the control API for the app window on this loopback address, e.g. 127.0.0.1:47897")
+	flag.StringVar(&o.tokenFile, "token-file", "", "file holding the secret every -api request must present")
+	flag.StringVar(&o.logFile, "logfile", "", "write output to this file instead of the console")
 	showVersion := flag.Bool("version", false, "print the build and exit")
 	flag.Parse()
 	if *showVersion {
@@ -90,6 +101,13 @@ func main() {
 		return
 	}
 	o.golog = int32(golog)
+
+	if o.logFile != "" {
+		if err := redirectOutput(o.logFile); err != nil {
+			fmt.Fprintln(os.Stderr, "fswin: -logfile:", err)
+			os.Exit(1)
+		}
+	}
 
 	if err := run(o); err != nil {
 		fmt.Fprintln(os.Stderr, "fswin:", err)
@@ -210,6 +228,21 @@ func run(o options) error {
 		fmt.Printf("fswin: blocking %s\n", blocked)
 	}
 
+	apiStop := make(chan struct{})
+	if o.api != "" {
+		started := time.Now()
+		var once sync.Once
+		srv, err := serveAPI(o.api, o.tokenFile, b,
+			func() apiStatus { return statusOf(b, o, started, exitID) },
+			func() { once.Do(func() { close(apiStop) }) })
+		if err != nil {
+			return fmt.Errorf("api: %w", err)
+		}
+		defer srv.Close()
+		fmt.Printf("fswin: control API on %s
+", o.api)
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt)
 	// adapter byte counters show whether Windows sends anything our way
@@ -219,6 +252,9 @@ func run(o options) error {
 		select {
 		case <-stop:
 			fmt.Println("fswin: stopping")
+			return nil
+		case <-apiStop:
+			fmt.Println("fswin: stopping (requested by the app)")
 			return nil
 		case <-tick.C:
 			if st, err := t.Stat(); err == nil && st != nil {
@@ -299,7 +335,10 @@ func prepareExit(o options) (id, cfg string, err error) {
 		if err != nil {
 			return "", "", err
 		}
-		path := filepath.Join(filepath.Dir(exe), "fswin-warp.json")
+		path := o.warpFile
+		if path == "" {
+			path = filepath.Join(filepath.Dir(exe), "fswin-warp.json")
+		}
 		a, err := loadOrRegisterWarp(path)
 		if err != nil {
 			return "", "", err
@@ -323,6 +362,24 @@ func exitName(id string) string {
 		return "Cloudflare WARP"
 	case exitProxy:
 		return "proxy"
+	case x.Base:
+		return "direct"
+	case x.Block:
+		return "blocked"
 	}
 	return id
+}
+
+// redirectOutput sends stdout, stderr and the standard logger to path, for
+// when the app window starts fswin without a console.
+func redirectOutput(path string) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	os.Stdout, os.Stderr = f, f
+	log.SetOutput(f)
+	_ = windows.SetStdHandle(windows.STD_OUTPUT_HANDLE, windows.Handle(f.Fd()))
+	_ = windows.SetStdHandle(windows.STD_ERROR_HANDLE, windows.Handle(f.Fd()))
+	return nil
 }

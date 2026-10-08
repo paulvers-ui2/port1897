@@ -1,0 +1,200 @@
+// Copyright (c) 2026 RethinkDNS and its authors.
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+//go:build windows
+
+package main
+
+import (
+	"crypto/subtle"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// The control API lets the app window (which runs without admin rights) read
+// status and change blocking. It listens on loopback only and every request
+// must carry the token from -token-file. Requests from web pages are refused
+// (they carry an Origin header), as are other Host names (DNS rebinding).
+// TODO(phase 2): move to a named pipe locked down with an ACL.
+
+// apiStatus is what GET /api/status returns.
+type apiStatus struct {
+	Version   string   `json:"version"`
+	StartedAt int64    `json:"startedAt"` // unix millis
+	Mode      string   `json:"mode"`      // "dns" or "full"
+	Exit      string   `json:"exit"`      // exit name, "" when direct
+	DNS       dnsStat  `json:"dns"`
+	Firewall  fwStat   `json:"firewall"`
+	Traffic   trafStat `json:"traffic"`
+	NRPT      bool     `json:"nrpt"`
+}
+
+type dnsStat struct {
+	Server  string `json:"server"`
+	Queries int64  `json:"queries"`
+	Failed  int64  `json:"failed"`
+	LastMs  int64  `json:"lastMs"`
+	AvgMs   int64  `json:"avgMs"`
+}
+
+type fwStat struct {
+	Flows       int64    `json:"flows"`
+	Blocked     int64    `json:"blocked"`
+	BlockedApps []string `json:"blockedApps"`
+	AppsSeen    int      `json:"appsSeen"`
+}
+
+type trafStat struct {
+	Rx int64 `json:"rx"` // bytes, closed connections only
+	Tx int64 `json:"tx"`
+}
+
+type apiServer struct {
+	b     *bridge
+	token []byte
+	host  string // expected Host header, ip:port
+	info  func() apiStatus
+	stop  func()
+}
+
+// serveAPI starts the control API on addr (loopback only).
+func serveAPI(addr, tokenFile string, b *bridge, info func() apiStatus, stop func()) (*http.Server, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return nil, errors.New("-api must be a loopback address like 127.0.0.1:47897")
+	}
+	tok, err := os.ReadFile(tokenFile)
+	if err != nil {
+		return nil, fmt.Errorf("-token-file: %w", err)
+	}
+	tok = []byte(strings.TrimSpace(string(tok)))
+	if len(tok) < 16 {
+		return nil, errors.New("-token-file: token must be at least 16 characters")
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+
+	a := &apiServer{b: b, token: tok, host: ln.Addr().String(), info: info, stop: stop}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/status", a.status)
+	mux.HandleFunc("GET /api/events", a.events)
+	mux.HandleFunc("GET /api/stats", a.stats)
+	mux.HandleFunc("POST /api/block", a.block)
+	mux.HandleFunc("POST /api/stop", a.shutdown)
+
+	srv := &http.Server{
+		Handler:           a.guard(mux),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() { _ = srv.Serve(ln) }()
+	return srv, nil
+}
+
+func (a *apiServer) guard(next http.Handler) http.Handler {
+	want := "Bearer " + string(a.token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") != "" || r.Host != a.host {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		got := r.Header.Get("Authorization")
+		if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func writeJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func (a *apiServer) status(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, a.info())
+}
+
+// events returns activity after ?after=<id>, at most ?max=<n> (default 200).
+func (a *apiServer) events(w http.ResponseWriter, r *http.Request) {
+	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
+	n, _ := strconv.Atoi(r.URL.Query().Get("max"))
+	if n <= 0 || n > journalSize {
+		n = 200
+	}
+	writeJSON(w, a.b.log.since(after, n))
+}
+
+func (a *apiServer) stats(w http.ResponseWriter, _ *http.Request) {
+	apps, domains := a.b.log.top(20)
+	writeJSON(w, map[string]any{"apps": apps, "domains": domains})
+}
+
+// block takes {"app": "chrome.exe", "block": true}.
+func (a *apiServer) block(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		App   string `json:"app"`
+		Block bool   `json:"block"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || strings.TrimSpace(req.App) == "" {
+		http.Error(w, "want {\"app\": \"name.exe\", \"block\": true}", http.StatusBadRequest)
+		return
+	}
+	a.b.setBlocked(req.App, req.Block)
+	writeJSON(w, map[string]any{"blockedApps": a.b.blockedApps()})
+}
+
+func (a *apiServer) shutdown(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, map[string]bool{"stopping": true})
+	go a.stop()
+}
+
+// statusOf builds the API status from the bridge and the run options.
+func statusOf(b *bridge, o options, started time.Time, exitID string) apiStatus {
+	l := b.log
+	st := apiStatus{
+		Version:   version,
+		StartedAt: started.UnixMilli(),
+		Mode:      "dns",
+		NRPT:      o.nrpt,
+		DNS: dnsStat{
+			Server:  o.doh,
+			Queries: l.dnsQueries.Load(),
+			Failed:  l.dnsFailed.Load(),
+			LastMs:  l.dnsLastMs.Load(),
+		},
+		Firewall: fwStat{
+			Flows:       l.flows.Load(),
+			Blocked:     l.flowsBlocked.Load(),
+			BlockedApps: b.blockedApps(),
+			AppsSeen:    l.appsSeen(),
+		},
+		Traffic: trafStat{Rx: l.rx.Load(), Tx: l.tx.Load()},
+	}
+	if ok := st.DNS.Queries - st.DNS.Failed; ok > 0 {
+		st.DNS.AvgMs = l.dnsTotalMs.Load() / ok
+	}
+	if o.full {
+		st.Mode = "full"
+	}
+	if exitID != "" {
+		st.Exit = exitName(exitID)
+	}
+	return st
+}

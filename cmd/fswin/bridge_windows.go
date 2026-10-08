@@ -71,7 +71,9 @@ type bridge struct {
 	cid     atomic.Int64
 	binder  *ifbind.Binder
 	apps    *apps
-	blocked []string // lowercased exe names or full paths
+	blockmu sync.RWMutex
+	blocked map[string]bool // lowercased exe names or full paths
+	log     *journal
 	selfpid uint32
 	selfuid int32
 	exit    atomic.Value // string: proxy id for allowed flows and DNS
@@ -85,6 +87,8 @@ func newBridge(binder *ifbind.Binder, blockcsv string) *bridge {
 		binder:  binder,
 		apps:    newApps(),
 		selfpid: windows.GetCurrentProcessId(),
+		blocked: map[string]bool{},
+		log:     newJournal(),
 	}
 	self, err := os.Executable()
 	if err != nil {
@@ -92,9 +96,7 @@ func newBridge(binder *ifbind.Binder, blockcsv string) *bridge {
 	}
 	b.selfuid = b.apps.uid(self)
 	for _, s := range strings.Split(blockcsv, ",") {
-		if s = strings.ToLower(strings.TrimSpace(s)); s != "" {
-			b.blocked = append(b.blocked, s)
-		}
+		b.setBlocked(s, true)
 	}
 	return b
 }
@@ -112,8 +114,35 @@ func (b *bridge) exitID() string {
 	return x.Base
 }
 
+// setBlocked blocks or unblocks app, an exe name or a full path.
+func (b *bridge) setBlocked(app string, block bool) {
+	app = strings.ToLower(strings.TrimSpace(app))
+	if app == "" {
+		return
+	}
+	b.blockmu.Lock()
+	defer b.blockmu.Unlock()
+	if block {
+		b.blocked[app] = true
+	} else {
+		delete(b.blocked, app)
+	}
+}
+
+// blockedApps lists the blocked exe names and paths, sorted.
+func (b *bridge) blockedApps() []string {
+	b.blockmu.RLock()
+	defer b.blockmu.RUnlock()
+	out := make([]string, 0, len(b.blocked))
+	for k := range b.blocked {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}
+
 func (b *bridge) blockedList() string {
-	return strings.Join(b.blocked, ", ")
+	return strings.Join(b.blockedApps(), ", ")
 }
 
 func (b *bridge) isBlocked(path string) bool {
@@ -121,7 +150,9 @@ func (b *bridge) isBlocked(path string) bool {
 		return false
 	}
 	p := strings.ToLower(path)
-	return slices.Contains(b.blocked, p) || slices.Contains(b.blocked, filepath.Base(p))
+	b.blockmu.RLock()
+	defer b.blockmu.RUnlock()
+	return b.blocked[p] || b.blocked[filepath.Base(p)]
 }
 
 func (b *bridge) logf(format string, args ...any) {
@@ -196,8 +227,16 @@ func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probable
 		pid = x.Block
 		verdict = " BLOCKED"
 	}
+	app := b.appName(uid)
 	b.logf("flow  #%s %s %s %s -> %s [%s]%s",
-		cid, proto(protocol), b.appName(uid), src.V(), dst.V(), domains.V(), verdict)
+		cid, proto(protocol), app, src.V(), dst.V(), domains.V(), verdict)
+	domain, _, _ := strings.Cut(domains.V(), ",")
+	b.log.flows.Add(1)
+	if verdict != "" {
+		b.log.flowsBlocked.Add(1)
+	}
+	b.log.add(event{Kind: "flow", App: app, Proto: proto(protocol), Dst: dst.V(),
+		Domain: domain, Via: exitName(pid), Blocked: verdict != ""})
 	return &intra.Mark{PIDCSV: pid, CID: cid, UID: strconv.Itoa(int(uid))}
 }
 
@@ -215,6 +254,8 @@ func (b *bridge) OnSocketClosed(s *intra.SocketSummary) {
 	}
 	b.logf("close #%s %s -> %s via %s rx %d tx %d %dms %s",
 		s.ID, s.Proto, s.Target, s.PID, s.Rx, s.Tx, s.Duration, s.Msg)
+	b.log.rx.Add(s.Rx)
+	b.log.tx.Add(s.Tx)
 }
 
 // DNSListener
@@ -233,6 +274,31 @@ func (b *bridge) OnResponse(s *x.DNSSummary) {
 	}
 	b.logf("dns   %s (type %d) -> %s via %s %.0fms status %d %s",
 		s.QName, s.QType, s.RData, s.ID, s.Latency*1000, s.Status, s.Msg)
+	ms := int64(s.Latency * 1000)
+	b.log.dnsQueries.Add(1)
+	if s.Status != x.Complete {
+		b.log.dnsFailed.Add(1)
+	} else {
+		b.log.dnsLastMs.Store(ms)
+		b.log.dnsTotalMs.Add(ms)
+	}
+	b.log.add(event{Kind: "dns", Domain: strings.TrimSuffix(s.QName, "."), Answer: s.RData,
+		Via: s.ID, LatencyMs: ms, Blocked: s.Status == x.Complete && isUnspecifiedAnswer(s.RData)})
+}
+
+// isUnspecifiedAnswer reports answers of 0.0.0.0 / ::, which is how
+// blocklists answer blocked names.
+func isUnspecifiedAnswer(rdata string) bool {
+	if rdata == "" {
+		return false
+	}
+	for _, a := range strings.Split(rdata, ",") {
+		ip, err := netip.ParseAddr(strings.TrimSpace(a))
+		if err != nil || !ip.IsUnspecified() {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *bridge) OnDNSAdded(id *x.Gostr)   { b.logf("dns transport added: %s", id.V()) }
