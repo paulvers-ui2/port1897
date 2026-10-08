@@ -109,6 +109,7 @@ func serveAPI(addr, tokenFile string, b *bridge, info func() apiStatus, stop fun
 	mux.HandleFunc("GET /api/conns", a.conns)
 	mux.HandleFunc("GET /api/proxies", a.proxies)
 	mux.HandleFunc("POST /api/close", a.closeConns)
+	mux.HandleFunc("POST /api/killswitch", a.killSwitch)
 	mux.HandleFunc("POST /api/stop", a.shutdown)
 
 	srv := &http.Server{
@@ -211,6 +212,29 @@ func (a *apiServer) closeConns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]int{"closed": a.b.closeApp(req.App)})
 }
 
+// killSwitch takes {"on": true, "allowLan": false} and turns the kill switch
+// on or off at once, for the app's kill switch button.
+func (a *apiServer) killSwitch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		On       bool `json:"on"`
+		AllowLAN bool `json:"allowLan"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := a.b.kill.set(req.On, req.AllowLAN); err != nil {
+		code := http.StatusInternalServerError
+		if errors.Is(err, errKillNeedsFull) || errors.Is(err, errNoKillSwitch) {
+			code = http.StatusConflict
+		}
+		http.Error(w, err.Error(), code)
+		return
+	}
+	a.b.logf("kill switch %s (from the app)", map[bool]string{true: "on", false: "off"}[req.On])
+	writeJSON(w, map[string]bool{"killSwitch": a.b.kill.isOn()})
+}
+
 func (a *apiServer) shutdown(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]bool{"stopping": true})
 	go a.stop()
@@ -225,7 +249,7 @@ func statusOf(b *bridge, o options, started time.Time, exitID, dnsLabel string) 
 		Mode:      "dns",
 		NRPT:      o.nrpt,
 		AllowLAN:  o.allowLAN,
-		Kill:      o.kill,
+		Kill:      b.kill.isOn(),
 		DNS: dnsStat{
 			Server:  dnsLabel,
 			Type:    o.dnsType,

@@ -42,6 +42,7 @@ const SECRETS = {
   usqueToken: 'SECRET-usque-access-token',
   logProxyPass: 'SECRET-log-proxy-pass',
   apiToken: 'SECRET-api-token-0123456789',
+  appLogProxyPass: 'SECRET-app-log-pass',
 };
 const WG_ID = 'a1b2c3d4e5f60718';
 
@@ -75,6 +76,10 @@ write('wireguard/index.json', JSON.stringify([{ id: WG_ID, name: 'Home WG' }]));
 write(`wireguard/${WG_ID}.conf`, `[Interface]\nPrivateKey=${SECRETS.wgPriv}\nAddress = 10.9.0.2/32\n\n[Peer]\nPublicKey = PeerPublicKeyOk=\n  presharedkey  =  ${SECRETS.wgPsk}\nEndpoint = 198.51.100.9:51820\n`);
 write('engine.log', `fswin up\n   1.000s flow  #1 tcp chrome.exe -> 1.1.1.1:443 via socks5://bob:${SECRETS.logProxyPass}@10.0.0.1:1080\n`);
 write('engine.prev.log', 'previous run\n');
+write('app.log', `2026-10-08T10:00:00Z engine did not start: proxy socks5://amy:${SECRETS.appLogProxyPass}@10.0.0.9:1080 refused\n`);
+const crashDumps = path.join(root, 'Crashpad');
+fs.mkdirSync(path.join(crashDumps, 'reports'), { recursive: true });
+fs.writeFileSync(path.join(crashDumps, 'reports', 'abc123.dmp'), 'MDMP fake dump with SECRET-in-dump');
 const day = new Date().toISOString().slice(0, 10);
 write(`history/events-${day}.jsonl`, '{"id":1,"kind":"dns","domain":"example.com"}\n');
 
@@ -91,7 +96,7 @@ const electron = new Proxy(
   {
     app: new Proxy(
       {
-        getPath: (name) => ({ userData, desktop, temp: os.tmpdir(), home: root })[name] || root,
+        getPath: (name) => ({ userData, desktop, temp: os.tmpdir(), home: root, crashDumps })[name] || root,
         getVersion: () => '0.0.0-sim',
         requestSingleInstanceLock: () => false, // main.js then skips window, tray and timers
         isPackaged: false,
@@ -131,7 +136,7 @@ const check = (what, ok, detail = '') => {
     execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath ${q(savedTo)} -DestinationPath ${q(out)} -Force`]);
     const files = listFiles(out);
     console.log('zip contents:', files.join(', '));
-    for (const want of ['engine.log', 'engine.prev.log', 'settings.json', 'rules.json', 'warp.json', 'usque/warp1.json', 'usque/wg0.conf', 'usque/usque.log', 'wireguard/index.json', `wireguard/${WG_ID}.conf`, `history/events-${day}.jsonl`, 'status.json', 'system.txt', 'README.txt']) {
+    for (const want of ['engine.log', 'engine.prev.log', 'settings.json', 'rules.json', 'warp.json', 'usque/warp1.json', 'usque/wg0.conf', 'usque/usque.log', 'wireguard/index.json', `wireguard/${WG_ID}.conf`, `history/events-${day}.jsonl`, 'status.json', 'system.txt', 'README.txt', 'app.log', 'crash-dumps.txt']) {
       check(`zip has ${want}`, files.includes(want));
     }
     check('zip leaves out the API token', !files.some((f) => /api-token/i.test(f)));
@@ -153,6 +158,9 @@ const check = (what, ok, detail = '') => {
     check('ids that are not secrets stay', /device-id-ok/.test(read('warp.json')) && /usque-id-ok/.test(read('usque/warp1.json')));
     check('engine.log keeps the flow, password hidden', /flow {2}#1 tcp chrome\.exe/.test(read('engine.log')) && /bob:\(hidden\)@10\.0\.0\.1/.test(read('engine.log')));
     check('README warns that logs list domains', /engine\.log, engine\.prev\.log and history\//.test(read('README.txt')));
+    check('app.log keeps the error, password hidden', /engine did not start/.test(read('app.log')) && /amy:\(hidden\)@/.test(read('app.log')));
+    check('crash-dumps.txt names the dump but leaves its contents out', /abc123\.dmp/.test(read('crash-dumps.txt')) && !all.some(([, t]) => t.includes('SECRET-in-dump')));
+    check('system.txt has versions, Windows Firewall and crash sections', /Electron \S+, Chromium \S+, Node \d/.test(read('system.txt')) && /===== Windows Firewall profiles =====/.test(read('system.txt')) && /===== Crashes of port1897/.test(read('system.txt')));
     check('system.txt has the network report', /===== Adapters =====/.test(read('system.txt')) && /===== NRPT rules/.test(read('system.txt')));
     check('status.json says the engine is not running', /"running": false/.test(read('status.json')));
 

@@ -135,7 +135,11 @@ PAGES.firewall = () => {
   const blocked = blockedNames();
   return screen(
     'Firewall',
-    card(row({ ico: 'ic_dns_firewall', title: 'Mode', sub: MODES.find((m) => m[0] === s.mode)[1] + (s.mode === 'dns' ? ' · the firewall is off' : ''), right: chevron(), onclick: chooseMode })),
+    card(
+      row({ ico: 'ic_dns_firewall', title: 'Mode', sub: MODES.find((m) => m[0] === s.mode)[1] + (s.mode === 'dns' ? ' · the firewall is off' : ''), right: chevron(), onclick: chooseMode }),
+      switchRow({ ico: 'ic_firewall_shield', title: 'Kill switch', sub: 'Block the internet outside port1897, at once. If the app crashes, the internet stays blocked until you start it again.', value: killSwitchOn(), onchange: (v) => setKillSwitch(v) }),
+      switchRow({ ico: 'universal_firewall', title: 'Allow outgoing only', sub: 'Every program may connect out and is added to your allowed apps the moment it does; incoming connections are blocked.', value: !!s.universal.outgoingOnly, onchange: (v) => App.setRules({ universal: { ...App.settings.universal, outgoingOnly: v } }).then(() => App.render()) })
+    ),
     sectionLabel('Universal'),
     card(
       row({ ico: 'universal_firewall', title: 'Universal firewall rules', sub: 'Apply firewall rules on all applications based on PC events, for example, when the PC is locked.', right: chevron(), onclick: () => App.go('universal') }),
@@ -185,6 +189,10 @@ PAGES.universal = () => {
   return screen(
     'Universal firewall',
     note('Apply firewall rules on all applications based on PC events, for example, firewall when the PC is locked or when a program connects without a DNS lookup.'),
+    card(
+      switchRow({ ico: 'universal_firewall', title: 'Allow outgoing only', sub: 'Every program may connect out. A program’s first connection is allowed at once and the program is added to Apps as allowed (Bypass Universal), so the rules below never block it. Incoming connections are blocked. Your Block and Isolate choices, IP and domain rules, Lockdown and “PC locked” still apply.', value: !!u.outgoingOnly, onchange: (v) => set('outgoingOnly')(v).then(() => App.render()) })
+    ),
+    u.outgoingOnly ? note('Allow outgoing only is on: the rules below, except Lockdown and “PC locked”, do not block outgoing connections.') : null,
     card(
       switchRow({ ico: 'ic_device_lock', title: 'Block all apps when the PC is locked', sub: 'While Windows shows the lock screen, no app reaches the internet.', value: u.locked, onchange: set('locked') }),
       switchRow({ ico: 'ic_unknown_app', title: 'Block when source app is unknown', sub: 'Block connections whose program Windows cannot tell (some system services).', value: u.unknown, onchange: set('unknown') }),

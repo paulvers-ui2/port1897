@@ -90,6 +90,7 @@ type bridge struct {
 	selfpid   uint32
 	selfuid   int32
 	exit      atomic.Value // string: proxy id for allowed flows and DNS
+	kill      *killSwitch  // set once before the API starts; nil without Wintun
 }
 
 var _ intra.Bridge = (*bridge)(nil)
@@ -381,10 +382,24 @@ func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probable
 	return &intra.Mark{PIDCSV: pid, CID: cid, UID: strconv.Itoa(int(uid))}
 }
 
+// Inflow decides connections coming in through the tunnel (from a VPN exit
+// or a per-app route): allowed, unless "Allow outgoing only" is on.
 func (b *bridge) Inflow(protocol, uid int32, src, dst *x.Gostr) *intra.Mark {
 	cid := strconv.FormatInt(b.cid.Add(1), 10)
-	b.logf("inflow #%s %s %s -> %s", cid, proto(protocol), src.V(), dst.V())
-	return &intra.Mark{PIDCSV: x.Base, CID: cid, UID: strconv.Itoa(int(uid))}
+	mark := &intra.Mark{PIDCSV: x.Base, CID: cid, UID: strconv.Itoa(int(uid))}
+	if !b.rules.Load().blocksIncoming(time.Now().UnixMilli()) {
+		b.logf("inflow #%s %s %s -> %s", cid, proto(protocol), src.V(), dst.V())
+		return mark
+	}
+	const why = "universal: incoming blocked"
+	b.logf("inflow #%s %s %s -> %s BLOCKED %s", cid, proto(protocol), src.V(), dst.V(), why)
+	b.log.flows.Add(1)
+	b.log.flowsBlocked.Add(1)
+	// the remote end is the source; the event shows it as the address
+	b.log.add(event{Kind: "flow", App: b.appName(uid), Proto: proto(protocol) + " in", Dst: src.V(),
+		Via: exitName(x.Block), Blocked: true, Rule: why, CID: cid})
+	mark.PIDCSV = x.Block
+	return mark
 }
 
 func (b *bridge) PostFlow(m *intra.Mark) {}

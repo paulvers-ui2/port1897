@@ -371,23 +371,25 @@ func run(o options) error {
 		}
 		mode = fmt.Sprintf("all IPv4; firestack's own traffic leaves via interface #%d", phys4)
 	}
-	if o.kill {
-		nt, ok := dev.(*tun.NativeTun)
-		if !ok {
-			return errors.New("-killswitch: the tunnel is not a Wintun adapter")
-		}
+	// the kill switch: on now for -killswitch, or later from the app's button
+	if nt, ok := dev.(*tun.NativeTun); ok {
 		var allow []string
 		if uq != nil {
 			allow = append(allow, uq.path)
 		}
-		if err := wfp.Enable(wfp.Options{TunLUID: nt.LUID(), Allow: allow, Persistent: true, AllowLAN: o.allowLAN}); err != nil {
-			return fmt.Errorf("-killswitch: %w", err)
-		}
-		defer func() {
+		b.kill = newKillSwitch(wfp.Options{TunLUID: nt.LUID(), Allow: allow, Persistent: true, AllowLAN: o.allowLAN}, o.full)
+	}
+	defer func() {
+		if b.kill.isOn() {
 			if err := wfp.Disable(); err != nil {
 				fmt.Fprintln(os.Stderr, "fswin: remove kill switch (run fswin -cleanup):", err)
 			}
-		}()
+		}
+	}()
+	if o.kill {
+		if err := b.kill.set(true, o.allowLAN); err != nil {
+			return fmt.Errorf("-killswitch: %w", err)
+		}
 		mode += "; kill switch on"
 	}
 	if exitID != "" {
