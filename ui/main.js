@@ -95,8 +95,11 @@ const DEFAULTS = {
   notify: true,
   statusAlerts: true,
   theme: 'darkplus',
+  lang: '', // '' English; else a code from renderer/i18n/languages.js
   autostart: false,
   wasRunning: false,
+  pcap: false, // packet capture to capture.pcap
+  automation: false, // Android: "Automation"; here, command-line --start / --stop / --pause
   checkUpdates: true, // Android: "Check for app updates" once a week
   lastUpdateCheck: 0,
   welcomed: false,
@@ -117,6 +120,7 @@ const usqueLog = () => path.join(usqueDir(), 'usque.log');
 const wgDir = () => path.join(dataDir(), 'wireguard');
 const histDir = () => path.join(dataDir(), 'history');
 const rulesFile = () => path.join(dataDir(), 'rules.json');
+const pcapFile = () => path.join(dataDir(), 'capture.pcap');
 
 function enginePath() {
   if (app.isPackaged) return path.join(process.resourcesPath, 'engine', 'fswin.exe');
@@ -586,6 +590,7 @@ function engineArgs(s) {
   if (s.dialTimeout > 0) a.push('-dial-timeout', String(s.dialTimeout));
   if (s.tcpKeepAlive) a.push('-tcp-keepalive');
   if (s.eim) a.push('-eim');
+  if (s.pcap) a.push('-pcap', pcapFile());
   return a;
 }
 
@@ -1449,6 +1454,36 @@ ipcMain.handle('open:url', (_e, url) => {
   if (/^https:\/\/[^\s]+$/.test(String(url))) shell.openExternal(String(url));
 });
 ipcMain.handle('open:log', () => shell.openPath(logFile()));
+ipcMain.handle('open:pcapFolder', () => {
+  if (fs.existsSync(pcapFile())) shell.showItemInFolder(pcapFile());
+  else shell.openPath(dataDir());
+});
+
+// ---------- automation (Android: "Configure apps that can start or stop") ----------
+
+// port1897.exe --start | --stop | --pause[=minutes] | --resume, from
+// scripts or the Task Scheduler, when Settings → Automation is on.
+async function automate(argv) {
+  const cmd = argv.find((a) => /^--(start|stop|resume|pause(=\d+)?)$/.test(a));
+  if (!cmd) return false;
+  const s = readSettings();
+  if (!s.automation) {
+    notify(`Ignored ${cmd}: turn on Settings → Automation to let other programs control port1897.`);
+    return true;
+  }
+  let r = { ok: true };
+  if (cmd === '--start') r = await startEngine();
+  else if (cmd === '--stop') r = await stopEngine();
+  else {
+    const m = cmd === '--resume' ? 0 : Number(cmd.split('=')[1] || 15);
+    s.pausedUntil = m ? Date.now() + m * 60 * 1000 : 0;
+    writeSettings(s);
+    await pushRules(s);
+    updateTray(lastStatus, true);
+  }
+  if (!r.ok) notify(`${cmd} failed: ${r.error}`);
+  return true;
+}
 
 // ---------- startup and quit ----------
 
@@ -1456,11 +1491,14 @@ ipcMain.handle('open:log', () => shell.openPath(logFile()));
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', showWindow);
+  app.on('second-instance', async (_e, argv) => {
+    if (!(await automate(argv))) showWindow();
+  });
   app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     loadBuckets();
-    const autostart = process.argv.includes('--autostart');
+    const automated = process.argv.some((a) => /^--(start|stop|resume|pause(=\d+)?)$/.test(a));
+    const autostart = process.argv.includes('--autostart') || automated;
     createWindow(!autostart);
     createTray();
     // "Block all apps when the PC is locked"
@@ -1475,7 +1513,9 @@ if (!app.requestSingleInstanceLock()) {
     setInterval(() => saveBuckets(readSettings()), 60 * 1000);
     setTimeout(weeklyUpdateCheck, 30 * 1000);
     setInterval(weeklyUpdateCheck, 6 * HOUR);
-    if (autostart && readSettings().wasRunning) {
+    if (automated) {
+      await automate(process.argv);
+    } else if (autostart && readSettings().wasRunning) {
       const r = await startEngine();
       if (!r.ok) notify('Could not resume protection: ' + r.error);
     }

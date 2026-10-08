@@ -93,7 +93,7 @@ const App = {
 
 function setText(id, text) {
   const el = $(id);
-  if (el) el.textContent = text;
+  if (el) el.textContent = tr(text);
 }
 
 function renderHome() {
@@ -231,6 +231,8 @@ async function main() {
 
   App.settings = await App.port.getSettings();
   App.applyTheme();
+  await loadLanguage(App.settings.lang || '');
+  translateStatic(document.body);
   await poll();
   App.render();
   setInterval(poll, 1000);

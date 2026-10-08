@@ -882,7 +882,8 @@ PAGES.settings = () => {
     card(
       switchRow({ ico: 'ic_logs', title: 'Enable on-device logging', sub: 'Store DNS and firewall logs and stats on this PC (7 days), for the Stats and Logs screens.', value: s.history, onchange: (v) => save({ history: v }, true) }),
       row({ ico: 'ic_log_level', title: 'Log level', sub: 'How much the engine writes to its log', right: level }),
-      row({ ico: 'ic_app_log', title: 'App Logs', sub: 'For debugging purposes', right: chevron(), onclick: () => App.go('applogs') })
+      row({ ico: 'ic_app_log', title: 'App Logs', sub: 'For debugging purposes', right: chevron(), onclick: () => App.go('applogs') }),
+      row({ ico: 'ic_network', title: 'Packet capture', sub: 'Write every packet in the tunnel to capture.pcap (open it with Wireshark). Grows fast; turn it off when done. Applies on the next start.', right: h('div', { class: 'actions' }, btn('Open folder', () => App.port.openPcapFolder()), toggle(s.pcap, (v) => save({ pcap: v }), 'Packet capture')) })
     ),
     sectionLabel('Notification'),
     card(
@@ -891,11 +892,38 @@ PAGES.settings = () => {
     ),
     sectionLabel('Customize'),
     card(
+      row({ ico: 'ic_other_settings', title: 'Change Language', sub: languageName(s.lang), right: chevron(), onclick: chooseLanguage }),
       row({ ico: 'ic_appearance', title: 'Appearance', sub: 'Current theme: ' + (THEMES.find((t) => t[0] === s.theme) || THEMES[0])[1], right: chevron(), onclick: chooseTheme }),
+      switchRow({ ico: 'ic_tun_nw_policy', title: 'Automation', sub: 'Let scripts and the Task Scheduler control protection: port1897.exe --start, --stop, --pause=15 or --resume.', value: s.automation, onchange: (v) => save({ automation: v }, true) }),
       switchRow({ ico: 'ic_auto_start', title: 'Auto-start on power-up', sub: 'On sign-in, start the app in the tray, and start protection if it was running before shut down (asks for admin permission).', value: s.autostart, onchange: (v) => App.port.setAutostart(v).then(() => save({ autostart: v }, true)) })
     )
   );
 };
+
+function languageName(code) {
+  const l = LANGUAGES.find((x) => x[0] === code);
+  return l ? l[1] : 'English';
+}
+
+// Android: "Change Language". Texts the Android app shares are translated;
+// the rest stays English (help translate: ui/tools/i18n.py).
+async function chooseLanguage() {
+  let pick = App.settings.lang || '';
+  const opts = [['', 'English', I18N_TOTAL]].concat(LANGUAGES);
+  const body = h(
+    'div',
+    { class: 'rr-list' },
+    opts.map(([code, name, n]) => {
+      const r = h('input', { type: 'radio', name: 'lang', checked: code === pick });
+      r.addEventListener('change', () => (pick = code));
+      return h('label', { class: 'pick-row' }, r, h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: name }), code ? h('span', { class: 'row-sub', text: `${Math.round((100 * n) / I18N_TOTAL)}%` }) : null));
+    })
+  );
+  if (!(await dialog({ title: 'Change Language', body, ok: 'Save' }))) return;
+  if (pick === (App.settings.lang || '')) return;
+  await App.save({ lang: pick });
+  location.reload();
+}
 
 async function chooseTheme() {
   let pick = App.settings.theme;

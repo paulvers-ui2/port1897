@@ -53,6 +53,7 @@ firewall rules) is Phase 2 work.
 | DNS types ODoH (with relay) and DNS proxy, DNSCrypt relays, RethinkDNS blocklists on-device (download + md5 check) and on the server (stamp in the URL) | done | `cmd/fswin/dns_windows.go`, `ui/renderer/blocklists.js` |
 | Per-app routes (Android's WireGuard advanced mode and proxy app lists): apps go through their own WireGuard config or SOCKS5/HTTP proxy | done | `cmd/fswin/routes_windows.go`, App info → Route through |
 | Ping test, welcome slides, weekly update check (GitHub releases), log filters; tagged builds publish a GitHub release | done | `ui/renderer/tools.js`, `.github/workflows/app.yml` |
+| 40 languages from the Android translations (`ui/tools/i18n.py`), RTL layout; packet capture (`-pcap`); automation (`port1897.exe --start/--stop/--pause/--resume`) | done | `ui/renderer/i18n/`, `ui/main.js` |
 | Anti-censorship dial strategy (split TCP / TLS ClientHello); desync is not implemented on Windows | done (flags) | `fswin -dial-strategy` |
 | Windows service + named-pipe API for the UI | later | |
 

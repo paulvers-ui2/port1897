@@ -105,6 +105,7 @@ type options struct {
 
 	rulesFile    string
 	routesFile   string // per-app WireGuard and proxy routes
+	pcapFile     string // packet capture
 	dialStrategy string // anti-censorship: never, auto, split-tcp, split-tls
 	dialRetry    string // never, split (retry with split), plain (retry as-is)
 	dialTimeout  int    // seconds; 0 for the default
@@ -158,6 +159,7 @@ func main() {
 	flag.StringVar(&o.blocklistDir, "blocklists", "", "folder with the on-device RethinkDNS blocklists (td.txt, rd.txt, basicconfig.json, filetag.json)")
 	flag.StringVar(&o.blocklistStamp, "blocklist-stamp", "", "RethinkDNS stamp of the on-device blocklists to block, e.g. 1-...")
 	flag.StringVar(&o.filetag, "filetag", "", "filetag.json, to name the blocklists a RethinkDNS server blocked a domain by")
+	flag.StringVar(&o.pcapFile, "pcap", "", "write a packet capture of the tunnel to this .pcap file (replaced at start)")
 	flag.StringVar(&o.routesFile, "routes", "", "per-app routes (JSON list of {id, name, kind: wg|proxy, file|url}): extra WireGuard tunnels or proxies that apps with a route rule use instead of the exit")
 	flag.StringVar(&o.rulesFile, "rules", "", "firewall rules (JSON, as the app writes them) to start with; the app updates them through -api")
 	flag.StringVar(&o.dialStrategy, "dial-strategy", dialNever, "anti-censorship: never (connect as-is), auto, split-tcp (split the first TCP segment) or split-tls (fragment the TLS ClientHello)")
@@ -282,6 +284,14 @@ func run(o options) error {
 		return err
 	}
 	intra.Transparency(o.eim, o.eim)
+	if o.pcapFile != "" {
+		_ = os.Remove(o.pcapFile) // a capture starts with its own header
+		if err := t.SetPcap(o.pcapFile); err != nil {
+			fmt.Println("fswin: -pcap:", err)
+		} else {
+			fmt.Println("fswin: capturing packets to", o.pcapFile)
+		}
+	}
 
 	tid, dnsLabel, err := setupDNS(t, o, binder)
 	if err != nil {

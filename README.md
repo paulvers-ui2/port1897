@@ -38,6 +38,8 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
   domain rules; the universal rules (block UDP, ICMP, port 80, unknown or new apps,
   DNS bypass, PC locked, lockdown); allowed DNS record types; pause.
 - **Anti-censorship** (`-dial-strategy`): split TCP or the TLS ClientHello.
+- **40 languages** from the Android app's translations (Settings → Change Language),
+  right to left for Arabic, Persian, Hebrew and Urdu.
 - **Split tunnel** (`-routes`): send chosen apps through their own WireGuard config
   or proxy, the rest through the main VPN.
 - **Kill switch** (`-killswitch`): Windows Filtering Platform rules block everything
@@ -110,6 +112,7 @@ Please tell us how it went with a
 | `-masque` | Use free Cloudflare WARP over MASQUE (needs `usque.exe` next to `fswin.exe`) |
 | `-chain my.conf` | WARP -> the WireGuard server in `my.conf` -> WARP (needs `usque.exe`) |
 | `-killswitch` | Block all traffic outside the tunnel, even if `fswin` crashes |
+| `-pcap file.pcap` | Packet capture of the tunnel, for Wireshark |
 | `-routes routes.json` | Split tunnel: extra WireGuard configs or SOCKS5/HTTP proxies that chosen apps use instead of the main exit |
 | `-rules rules.json` | Firewall rules as the app writes them: a mode per app (block, isolate, bypass, exclude), IP and domain rules, universal rules, allowed DNS record types, pause |
 | `-dial-strategy never\|auto\|split-tcp\|split-tls` | Anti-censorship: split the first TCP segment or the TLS ClientHello to get past DPI filters (default `never`, as on Android) |
