@@ -24,10 +24,18 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
   (`chrome.exe`, `discord.exe`, ...).
 - **Block programs** (`-block chrome.exe`).
 - **No DNS leaks** (`-nrpt`): a Windows DNS policy sends every lookup to the tunnel.
-- **VPN exits:** send everything through free Cloudflare WARP (`-warp`), any
-  WireGuard server (`-wg my.conf`), or a SOCKS5/HTTP proxy (`-proxy socks5://...`).
+- **VPN exits:** send everything through free Cloudflare WARP (`-warp`), WARP over
+  MASQUE (`-masque`, looks like HTTPS), the WARP chain WARP -> your WireGuard
+  server -> WARP (`-chain my.conf`), any WireGuard server (`-wg my.conf`), or a
+  SOCKS5/HTTP proxy (`-proxy socks5://...`). MASQUE and the chain use
+  [usque](https://github.com/paulvers-ui/usque).
+- **Kill switch** (`-killswitch`): Windows Filtering Platform rules block everything
+  outside the tunnel, and keep blocking if the engine crashes.
+- **App window** (`ui/`): an Electron app styled after the Android home screen, with
+  a tray icon. Download **port1897-app-windows-x64** from the
+  [App workflow](https://github.com/wowjes92jsj2oe0-star/port1897/actions/workflows/app.yml?query=branch%3Amain+is%3Asuccess).
 
-Not yet: an app window, a background service, saved rules, a kill switch, IPv6.
+Not yet: a background service, saved rules, site/IP rules and blocklists, IPv6.
 See the [roadmap](#roadmap).
 
 ## Try it
@@ -82,7 +90,10 @@ Please tell us how it went with a
 | `-wg my.conf` | Use a WireGuard server; `my.conf` is a normal WireGuard config file |
 | `-proxy socks5://user:pass@host:port` | Use a SOCKS5 (or `http://`) proxy |
 | `-doh URL -doh-ips IPs` | Use another DNS-over-HTTPS server |
-| `-cleanup` | Remove a DNS rule left behind by a crashed `fswin`, then exit |
+| `-masque` | Use free Cloudflare WARP over MASQUE (needs `usque.exe` next to `fswin.exe`) |
+| `-chain my.conf` | WARP -> the WireGuard server in `my.conf` -> WARP (needs `usque.exe`) |
+| `-killswitch` | Block all traffic outside the tunnel, even if `fswin` crashes |
+| `-cleanup` | Remove a DNS rule or kill switch left behind by a crashed `fswin`, then exit |
 | `-log 0..8` | firestack log detail: 0 very verbose, 3 default, 8 none |
 | `-version` | Print the build and exit |
 

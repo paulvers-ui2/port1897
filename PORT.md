@@ -45,7 +45,9 @@ firewall rules) is Phase 2 work.
 | Block programs by exe name | done (flag) | `fswin -block` |
 | DNS leak fix: NRPT catch-all rule to the tunnel | done (opt-in) | `win/dnspolicy`, `fswin -nrpt` / `-cleanup` |
 | VPN exits: WireGuard config files, free Cloudflare WARP (auto-registered), SOCKS5/HTTP proxies | done (flags) | `fswin -wg` / `-warp` / `-proxy` |
-| Kill switch and DNS port blocking with the Windows Filtering Platform | next | |
+| MASQUE WARP and the WARP chain (WARP2 -> wg0 -> WARP1) via usque as a child process, password-protected loopback SOCKS | done (flags) | `fswin -masque` / `-chain`, `cmd/fswin/usque_windows.go` |
+| Kill switch with the Windows Filtering Platform, persistent across crashes | done (flag) | `win/wfp`, `fswin -killswitch` / `-cleanup` |
+| App window (Electron) with tray icon, styled after the Android home screen | done | `ui/` |
 | Rules engine ported from the Android app, stored in SQLite | later | |
 | Windows service + named-pipe API for the UI | later | |
 
