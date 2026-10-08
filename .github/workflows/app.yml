@@ -65,10 +65,17 @@ jobs:
         run: |
           npm install --no-audit --no-fund
           npm run dist
+      # one artifact per file: download only the one you need (~120 MB each)
       - uses: actions/upload-artifact@v4
         with:
-          name: port1897-app-windows-x64
-          path: ui/dist/*.exe
+          name: port1897-setup-windows-x64
+          path: ui/dist/*-Setup-*.exe
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: port1897-portable-windows-x64
+          path: ui/dist/*-portable.exe
+          compression-level: 0
 
   # Pushing a tag like v0.2.0 publishes the build as a GitHub release.
   release:
@@ -81,7 +88,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: port1897-app-windows-x64
+          pattern: port1897-*-windows-x64
+          merge-multiple: true
           path: dist
       - name: Checksums
         run: cd dist && sha256sum *.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
