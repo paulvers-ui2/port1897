@@ -31,6 +31,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -60,6 +61,9 @@ type options struct {
 	nrpt    bool
 	cleanup bool
 	block   string
+	wg      string
+	warp    bool
+	proxy   string
 	golog   int32
 }
 
@@ -75,6 +79,9 @@ func main() {
 	flag.BoolVar(&o.nrpt, "nrpt", false, "send every DNS query to the tunnel with an NRPT rule, whatever other adapters use; removed on exit")
 	flag.BoolVar(&o.cleanup, "cleanup", false, "remove fswin's NRPT rule (left behind if fswin was killed) and exit")
 	flag.StringVar(&o.block, "block", "", "comma-separated programs to block (exe names like chrome.exe, or full paths); needs -full")
+	flag.StringVar(&o.wg, "wg", "", "send all traffic through the WireGuard server in this wg-quick .conf file (implies -full)")
+	flag.BoolVar(&o.warp, "warp", false, "send all traffic through free Cloudflare WARP; registers on first use and saves fswin-warp.json next to fswin.exe (implies -full)")
+	flag.StringVar(&o.proxy, "proxy", "", "send all traffic through this proxy: socks5://[user:pass@]host:port or http://... (implies -full)")
 	flag.IntVar(&golog, "log", 3, "firestack log level: 0 very verbose ... 5 errors, 8 none")
 	showVersion := flag.Bool("version", false, "print the build and exit")
 	flag.Parse()
@@ -100,6 +107,15 @@ func run(o options) error {
 	}
 
 	intra.LogLevel(o.golog, 8 /*no console logs; Go logs go to stderr*/)
+
+	// prepare the exit first: WARP registers over the normal network
+	exitID, exitCfg, err := prepareExit(o)
+	if err != nil {
+		return err
+	}
+	if exitID != "" {
+		o.full = true // a VPN exit only sees traffic in the tunnel
+	}
 
 	if o.block != "" && !o.full {
 		fmt.Println("fswin: -block only affects traffic in the tunnel; without -full that is DNS only")
@@ -152,6 +168,17 @@ func run(o options) error {
 		return fmt.Errorf("add doh %s: %w", o.doh, err)
 	}
 
+	if exitID != "" {
+		pxs, err := t.GetProxies()
+		if err != nil {
+			return fmt.Errorf("proxies: %w", err)
+		}
+		if _, err := pxs.AddProxy(x.StrOf(exitID), x.StrOf(exitCfg)); err != nil {
+			return fmt.Errorf("add exit %s: %w", exitID, err)
+		}
+		b.setExit(exitID)
+	}
+
 	if o.nrpt {
 		if others, err := dnspolicy.Others(); err == nil && len(others) > 0 {
 			fmt.Printf("fswin: warning: other catch-all DNS rules compete with -nrpt: %s; disconnect that VPN for a clean test\n",
@@ -174,6 +201,9 @@ func run(o options) error {
 			return err
 		}
 		mode = fmt.Sprintf("all IPv4; firestack's own traffic leaves via interface #%d", phys4)
+	}
+	if exitID != "" {
+		mode += "; exit: " + exitName(exitID)
 	}
 	fmt.Printf("fswin %s: up on %q (%s); DNS %s:53 -> %s. Ctrl+C to stop.\n", version, name, mode, fakedns4, o.doh)
 	if blocked := b.blockedList(); blocked != "" {
@@ -243,4 +273,56 @@ func withPort(csv, port string) string {
 		}
 	}
 	return strings.Join(out, ",")
+}
+
+// prepareExit returns the proxy id and config for the chosen exit, if any.
+func prepareExit(o options) (id, cfg string, err error) {
+	n := 0
+	for _, set := range []bool{o.wg != "", o.warp, o.proxy != ""} {
+		if set {
+			n++
+		}
+	}
+	if n > 1 {
+		return "", "", errors.New("choose one of -wg, -warp and -proxy")
+	}
+	switch {
+	case o.wg != "":
+		b, err := os.ReadFile(o.wg)
+		if err != nil {
+			return "", "", err
+		}
+		cfg, err := wgQuickToUAPI(string(b))
+		return exitWG, cfg, err
+	case o.warp:
+		exe, err := os.Executable()
+		if err != nil {
+			return "", "", err
+		}
+		path := filepath.Join(filepath.Dir(exe), "fswin-warp.json")
+		a, err := loadOrRegisterWarp(path)
+		if err != nil {
+			return "", "", err
+		}
+		cfg, err := a.uapi()
+		return exitWarp, cfg, err
+	case o.proxy != "":
+		if !strings.HasPrefix(o.proxy, "socks5://") && !strings.HasPrefix(o.proxy, "http://") {
+			return "", "", errors.New("-proxy must start with socks5:// or http://")
+		}
+		return exitProxy, o.proxy, nil
+	}
+	return "", "", nil
+}
+
+func exitName(id string) string {
+	switch id {
+	case exitWG:
+		return "WireGuard"
+	case exitWarp:
+		return "Cloudflare WARP"
+	case exitProxy:
+		return "proxy"
+	}
+	return id
 }

@@ -74,6 +74,7 @@ type bridge struct {
 	blocked []string // lowercased exe names or full paths
 	selfpid uint32
 	selfuid int32
+	exit    atomic.Value // string: proxy id for allowed flows and DNS
 }
 
 var _ intra.Bridge = (*bridge)(nil)
@@ -96,6 +97,19 @@ func newBridge(binder *ifbind.Binder, blockcsv string) *bridge {
 		}
 	}
 	return b
+}
+
+// setExit sends allowed flows and DNS queries through proxy id.
+func (b *bridge) setExit(id string) {
+	b.exit.Store(id)
+}
+
+// exitID is the proxy that allowed traffic leaves through; Base is direct.
+func (b *bridge) exitID() string {
+	if id, ok := b.exit.Load().(string); ok && id != "" {
+		return id
+	}
+	return x.Base
 }
 
 func (b *bridge) blockedList() string {
@@ -176,7 +190,7 @@ func (b *bridge) Preflow(protocol, uid int32, src, dst *x.Gostr) *intra.PreMark 
 
 func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probableDomains, blocklists *x.Gostr) *intra.Mark {
 	cid := strconv.FormatInt(b.cid.Add(1), 10)
-	pid := x.Base
+	pid := b.exitID()
 	verdict := ""
 	if b.isBlocked(b.apps.path(uid)) {
 		pid = x.Block
@@ -206,7 +220,7 @@ func (b *bridge) OnSocketClosed(s *intra.SocketSummary) {
 // DNSListener
 
 func (b *bridge) OnQuery(uid, domain *x.Gostr, qtyp int) *x.DNSOpts {
-	return &x.DNSOpts{TIDCSV: x.Preferred, PIDCSV: x.Base}
+	return &x.DNSOpts{TIDCSV: x.Preferred, PIDCSV: b.exitID()}
 }
 
 func (b *bridge) OnUpstreamAnswer(smm *x.DNSSummary, unmodifiedipcsv *x.Gostr) *x.DNSOpts {
