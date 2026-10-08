@@ -6,14 +6,20 @@
 
 package log
 
-import "io"
+import (
+	"io"
+	golog "log"
+)
 
-// SetOutput sends the default logger's output to w. The logger holds the
-// os.Stdout and os.Stderr of when this package initialized, so a program
-// that redirects them later (fswin -logfile) must also call this.
+// SetOutput sends the default logger's output to w, with timestamps. The
+// logger holds the os.Stdout and os.Stderr of when this package
+// initialized, so a program that redirects them later (fswin -logfile)
+// must also call this.
 func SetOutput(w io.Writer) {
 	if l, ok := Glogger.(*simpleLogger); ok {
-		l.o.SetOutput(w)
-		l.e.SetOutput(w)
+		for _, g := range []*golog.Logger{l.o, l.e} {
+			g.SetOutput(w)
+			g.SetFlags(golog.Ltime | golog.Lmicroseconds)
+		}
 	}
 }

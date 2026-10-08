@@ -339,8 +339,10 @@ func run(o options) error {
 			o.conflicts = append(o.conflicts, "another VPN sends all DNS elsewhere: "+r)
 		}
 	}
-	if n, d, vpn := ifbind.Describe(phys4); vpn {
-		o.conflicts = append(o.conflicts, fmt.Sprintf("internet traffic leaves through another VPN's adapter: %s (%s)", n, d))
+	physName, physDesc, physVPN := ifbind.Describe(phys4)
+	fmt.Printf("fswin: firestack's own traffic leaves via interface #%d %s (%s)\n", phys4, physName, physDesc)
+	if physVPN {
+		o.conflicts = append(o.conflicts, fmt.Sprintf("internet traffic leaves through another VPN's adapter: %s (%s)", physName, physDesc))
 	}
 	for _, c := range o.conflicts {
 		fmt.Printf("fswin: warning: %s; disconnect that VPN\n", c)
