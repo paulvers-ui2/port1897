@@ -51,7 +51,7 @@ jobs:
           cp usque-src/LICENSE.md ui/engine/usque-LICENSE.md
       - name: Check scripts
         shell: bash
-        run: for f in ui/main.js ui/preload.js ui/renderer/app.js ui/renderer/icons.js; do node --check "$f"; done
+        run: for f in ui/main.js ui/preload.js ui/renderer/*.js; do node --check "$f"; done
       - name: Build installer and portable exe
         shell: bash
         working-directory: ui
