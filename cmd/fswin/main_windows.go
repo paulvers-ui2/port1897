@@ -41,6 +41,7 @@ import (
 	x "github.com/celzero/firestack/intra/backend"
 	flog "github.com/celzero/firestack/intra/log"
 	"github.com/celzero/firestack/intra/netstack"
+	"github.com/celzero/firestack/intra/protect"
 	"github.com/celzero/firestack/intra/settings"
 	"github.com/celzero/firestack/win/dnspolicy"
 	"github.com/celzero/firestack/win/ifbind"
@@ -239,6 +240,9 @@ func run(o options) error {
 		return fmt.Errorf("find adapter %s: %w", name, err)
 	}
 	binder := ifbind.New(uint32(ifc.Index))
+	// this PC and its attached networks never take the default route; pinning
+	// them to it would break DNS servers like Tor's on 127.0.0.1
+	protect.SkipBind = binder.OnLink
 	phys4, _ := binder.Indexes()
 	if o.full && phys4 == 0 {
 		_ = dev.Close()
