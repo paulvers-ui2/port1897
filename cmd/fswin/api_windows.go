@@ -46,6 +46,9 @@ type dnsStat struct {
 	Type    string `json:"type"`
 	Queries int64  `json:"queries"`
 	Failed  int64  `json:"failed"`
+	Bogus   int64  `json:"bogus"`
+	DNSSEC  bool   `json:"dnssec"`
+	Cache   bool   `json:"cache"`
 	LastMs  int64  `json:"lastMs"`
 	AvgMs   int64  `json:"avgMs"`
 }
@@ -183,6 +186,9 @@ func statusOf(b *bridge, o options, started time.Time, exitID, dnsLabel string) 
 			Type:    o.dnsType,
 			Queries: l.dnsQueries.Load(),
 			Failed:  l.dnsFailed.Load(),
+			Bogus:   l.dnsBogus.Load(),
+			DNSSEC:  o.dnssec,
+			Cache:   o.dnsCache,
 			LastMs:  l.dnsLastMs.Load(),
 		},
 		Firewall: fwStat{

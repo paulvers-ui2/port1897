@@ -24,6 +24,8 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
   (`chrome.exe`, `discord.exe`, ...).
 - **Block programs** (`-block chrome.exe`).
 - **No DNS leaks** (`-nrpt`): a Windows DNS policy sends every lookup to the tunnel.
+- **DNSSEC and DNS booster** (`-dnssec`, `-dns-cache`): bogus answers are blocked,
+  repeat lookups come from the cache.
 - **VPN exits:** send everything through free Cloudflare WARP (`-warp`), WARP over
   MASQUE (`-masque`, looks like HTTPS), the WARP chain WARP -> your WireGuard
   server -> WARP (`-chain my.conf`), any WireGuard server (`-wg my.conf`), or a
@@ -90,6 +92,8 @@ Please tell us how it went with a
 | `-wg my.conf` | Use a WireGuard server; `my.conf` is a normal WireGuard config file |
 | `-proxy socks5://user:pass@host:port` | Use a SOCKS5 (or `http://`) proxy |
 | `-doh URL -doh-ips IPs` | Use another DNS-over-HTTPS server |
+| `-dnssec` | Block DNS answers that point a public name at a private, loopback or test address (a sign of DNS poisoning); answers with DNSSEC proof are marked in the logs |
+| `-dns-cache` | DNS booster: answer repeat lookups from the cache |
 | `-masque` | Use free Cloudflare WARP over MASQUE (needs `usque.exe` next to `fswin.exe`) |
 | `-chain my.conf` | WARP -> the WireGuard server in `my.conf` -> WARP (needs `usque.exe`) |
 | `-killswitch` | Block all traffic outside the tunnel, even if `fswin` crashes |

@@ -84,6 +84,8 @@ type options struct {
 	dotIPs      string
 	dnscrypt    string
 	dnsDirect   bool
+	dnsCache    bool
+	dnssec      bool
 	undelegated bool
 	dnsFallback bool
 	fallbackDoH string
@@ -122,6 +124,8 @@ func main() {
 	flag.StringVar(&o.dotIPs, "dot-ips", "", "comma-separated IPs of the -dot server (optional)")
 	flag.StringVar(&o.dnscrypt, "dnscrypt", "", "DNSCrypt server stamp (sdns://...) for -dns dnscrypt")
 	flag.BoolVar(&o.dnsDirect, "dns-direct", false, "never send DNS through the VPN exit")
+	flag.BoolVar(&o.dnsCache, "dns-cache", false, "DNS booster: answer repeat lookups from the cache")
+	flag.BoolVar(&o.dnssec, "dnssec", false, "block DNS answers that put public names on bogus (bogon) addresses, a sign of poisoning")
 	flag.BoolVar(&o.undelegated, "undelegated", false, "use System DNS for undelegated domains like .lan and .internal")
 	flag.BoolVar(&o.dnsFallback, "dns-fallback", false, "use the fallback DNS when the chosen DNS fails")
 	flag.StringVar(&o.fallbackDoH, "fallback-doh", "", "fallback (bootstrap) DoH server URL (default: -doh)")
@@ -218,6 +222,8 @@ func run(o options) error {
 
 	b := newBridge(binder, o.block)
 	b.dnsDirect = o.dnsDirect
+	b.dnsCache = o.dnsCache
+	b.dnssec = o.dnssec
 	if uq != nil {
 		b.setBypass(uq.path) // its own connections to Cloudflare
 	}

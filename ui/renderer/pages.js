@@ -178,8 +178,11 @@ PAGES.dns = () => {
     ),
     sectionLabel('Advanced'),
     card(
-      switchRow({ ico: 'ic_prevent_dns_leaks', title: 'Prevent DNS leaks', sub: 'Force every DNS lookup on this PC through the app, even when another app or VPN sets its own DNS', value: s.nrpt, onchange: (v) => save({ nrpt: v }) }),
+      switchRow({ ico: 'ic_fav_icon', title: 'Show website icon in DNS logs (experimental)', sub: 'Fetches website icons from duckduckgo.com, which then sees the sites you look up.', value: s.favicons, onchange: (v) => save({ favicons: v }, true) }),
+      switchRow({ ico: 'ic_auto_start', title: 'DNS booster', sub: 'Coalesce requests, cache responses, resilient error handling. Cached answers skip the DNSSEC check.', value: s.dnsCache, onchange: (v) => save({ dnsCache: v }) }),
+      switchRow({ ico: 'ic_prevent_dns_leaks', title: 'Enable DNSSEC', sub: 'Block DNS answers with forged or bogus (bogon) addresses: a public site pointing at a private, loopback or test address is a sign of DNS poisoning. Verified answers show DNSSEC ✓ in the logs.', value: s.dnssec, onchange: (v) => save({ dnssec: v }) }),
       switchRow({ ico: 'ic_prevent_dns_proxy', title: 'Never proxy DNS', sub: 'Do not send DNS over the WireGuard, WARP, SOCKS5 or HTTP proxy; it still goes encrypted to your DNS server', value: s.dnsDirect, onchange: (v) => save({ dnsDirect: v }) }),
+      switchRow({ ico: 'ic_prevent_dns_leaks', title: 'Prevent DNS leaks', sub: 'Force every DNS lookup on this PC through the app, even when another app or VPN sets its own DNS', value: s.nrpt, onchange: (v) => save({ nrpt: v }) }),
       switchRow({ ico: 'ic_use_fallback_bypass', title: 'Use fallback DNS', sub: 'When your chosen DNS fails, answer with the fallback DNS (Network → Choose fallback DNS)', value: s.dnsFallback, onchange: (v) => save({ dnsFallback: v }) }),
       switchRow({ ico: 'ic_undelegated_domain', title: 'Use System DNS for undelegated domains', sub: 'Use System DNS for undelegated domains like .lan, .internal, etc.', value: s.undelegated, onchange: (v) => save({ undelegated: v }) })
     )
@@ -843,6 +846,18 @@ PAGES.logs = () => {
   return screen('Logs', tabs, h('div', { class: 'field-row' }, search), list);
 };
 
+// Website icon from DuckDuckGo when "Show website icon" is on; else the DNS
+// globe. Only well-formed host names go into the URL.
+function siteIcon(domain) {
+  const d = String(domain || '').toLowerCase();
+  if (!App.settings.favicons || !/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(d)) return icon('dns_home_screen', 'row-ico');
+  const parts = d.split('.');
+  const site = parts.slice(-2).join('.');
+  const img = h('img', { class: 'row-ico favicon', alt: '', referrerpolicy: 'no-referrer', loading: 'lazy', src: `https://icons.duckduckgo.com/ip3/${encodeURIComponent(site)}.ico` });
+  img.addEventListener('error', () => img.replaceWith(icon('dns_home_screen', 'row-ico')));
+  return img;
+}
+
 function fillLog(list, q) {
   q = (q || '').trim().toLowerCase();
   const blocked = new Set(App.settings.blocked);
@@ -874,12 +889,13 @@ function fillLog(list, q) {
         )
       );
     } else {
+      const marks = [e.secure ? 'DNSSEC ✓' : '', e.cached ? 'cached' : '', e.via === 'BlockAll' ? 'blocked: bogus answer' : e.blocked ? 'blocked' : ''].filter(Boolean).join(' · ');
       list.append(
         h(
           'div',
           { class: 'row' + (e.blocked ? ' blocked' : '') },
-          icon('dns_home_screen', 'row-ico'),
-          h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: e.domain || '' }), h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.answer || 'no answer'} · ${e.latencyMs} ms` }))
+          siteIcon(e.domain),
+          h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: e.domain || '' }), h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.answer || 'no answer'} · ${e.latencyMs} ms${marks ? ' · ' + marks : ''}` }))
         )
       );
     }

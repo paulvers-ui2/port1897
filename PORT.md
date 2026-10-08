@@ -44,6 +44,7 @@ firewall rules) is Phase 2 work.
 | Connection owner: TCP/UDP table -> pid -> exe path, stable numeric uid per exe | done | `win/owner`, `fswin` |
 | Block programs by exe name | done (flag) | `fswin -block` |
 | DNS leak fix: NRPT catch-all rule to the tunnel | done (opt-in) | `win/dnspolicy`, `fswin -nrpt` / `-cleanup` |
+| DNSSEC switch (port of the Android DnsSecGuard: bogus/bogon answers blocked, AD-verified answers marked) and DNS booster (cached transports) | done (flags) | `cmd/fswin/dnssec_windows.go`, `fswin -dnssec` / `-dns-cache` |
 | VPN exits: WireGuard config files, free Cloudflare WARP (auto-registered), SOCKS5/HTTP proxies | done (flags) | `fswin -wg` / `-warp` / `-proxy` |
 | MASQUE WARP and the WARP chain (WARP2 -> wg0 -> WARP1) via usque as a child process, password-protected loopback SOCKS | done (flags) | `fswin -masque` / `-chain`, `cmd/fswin/usque_windows.go` |
 | Kill switch with the Windows Filtering Platform, persistent across crashes | done (flag) | `win/wfp`, `fswin -killswitch` / `-cleanup` |

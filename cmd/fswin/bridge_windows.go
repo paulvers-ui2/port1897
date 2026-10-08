@@ -78,6 +78,8 @@ type bridge struct {
 	dnsTID  atomic.Value // string: transport DNS queries go to
 
 	dnsDirect bool // never send DNS through the exit
+	dnsCache  bool // "DNS booster": answer repeat lookups from the cache
+	dnssec    bool // block bogus (bogon) answers, as DnsSecGuard does
 	selfpid uint32
 	selfuid int32
 	exit    atomic.Value // string: proxy id for allowed flows and DNS
@@ -293,6 +295,9 @@ func (b *bridge) OnQuery(uid, domain *x.Gostr, qtyp int) *x.DNSOpts {
 	if tid == "" {
 		tid = x.Preferred
 	}
+	if b.dnsCache && tid != x.BlockAll && !strings.HasPrefix(tid, x.CT) {
+		tid = x.CT + tid // as the Android app does for its DNS booster
+	}
 	pid := b.exitID()
 	if b.dnsDirect {
 		pid = x.Base
@@ -300,8 +305,19 @@ func (b *bridge) OnQuery(uid, domain *x.Gostr, qtyp int) *x.DNSOpts {
 	return &x.DNSOpts{TIDCSV: tid, PIDCSV: pid}
 }
 
+// OnUpstreamAnswer blocks bogus answers when the DNSSEC switch is on: a
+// public name answered with a bogon address is re-answered by BlockAll.
 func (b *bridge) OnUpstreamAnswer(smm *x.DNSSummary, unmodifiedipcsv *x.Gostr) *x.DNSOpts {
-	return nil // keep the answer
+	if !b.dnssec || smm == nil || isLocalName(smm.QName) {
+		return nil // keep the answer
+	}
+	bad := bogonsIn(unmodifiedipcsv.V())
+	if len(bad) == 0 {
+		return nil
+	}
+	b.log.dnsBogus.Add(1)
+	b.logf("dnssec: %s answered with bogus %v via %s (AD %t); blocked", smm.QName, bad, smm.ID, smm.AD)
+	return &x.DNSOpts{TIDCSV: x.BlockAll, PIDCSV: x.Base}
 }
 
 func (b *bridge) OnResponse(s *x.DNSSummary) {
@@ -319,7 +335,8 @@ func (b *bridge) OnResponse(s *x.DNSSummary) {
 		b.log.dnsTotalMs.Add(ms)
 	}
 	b.log.add(event{Kind: "dns", Domain: strings.TrimSuffix(s.QName, "."), Answer: s.RData,
-		Via: s.ID, LatencyMs: ms, Blocked: s.Status == x.Complete && isUnspecifiedAnswer(s.RData)})
+		Via: s.ID, LatencyMs: ms, Blocked: s.Status == x.Complete && isUnspecifiedAnswer(s.RData),
+		Secure: s.AD, Cached: s.Cached})
 }
 
 // isUnspecifiedAnswer reports answers of 0.0.0.0 / ::, which is how

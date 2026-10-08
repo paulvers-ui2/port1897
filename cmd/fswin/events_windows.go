@@ -32,6 +32,8 @@ type event struct {
 	Rx        int64  `json:"rx,omitempty"` // bytes, on "close"
 	Tx        int64  `json:"tx,omitempty"`
 	DurMs     int64  `json:"durMs,omitempty"`
+	Secure    bool   `json:"secure,omitempty"` // DNSSEC verified (AD bit)
+	Cached    bool   `json:"cached,omitempty"` // answered from the DNS cache
 }
 
 // journalSize bounds how many recent events are kept.
@@ -50,6 +52,7 @@ type journal struct {
 	flowsBlocked atomic.Int64
 	dnsQueries   atomic.Int64
 	dnsFailed    atomic.Int64
+	dnsBogus     atomic.Int64 // bogus answers blocked by the DNSSEC switch
 	dnsLastMs    atomic.Int64
 	dnsTotalMs   atomic.Int64
 	rx           atomic.Int64

@@ -36,6 +36,9 @@ const DEFAULTS = {
   lastOtherType: 'doh',
   customDns: {},
   dnsDirect: false,
+  dnsCache: false, // "DNS booster"
+  dnssec: true, // block bogus answers, as on Android
+  favicons: false, // website icons in DNS logs, from DuckDuckGo
   undelegated: false,
   dnsFallback: false,
   nrpt: true,
@@ -246,6 +249,8 @@ function engineArgs(s) {
   if (type === 'dot') a.push('-dot', s.dot);
   if (type === 'dnscrypt') a.push('-dnscrypt', s.dnscrypt);
   if (s.dnsDirect) a.push('-dns-direct');
+  if (s.dnsCache) a.push('-dns-cache');
+  if (s.dnssec) a.push('-dnssec');
   if (s.undelegated) a.push('-undelegated');
   if (s.dnsFallback) a.push('-dns-fallback');
   if (s.full) a.push('-full');

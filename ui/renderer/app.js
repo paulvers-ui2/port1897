@@ -97,7 +97,7 @@ function renderHome() {
   if (on) {
     const q = s.dns.queries;
     setText('dns-main', q ? `${s.dns.avgMs || s.dns.lastMs} ms` : 'Waiting for lookups…');
-    setText('dns-sub', q ? `${q} lookups${s.dns.failed ? `, ${s.dns.failed} failed` : ''}` : '');
+    setText('dns-sub', q ? `${q} lookups${s.dns.failed ? `, ${s.dns.failed} failed` : ''}${s.dns.bogus ? `, ${s.dns.bogus} bogus blocked` : ''}` : '');
     setText('dns-foot', dnsCurrent().name);
   } else {
     setText('dns-main', 'Enable DNS mode.');
@@ -230,7 +230,7 @@ function demoPort() {
   let s = {
     dnsType: 'doh', doh: 'https://cloudflare-dns.com/dns-query', dohIps: '1.1.1.1,1.0.0.1', dohName: 'Cloudflare',
     dot: '', dotName: '', dnscrypt: '', dnscryptName: '', lastOtherType: 'doh', customDns: {},
-    dnsDirect: false, undelegated: false, dnsFallback: false, nrpt: true,
+    dnsDirect: false, dnsCache: false, dnssec: true, favicons: false, undelegated: false, dnsFallback: false, nrpt: true,
     fallbackDoh: 'https://cloudflare-dns.com/dns-query', fallbackIps: '1.1.1.1,1.0.0.1', fallbackName: 'Cloudflare',
     exit: 'masque', wgActive: '', socks: { host: '127.0.0.1', port: 1080, user: '', pass: '' }, http: { host: '', port: 8080, user: '', pass: '' },
     warpSni: '', exitSni: '', masqueFlags: '', warp1Flags: '', wgFlags: '', warp2Flags: '', warpAutoDisable: false,
@@ -270,7 +270,7 @@ function demoPort() {
       for (let i = 0; i < 3; i++) {
         const app = pick(apps);
         const dom = pick(doms);
-        out.push({ id: ++id, at: Date.now(), kind: 'dns', domain: dom, answer: '104.16.0.1', latencyMs: 20 });
+        out.push({ id: ++id, at: Date.now(), kind: 'dns', domain: dom, answer: '104.16.0.1', latencyMs: 20, secure: dom.endsWith('.com') });
         out.push({ id: ++id, at: Date.now(), kind: 'flow', app, proto: 'tcp', dst: '104.16.0.1:443', domain: dom, via: 'Cloudflare WARP', blocked: s.blocked.includes(app) });
       }
       return out;

@@ -292,3 +292,5 @@ select.fld-input { background: var(--row); }
   transition: opacity 0.2s, transform 0.2s;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+.favicon { border-radius: 6px; object-fit: contain; background: rgba(255, 255, 255, 0.06); }
