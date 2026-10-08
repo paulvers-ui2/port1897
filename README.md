@@ -24,6 +24,8 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
   (`chrome.exe`, `discord.exe`, ...).
 - **Block programs** (`-block chrome.exe`).
 - **No DNS leaks** (`-nrpt`): a Windows DNS policy sends every lookup to the tunnel.
+- **VPN exits:** send everything through free Cloudflare WARP (`-warp`), any
+  WireGuard server (`-wg my.conf`), or a SOCKS5/HTTP proxy (`-proxy socks5://...`).
 
 Not yet: an app window, a background service, saved rules, a kill switch, IPv6.
 See the [roadmap](#roadmap).
@@ -42,6 +44,12 @@ See the [roadmap](#roadmap).
 
    ```powershell
    .\fswin.exe -full -nrpt
+   ```
+
+   or, to also hide your IP address behind free Cloudflare WARP:
+
+   ```powershell
+   .\fswin.exe -warp -nrpt
    ```
 
 5. Browse. You will see lines like:
@@ -70,6 +78,9 @@ Please tell us how it went with a
 | `-full` | Send all IPv4 traffic through the tunnel (default: DNS only) |
 | `-nrpt` | Send every DNS query to the tunnel, whatever other adapters say |
 | `-block a.exe,b.exe` | Block these programs (exe names or full paths); needs `-full` |
+| `-warp` | Use free Cloudflare WARP as the VPN. The first run registers a free account and saves it in `fswin-warp.json` next to `fswin.exe` (keep that file private) |
+| `-wg my.conf` | Use a WireGuard server; `my.conf` is a normal WireGuard config file |
+| `-proxy socks5://user:pass@host:port` | Use a SOCKS5 (or `http://`) proxy |
 | `-doh URL -doh-ips IPs` | Use another DNS-over-HTTPS server |
 | `-cleanup` | Remove a DNS rule left behind by a crashed `fswin`, then exit |
 | `-log 0..8` | firestack log detail: 0 very verbose, 3 default, 8 none |

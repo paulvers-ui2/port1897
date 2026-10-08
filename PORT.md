@@ -44,6 +44,7 @@ firewall rules) is Phase 2 work.
 | Connection owner: TCP/UDP table -> pid -> exe path, stable numeric uid per exe | done | `win/owner`, `fswin` |
 | Block programs by exe name | done (flag) | `fswin -block` |
 | DNS leak fix: NRPT catch-all rule to the tunnel | done (opt-in) | `win/dnspolicy`, `fswin -nrpt` / `-cleanup` |
+| VPN exits: WireGuard config files, free Cloudflare WARP (auto-registered), SOCKS5/HTTP proxies | done (flags) | `fswin -wg` / `-warp` / `-proxy` |
 | Kill switch and DNS port blocking with the Windows Filtering Platform | next | |
 | Rules engine ported from the Android app, stored in SQLite | later | |
 | Windows service + named-pipe API for the UI | later | |
