@@ -78,6 +78,18 @@ type options struct {
 	tokenFile string
 	logFile   string
 	golog     int32
+
+	dnsType     string // doh, dot, dnscrypt or system
+	dot         string
+	dotIPs      string
+	dnscrypt    string
+	dnsDirect   bool
+	undelegated bool
+	dnsFallback bool
+	fallbackDoH string
+	fallbackIPs string
+	usqueFlags  string
+	allowLAN    bool
 }
 
 func main() {
@@ -105,6 +117,17 @@ func main() {
 	flag.StringVar(&o.api, "api", "", "serve the control API for the app window on this loopback address, e.g. 127.0.0.1:47897")
 	flag.StringVar(&o.tokenFile, "token-file", "", "file holding the secret every -api request must present")
 	flag.StringVar(&o.logFile, "logfile", "", "write output to this file instead of the console")
+	flag.StringVar(&o.dnsType, "dns", dnsDoH, "DNS type: doh, dot, dnscrypt or system (the network adapter's own DNS servers)")
+	flag.StringVar(&o.dot, "dot", "", "DNS-over-TLS server for -dns dot, e.g. tls://dns.adguard-dns.com")
+	flag.StringVar(&o.dotIPs, "dot-ips", "", "comma-separated IPs of the -dot server (optional)")
+	flag.StringVar(&o.dnscrypt, "dnscrypt", "", "DNSCrypt server stamp (sdns://...) for -dns dnscrypt")
+	flag.BoolVar(&o.dnsDirect, "dns-direct", false, "never send DNS through the VPN exit")
+	flag.BoolVar(&o.undelegated, "undelegated", false, "use System DNS for undelegated domains like .lan and .internal")
+	flag.BoolVar(&o.dnsFallback, "dns-fallback", false, "use the fallback DNS when the chosen DNS fails")
+	flag.StringVar(&o.fallbackDoH, "fallback-doh", "", "fallback (bootstrap) DoH server URL (default: -doh)")
+	flag.StringVar(&o.fallbackIPs, "fallback-ips", "", "comma-separated IPs of -fallback-doh (default: -doh-ips)")
+	flag.StringVar(&o.usqueFlags, "usque-flags", "", "extra usque flags for -masque or -chain, space-separated; core flags (-b -p -u -w -c --wg --exit-config) are refused")
+	flag.BoolVar(&o.allowLAN, "allow-lan", false, "with -killswitch, let private and link-local addresses (printers, shares) through")
 	showVersion := flag.Bool("version", false, "print the build and exit")
 	flag.Parse()
 	if *showVersion {
@@ -181,14 +204,20 @@ func run(o options) error {
 		return errors.New("-full: no IPv4 default route outside the tunnel to send firestack's own traffic over")
 	}
 
-	ipports := withPort(o.dohips, "443")
-	dtr, err := intra.NewDefaultDNS(x.StrOf(x.DOH), x.StrOf(o.doh), x.StrOf(ipports))
+	fbURL, fbIPs := o.fallbackDoH, o.fallbackIPs
+	if fbURL == "" {
+		fbURL, fbIPs = o.doh, o.dohips
+	}
+	dtr, err := intra.NewDefaultDNS(x.StrOf(x.DOH), x.StrOf(fbURL), x.StrOf(withPort(fbIPs, "443")))
 	if err != nil {
 		_ = dev.Close()
 		return fmt.Errorf("default dns: %w", err)
 	}
+	intra.UndelegatedDomains(o.undelegated)
+	intra.DefaultDNSAsFallback(o.dnsFallback)
 
 	b := newBridge(binder, o.block)
+	b.dnsDirect = o.dnsDirect
 	if uq != nil {
 		b.setBypass(uq.path) // its own connections to Cloudflare
 	}
@@ -199,9 +228,11 @@ func run(o options) error {
 	}
 	defer t.Disconnect()
 
-	if err := intra.AddDoHTransport(t, x.StrOf(x.Preferred), x.StrOf(o.doh), x.StrOf(o.dohips)); err != nil {
-		return fmt.Errorf("add doh %s: %w", o.doh, err)
+	tid, dnsLabel, err := setupDNS(t, o, binder)
+	if err != nil {
+		return fmt.Errorf("dns: %w", err)
 	}
+	b.setDNS(tid)
 
 	if exitID != "" {
 		pxs, err := t.GetProxies()
@@ -246,7 +277,7 @@ func run(o options) error {
 		if uq != nil {
 			allow = append(allow, uq.path)
 		}
-		if err := wfp.Enable(wfp.Options{TunLUID: nt.LUID(), Allow: allow, Persistent: true}); err != nil {
+		if err := wfp.Enable(wfp.Options{TunLUID: nt.LUID(), Allow: allow, Persistent: true, AllowLAN: o.allowLAN}); err != nil {
 			return fmt.Errorf("-killswitch: %w", err)
 		}
 		defer func() {
@@ -259,7 +290,7 @@ func run(o options) error {
 	if exitID != "" {
 		mode += "; exit: " + exitName(exitID)
 	}
-	fmt.Printf("fswin %s: up on %q (%s); DNS %s:53 -> %s. Ctrl+C to stop.\n", version, name, mode, fakedns4, o.doh)
+	fmt.Printf("fswin %s: up on %q (%s); DNS %s:53 -> %s. Ctrl+C to stop.\n", version, name, mode, fakedns4, dnsLabel)
 	if blocked := b.blockedList(); blocked != "" {
 		fmt.Printf("fswin: blocking %s\n", blocked)
 	}
@@ -269,7 +300,7 @@ func run(o options) error {
 		started := time.Now()
 		var once sync.Once
 		srv, err := serveAPI(o.api, o.tokenFile, b,
-			func() apiStatus { return statusOf(b, o, started, exitID) },
+			func() apiStatus { return statusOf(b, o, started, exitID, dnsLabel) },
 			func() { once.Do(func() { close(apiStop) }) })
 		if err != nil {
 			return fmt.Errorf("api: %w", err)
@@ -388,10 +419,15 @@ func prepareExit(o options) (id, cfg string, uq *usque, err error) {
 		}
 		return exitProxy, o.proxy, nil, nil
 	case o.masque || o.chain != "":
+		extra, err := usqueFlags(o.usqueFlags)
+		if err != nil {
+			return "", "", nil, err
+		}
 		s := usqueSetup{
 			exe:     o.usqueExe,
 			dir:     o.usqueDir,
 			chainWG: o.chain,
+			extra:   extra,
 			logf:    func(f string, a ...any) { fmt.Printf(f+"\n", a...) },
 		}
 		if s.exe == "" {

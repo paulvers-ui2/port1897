@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -48,6 +49,7 @@ type usqueSetup struct {
 	exe     string // usque.exe
 	dir     string // where warp1.json / warp2.json live
 	chainWG string // wg-quick file for the chain's middle hop; "" for plain MASQUE
+	extra   []string // more usque flags (SNI, MTU...), checked by usqueFlags
 	logf    func(string, ...any)
 }
 
@@ -79,6 +81,7 @@ func startUsque(s usqueSetup) (*usque, error) {
 		args = append(args, "socks")
 	}
 	args = append(args, "-b", "127.0.0.1", "-p", fmt.Sprint(port), "-u", user, "-w", pass)
+	args = append(args, s.extra...)
 
 	cmd := exec.Command(s.exe, args...)
 	cmd.Dir = s.dir
@@ -213,4 +216,29 @@ func killOnCloseJob(pid int) (windows.Handle, error) {
 		return 0, err
 	}
 	return job, nil
+}
+
+// coreFlags belong to fswin: the proxy address and password, and the
+// identity and config files. Users may add any other usque flag.
+var coreFlags = map[string]bool{
+	"-b": true, "--bind": true, "-p": true, "--port": true,
+	"-u": true, "--username": true, "-w": true, "--password": true,
+	"-c": true, "--config": true, "--wg": true, "--exit-config": true,
+}
+
+// usqueFlags splits extra, space-separated usque flags and refuses the
+// core ones and subcommands, as the Android chain screen does.
+func usqueFlags(s string) ([]string, error) {
+	f := strings.Fields(s)
+	for _, a := range f {
+		name, _, _ := strings.Cut(a, "=")
+		if coreFlags[name] {
+			return nil, fmt.Errorf("usque flag %s belongs to the fixed core", name)
+		}
+		switch a {
+		case "socks", "chain", "register", "nativetun", "http-proxy", "portfw":
+			return nil, fmt.Errorf("usque flags: leave out the %s subcommand", a)
+		}
+	}
+	return f, nil
 }

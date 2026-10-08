@@ -20,7 +20,7 @@ import (
 type event struct {
 	ID        int64  `json:"id"`
 	At        int64  `json:"at"`   // unix millis
-	Kind      string `json:"kind"` // "flow" or "dns"
+	Kind      string `json:"kind"` // "flow", "dns" or "close" (a connection ended)
 	App       string `json:"app,omitempty"`
 	Proto     string `json:"proto,omitempty"`
 	Dst       string `json:"dst,omitempty"`
@@ -29,6 +29,9 @@ type event struct {
 	Via       string `json:"via,omitempty"`
 	LatencyMs int64  `json:"latencyMs,omitempty"`
 	Blocked   bool   `json:"blocked,omitempty"`
+	Rx        int64  `json:"rx,omitempty"` // bytes, on "close"
+	Tx        int64  `json:"tx,omitempty"`
+	DurMs     int64  `json:"durMs,omitempty"`
 }
 
 // journalSize bounds how many recent events are kept.

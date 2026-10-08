@@ -75,6 +75,9 @@ type bridge struct {
 	blocked map[string]bool // lowercased exe names or full paths
 	log     *journal
 	bypass  atomic.Value // string: lowercased exe path let straight out (usque)
+	dnsTID  atomic.Value // string: transport DNS queries go to
+
+	dnsDirect bool // never send DNS through the exit
 	selfpid uint32
 	selfuid int32
 	exit    atomic.Value // string: proxy id for allowed flows and DNS
@@ -111,6 +114,11 @@ func (b *bridge) setBypass(path string) {
 func (b *bridge) isBypass(path string) bool {
 	p, ok := b.bypass.Load().(string)
 	return ok && p != "" && strings.EqualFold(p, path)
+}
+
+// setDNS sends DNS queries to transport tid (Preferred or System).
+func (b *bridge) setDNS(tid string) {
+	b.dnsTID.Store(tid)
 }
 
 // setExit sends allowed flows and DNS queries through proxy id.
@@ -270,12 +278,26 @@ func (b *bridge) OnSocketClosed(s *intra.SocketSummary) {
 		s.ID, s.Proto, s.Target, s.PID, s.Rx, s.Tx, s.Duration, s.Msg)
 	b.log.rx.Add(s.Rx)
 	b.log.tx.Add(s.Tx)
+	app := "?"
+	if u, err := strconv.Atoi(s.UID); err == nil {
+		app = b.appName(int32(u))
+	}
+	b.log.add(event{Kind: "close", App: app, Proto: s.Proto, Dst: s.Target,
+		Via: exitName(s.PID), Rx: s.Rx, Tx: s.Tx, DurMs: s.Duration})
 }
 
 // DNSListener
 
 func (b *bridge) OnQuery(uid, domain *x.Gostr, qtyp int) *x.DNSOpts {
-	return &x.DNSOpts{TIDCSV: x.Preferred, PIDCSV: b.exitID()}
+	tid, _ := b.dnsTID.Load().(string)
+	if tid == "" {
+		tid = x.Preferred
+	}
+	pid := b.exitID()
+	if b.dnsDirect {
+		pid = x.Base
+	}
+	return &x.DNSOpts{TIDCSV: tid, PIDCSV: pid}
 }
 
 func (b *bridge) OnUpstreamAnswer(smm *x.DNSSummary, unmodifiedipcsv *x.Gostr) *x.DNSOpts {

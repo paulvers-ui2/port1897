@@ -16,8 +16,11 @@
 package wfp
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"net/netip"
+	"runtime"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -43,6 +46,9 @@ type Options struct {
 	// Persistent keeps the block in place if this process dies, until
 	// Disable runs (from a later start or "fswin -cleanup").
 	Persistent bool
+	// AllowLAN lets private, link-local and multicast addresses through,
+	// so printers, file shares and casting keep working.
+	AllowLAN bool
 }
 
 // Fixed keys, so a later process can find and remove what a crashed one
@@ -136,6 +142,11 @@ func Enable(o Options) error {
 		}
 		if err := permitLoopback(session, bo, 13); err != nil {
 			return err
+		}
+		if o.AllowLAN {
+			if err := permitLAN(session, bo, 13); err != nil {
+				return fmt.Errorf("allow LAN: %w", err)
+			}
 		}
 		if err := permitTunInterface(session, bo, 12, o.TunLUID); err != nil {
 			return err
@@ -321,4 +332,83 @@ func permitApp(session uintptr, bo *baseObjects, weight uint8, path string) erro
 		}
 	}
 	return nil
+}
+
+var (
+	lan4 = []netip.Prefix{
+		netip.MustParsePrefix("10.0.0.0/8"),
+		netip.MustParsePrefix("172.16.0.0/12"),
+		netip.MustParsePrefix("192.168.0.0/16"),
+		netip.MustParsePrefix("169.254.0.0/16"),
+		netip.MustParsePrefix("224.0.0.0/4"),
+		netip.MustParsePrefix("255.255.255.255/32"),
+	}
+	lan6 = []netip.Prefix{
+		netip.MustParsePrefix("fe80::/10"),
+		netip.MustParsePrefix("fc00::/7"),
+		netip.MustParsePrefix("ff00::/8"),
+	}
+)
+
+// permitLAN lets traffic to and from the lan4 and lan6 ranges through.
+// Conditions on the same field are ORed, so one filter per layer covers all.
+func permitLAN(session uintptr, bo *baseObjects, weight uint8) error {
+	v4 := make([]wtFwpV4AddrAndMask, len(lan4))
+	c4 := make([]wtFwpmFilterCondition0, len(lan4))
+	for i, p := range lan4 {
+		a := p.Addr().As4()
+		v4[i] = wtFwpV4AddrAndMask{
+			addr: binary.BigEndian.Uint32(a[:]), // WFP wants host order
+			mask: ^uint32(0) << (32 - p.Bits()),
+		}
+		c4[i] = wtFwpmFilterCondition0{
+			fieldKey:  cFWPM_CONDITION_IP_REMOTE_ADDRESS,
+			matchType: cFWP_MATCH_EQUAL,
+			conditionValue: wtFwpConditionValue0{
+				_type: cFWP_V4_ADDR_MASK,
+				value: uintptr(unsafe.Pointer(&v4[i])),
+			},
+		}
+	}
+	v6 := make([]wtFwpV6AddrAndMask, len(lan6))
+	c6 := make([]wtFwpmFilterCondition0, len(lan6))
+	for i, p := range lan6 {
+		v6[i] = wtFwpV6AddrAndMask{addr: p.Addr().As16(), prefixLength: uint8(p.Bits())}
+		c6[i] = wtFwpmFilterCondition0{
+			fieldKey:  cFWPM_CONDITION_IP_REMOTE_ADDRESS,
+			matchType: cFWP_MATCH_EQUAL,
+			conditionValue: wtFwpConditionValue0{
+				_type: cFWP_V6_ADDR_MASK,
+				value: uintptr(unsafe.Pointer(&v6[i])),
+			},
+		}
+	}
+
+	add := func(name string, layer windows.GUID, conds []wtFwpmFilterCondition0) error {
+		dd, err := createWtFwpmDisplayData0(name, "")
+		if err != nil {
+			return err
+		}
+		filter := wtFwpmFilter0{
+			displayData:         *dd,
+			providerKey:         &bo.provider,
+			layerKey:            layer,
+			subLayerKey:         bo.filters,
+			weight:              filterWeight(weight),
+			numFilterConditions: uint32(len(conds)),
+			filterCondition:     &conds[0],
+			action:              wtFwpmAction0{_type: cFWP_ACTION_PERMIT},
+		}
+		id := uint64(0)
+		return fwpmFilterAdd0(session, &filter, 0, &id)
+	}
+	err := errors.Join(
+		add("Permit LAN (IPv4 out)", cFWPM_LAYER_ALE_AUTH_CONNECT_V4, c4),
+		add("Permit LAN (IPv4 in)", cFWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4, c4),
+		add("Permit LAN (IPv6 out)", cFWPM_LAYER_ALE_AUTH_CONNECT_V6, c6),
+		add("Permit LAN (IPv6 in)", cFWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V6, c6),
+	)
+	runtime.KeepAlive(v4)
+	runtime.KeepAlive(v6)
+	return err
 }

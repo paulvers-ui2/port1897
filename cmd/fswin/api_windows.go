@@ -37,11 +37,13 @@ type apiStatus struct {
 	Firewall  fwStat   `json:"firewall"`
 	Traffic   trafStat `json:"traffic"`
 	NRPT      bool     `json:"nrpt"`
+	AllowLAN  bool     `json:"allowLan"`
 	Kill      bool     `json:"killSwitch"`
 }
 
 type dnsStat struct {
 	Server  string `json:"server"`
+	Type    string `json:"type"`
 	Queries int64  `json:"queries"`
 	Failed  int64  `json:"failed"`
 	LastMs  int64  `json:"lastMs"`
@@ -167,16 +169,18 @@ func (a *apiServer) shutdown(w http.ResponseWriter, _ *http.Request) {
 }
 
 // statusOf builds the API status from the bridge and the run options.
-func statusOf(b *bridge, o options, started time.Time, exitID string) apiStatus {
+func statusOf(b *bridge, o options, started time.Time, exitID, dnsLabel string) apiStatus {
 	l := b.log
 	st := apiStatus{
 		Version:   version,
 		StartedAt: started.UnixMilli(),
 		Mode:      "dns",
 		NRPT:      o.nrpt,
+		AllowLAN:  o.allowLAN,
 		Kill:      o.kill,
 		DNS: dnsStat{
-			Server:  o.doh,
+			Server:  dnsLabel,
+			Type:    o.dnsType,
 			Queries: l.dnsQueries.Load(),
 			Failed:  l.dnsFailed.Load(),
 			LastMs:  l.dnsLastMs.Load(),

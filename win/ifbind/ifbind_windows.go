@@ -11,6 +11,7 @@ package ifbind
 import (
 	"errors"
 	"math"
+	"net/netip"
 	"sync"
 	"time"
 	"unsafe"
@@ -160,4 +161,42 @@ func ifaceMetrics(family uint16) (map[uint32]uint32, error) {
 
 func htonl(v uint32) uint32 {
 	return v<<24 | (v&0xff00)<<8 | (v>>8)&0xff00 | v>>24
+}
+
+// DNSServers returns the IPv4 DNS servers of the default interface outside
+// the tunnel: the "System DNS" that Windows would use without us.
+func (b *Binder) DNSServers() []netip.Addr {
+	idx4, _ := b.indexes()
+	if idx4 == 0 {
+		return nil
+	}
+	size := uint32(15 << 10)
+	var buf []byte
+	for range 4 {
+		buf = make([]byte, size)
+		aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0]))
+		err := windows.GetAdaptersAddresses(windows.AF_INET, windows.GAA_FLAG_SKIP_ANYCAST, 0, aa, &size)
+		if err == nil {
+			break
+		}
+		if err != windows.ERROR_BUFFER_OVERFLOW {
+			return nil
+		}
+		buf = nil
+	}
+	if buf == nil {
+		return nil
+	}
+	var out []netip.Addr
+	for aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0])); aa != nil; aa = aa.Next {
+		if aa.IfIndex != idx4 {
+			continue
+		}
+		for d := aa.FirstDnsServerAddress; d != nil; d = d.Next {
+			if ip, ok := netip.AddrFromSlice(d.Address.IP()); ok && ip.Unmap().Is4() {
+				out = append(out, ip.Unmap())
+			}
+		}
+	}
+	return out
 }
