@@ -114,6 +114,7 @@ const dataDir = () => app.getPath('userData');
 const tokenFile = () => path.join(dataDir(), 'api-token');
 const settingsFile = () => path.join(dataDir(), 'settings.json');
 const logFile = () => path.join(dataDir(), 'engine.log');
+const prevLogFile = () => path.join(dataDir(), 'engine.prev.log');
 const usqueDir = () => path.join(dataDir(), 'usque');
 const usqueLog = () => path.join(usqueDir(), 'usque.log');
 const wgDir = () => path.join(dataDir(), 'wireguard');
@@ -645,6 +646,10 @@ async function startEngine() {
   if (s.exit === 'wg' && !wgFile(s.wgActive)) return { ok: false, error: 'Choose a WireGuard config first (Proxy → Setup WireGuard).' };
   ensureToken();
   logOffset = 0;
+  // the engine truncates its log; keep the last run's for the debug zip
+  try {
+    fs.renameSync(logFile(), prevLogFile());
+  } catch {}
   try {
     await launchElevated(exe, engineArgs(s));
   } catch (e) {
@@ -1451,6 +1456,128 @@ ipcMain.handle('backup:restore', async () => {
   if (s.exit === 'wg' && !wgFile(s.wgActive)) s.exit = 'none';
   writeSettings(s);
   return { ok: true };
+});
+
+// ---------- debug zip ----------
+
+// Keys whose values must never leave the PC: WireGuard and WARP private
+// keys, tokens, proxy passwords.
+const SECRET_KEY = /key|token|secret|pass|license|auth/i;
+
+function redactJSON(v) {
+  if (Array.isArray(v)) return v.map(redactJSON);
+  if (v && typeof v === 'object') {
+    return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, SECRET_KEY.test(k) && typeof x !== 'object' && x !== '' ? '(hidden)' : redactJSON(x)]));
+  }
+  return v;
+}
+
+// wg-quick configs keep their shape; only key lines are hidden.
+const redactWg = (text) => String(text).replace(/^(\s*(PrivateKey|PresharedKey)\s*=).*$/gim, '$1 (hidden)');
+
+function psText(script) {
+  return new Promise((resolve) => {
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, timeout: 30000, maxBuffer: 8 << 20 }, (err, stdout, stderr) =>
+      resolve(`${stdout || ''}${stderr || ''}${err && !stdout ? String(err.message) : ''}`)
+    );
+  });
+}
+
+// What the network looks like: adapters, routes, DNS servers and the NRPT
+// rules other VPNs add. These show at once when two VPNs fight.
+async function systemReport() {
+  const parts = [
+    ['Windows', '[Environment]::OSVersion.VersionString; (Get-CimInstance Win32_OperatingSystem).Caption'],
+    ['Adapters', 'Get-NetAdapter | Format-Table -AutoSize ifIndex,Name,InterfaceDescription,Status,LinkSpeed | Out-String -Width 220'],
+    ['IPv4 interfaces (metrics)', 'Get-NetIPInterface -AddressFamily IPv4 | Format-Table -AutoSize ifIndex,InterfaceAlias,InterfaceMetric,ConnectionState | Out-String -Width 220'],
+    ['IPv4 addresses', 'Get-NetIPAddress -AddressFamily IPv4 | Format-Table -AutoSize ifIndex,InterfaceAlias,IPAddress,PrefixLength | Out-String -Width 220'],
+    ['IPv4 routes', 'Get-NetRoute -AddressFamily IPv4 | Format-Table -AutoSize ifIndex,DestinationPrefix,NextHop,RouteMetric | Out-String -Width 220'],
+    ['DNS servers', 'Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table -AutoSize InterfaceIndex,InterfaceAlias,ServerAddresses | Out-String -Width 220'],
+    ['NRPT rules (catch-all "." rules take every lookup)', 'Get-DnsClientNrptRule | Format-List Name,Namespace,NameServers,DisplayName,Comment | Out-String -Width 220'],
+    ['NRPT policy in effect', 'Get-DnsClientNrptPolicy | Format-List | Out-String -Width 220'],
+    ['VPN and tunnel programs running', "Get-Process | Where-Object { $_.Name -match 'vpn|proton|warp|wireguard|nord|mullvad|openvpn|usque|fswin|tailscale|zerotier' } | Format-Table -AutoSize Id,Name,Path | Out-String -Width 220"],
+    ['Lookup of cloudflare.com by Windows', 'Resolve-DnsName cloudflare.com -Type A -QuickTimeout -ErrorAction Continue | Out-String -Width 220'],
+  ];
+  const out = [`port1897 ${app.getVersion()} debug report, ${new Date().toISOString()}`, ''];
+  for (const [title, cmd] of parts) out.push(`===== ${title} =====`, (await psText(cmd)).trim(), '');
+  return out.join('\r\n');
+}
+
+ipcMain.handle('debug:zip', async () => {
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
+  const r = await dialog.showSaveDialog(win, {
+    title: 'Save debug logs',
+    defaultPath: path.join(app.getPath('desktop'), `port1897-debug-${stamp}.zip`),
+    filters: [{ name: 'Zip', extensions: ['zip'] }],
+  });
+  if (r.canceled) return { ok: false };
+  const tmp = fs.mkdtempSync(path.join(app.getPath('temp'), 'port1897-debug-'));
+  const put = (name, text) => {
+    const f = path.join(tmp, name);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, text);
+  };
+  const read = (f) => {
+    try {
+      return fs.readFileSync(f, 'utf8');
+    } catch {
+      return null;
+    }
+  };
+  const putFile = (name, f, redact) => {
+    const t = read(f);
+    if (t !== null) put(name, redact ? redact(t) : t);
+  };
+  const putJSON = (name, f) =>
+    putFile(name, f, (t) => {
+      try {
+        return JSON.stringify(redactJSON(JSON.parse(t)), null, 2);
+      } catch {
+        return '(not valid JSON; left out)';
+      }
+    });
+  try {
+    putFile('engine.log', logFile());
+    putFile('engine.prev.log', prevLogFile());
+    putFile('usque/usque.log', usqueLog());
+    putJSON('settings.json', settingsFile());
+    putJSON('rules.json', rulesFile());
+    putJSON('warp.json', path.join(dataDir(), 'warp.json'));
+    putJSON('usque/warp1.json', usqueFile('warp1'));
+    putJSON('usque/warp2.json', usqueFile('warp2'));
+    putFile('usque/wg0.conf', path.join(usqueDir(), 'wg0.conf'), redactWg);
+    putFile('wireguard/index.json', path.join(wgDir(), 'index.json'));
+    for (const e of wgIndex()) {
+      const f = wgFile(e.id);
+      if (f) putFile(`wireguard/${e.id}.conf`, f, redactWg);
+    }
+    // the last two days of activity, newest lines only
+    for (const back of [1, 0]) {
+      const day = new Date(Date.now() - back * 24 * HOUR).toISOString().slice(0, 10);
+      const t = read(path.join(histDir(), `events-${day}.jsonl`));
+      if (t !== null) put(`history/events-${day}.jsonl`, t.split('\n').slice(-20000).join('\n'));
+    }
+    put('status.json', JSON.stringify((await engineStatus()) || { running: false }, null, 2));
+    put('system.txt', await systemReport());
+    put(
+      'README.txt',
+      [
+        'port1897 debug logs',
+        '',
+        'Private keys, tokens and passwords are replaced with "(hidden)".',
+        'history/ lists the apps, domains and addresses this PC used; remove it before sharing if you prefer.',
+      ].join('\r\n')
+    );
+    fs.rmSync(r.filePath, { force: true });
+    const zip = await psText(`$ErrorActionPreference = 'Stop'; Compress-Archive -Path ${psQuote(path.join(tmp, '*'))} -DestinationPath ${psQuote(r.filePath)} -Force`);
+    if (!fs.existsSync(r.filePath)) return { ok: false, error: zip.trim() || 'Could not write the zip.' };
+    shell.showItemInFolder(r.filePath);
+    return { ok: true, file: r.filePath };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 ipcMain.handle('app:setAutostart', (_e, on) => {

@@ -906,6 +906,7 @@ PAGES.settings = () => {
       switchRow({ ico: 'ic_logs', title: 'Enable on-device logging', sub: 'Store DNS and firewall logs and stats on this PC (7 days), for the Stats and Logs screens.', value: s.history, onchange: (v) => save({ history: v }, true) }),
       row({ ico: 'ic_log_level', title: 'Log level', sub: 'How much the engine writes to its log', right: level }),
       row({ ico: 'ic_app_log', title: 'App Logs', sub: 'For debugging purposes', right: chevron(), onclick: () => App.go('applogs') }),
+      row({ ico: 'ic_app_log', title: 'Save debug logs', sub: 'One zip with the engine, WireGuard, WARP and usque logs, settings, recent activity and this PC’s network setup. Private keys and passwords are left out.', right: btn('Save zip', saveDebugZip) }),
       row({ ico: 'ic_network', title: 'Packet capture', sub: 'Write every packet in the tunnel to capture.pcap (open it with Wireshark). Grows fast; turn it off when done. Applies on the next start.', right: h('div', { class: 'actions' }, btn('Open folder', () => App.port.openPcapFolder()), toggle(s.pcap, (v) => save({ pcap: v }), 'Packet capture')) })
     ),
     sectionLabel('Notification'),
@@ -945,8 +946,22 @@ PAGES.applogs = () => {
   const box = h('pre', { class: 'logbox', text: 'Loading…' });
   const load = () => App.port.engineLog('').then((t) => (box.textContent = t || 'The engine has not written anything yet.'));
   load();
-  return screen('App Logs', box, h('div', { class: 'actions' }, btn('Refresh', load), btn('Copy', () => App.port.copy(box.textContent).then(() => toast('Copied'))), btn('Open file', () => App.port.openLog())));
+  return screen('App Logs', box, h('div', { class: 'actions' }, btn('Refresh', load), btn('Copy', () => App.port.copy(box.textContent).then(() => toast('Copied'))), btn('Open file', () => App.port.openLog()), btn('Save debug zip', saveDebugZip, { primary: true })));
 };
+
+let savingZip = false;
+async function saveDebugZip() {
+  if (savingZip) return;
+  savingZip = true;
+  toast('Collecting logs…');
+  try {
+    const r = await App.port.debugZip();
+    if (r.ok) toast('Debug logs saved');
+    else if (r.error) toast('Could not save the zip: ' + r.error);
+  } finally {
+    savingZip = false;
+  }
+}
 
 // ---------- Logs ----------
 
@@ -983,7 +998,7 @@ PAGES.logs = () => {
   );
   PAGE_TICK.logs = () => fillLog(list, search.input.value);
   fillLog(list, '');
-  return screen('Logs', tabs, shows, h('div', { class: 'field-row' }, search), list);
+  return screen('Logs', tabs, shows, h('div', { class: 'field-row' }, search), list, h('div', { class: 'actions' }, btn('Save debug zip', saveDebugZip)));
 };
 
 // Website icon from DuckDuckGo when "Show website icon" is on; else the DNS
@@ -1037,7 +1052,7 @@ function fillLog(list, q) {
           'div',
           o,
           siteIcon(e.domain),
-          h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: e.domain || '' }), h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.qtype ? rrName(e.qtype) + ' · ' : ''}${e.answer || 'no answer'} · ${e.latencyMs} ms${marks ? ' · ' + marks : ''}` }))
+          h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: e.domain || '' }), h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.qtype ? rrName(e.qtype) + ' · ' : ''}${e.answer || 'no answer'}${e.error ? ' (' + e.error + ')' : ''} · ${e.latencyMs} ms${marks ? ' · ' + marks : ''}` }))
         )
       );
     }

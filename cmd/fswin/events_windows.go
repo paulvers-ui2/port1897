@@ -37,6 +37,7 @@ type event struct {
 	Rule      string `json:"rule,omitempty"`   // the firewall or DNS rule that decided
 	CID       string `json:"cid,omitempty"`    // connection id, on "flow" and "close"
 	QType     int    `json:"qtype,omitempty"`  // DNS query type, on "dns"
+	Error     string `json:"error,omitempty"`  // why a DNS query failed, on "dns"
 }
 
 // journalSize bounds how many recent events are kept.

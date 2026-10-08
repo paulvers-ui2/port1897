@@ -12,6 +12,7 @@ import (
 	"errors"
 	"math"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -199,4 +200,47 @@ func (b *Binder) DNSServers() []netip.Addr {
 		}
 	}
 	return out
+}
+
+// from ipifcons.h.
+const (
+	ifTypePropVirtual = 53
+	ifTypeTunnel      = 131
+)
+
+// Describe names interface idx and reports whether it looks like another
+// VPN's tunnel (a virtual adapter rather than Wi-Fi or Ethernet). Firestack
+// traffic sent through such an adapter depends on that VPN, which usually
+// also claims all routes and all DNS, as Proton VPN does.
+func Describe(idx uint32) (name, desc string, vpn bool) {
+	size := uint32(15 << 10)
+	var buf []byte
+	for range 4 {
+		buf = make([]byte, size)
+		aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0]))
+		err := windows.GetAdaptersAddresses(windows.AF_INET, windows.GAA_FLAG_SKIP_ANYCAST, 0, aa, &size)
+		if err == nil {
+			break
+		}
+		if err != windows.ERROR_BUFFER_OVERFLOW {
+			return "", "", false
+		}
+		buf = nil
+	}
+	if buf == nil {
+		return "", "", false
+	}
+	for aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0])); aa != nil; aa = aa.Next {
+		if aa.IfIndex != idx {
+			continue
+		}
+		name = windows.UTF16PtrToString(aa.FriendlyName)
+		desc = windows.UTF16PtrToString(aa.Description)
+		d := strings.ToLower(desc)
+		vpn = aa.IfType == ifTypePropVirtual || aa.IfType == ifTypeTunnel ||
+			strings.Contains(d, "vpn") || strings.Contains(d, "tunnel") ||
+			strings.Contains(d, "wireguard") || strings.Contains(d, "wintun") || strings.Contains(d, "tap-")
+		return name, desc, vpn
+	}
+	return "", "", false
 }
