@@ -11,7 +11,7 @@
 
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
@@ -24,7 +24,7 @@ const API_PORT = 47897;
 const DEFAULTS = {
   doh: 'https://cloudflare-dns.com/dns-query',
   dohIps: '1.1.1.1,1.0.0.1',
-  exit: 'none', // none | warp | wg | proxy
+  exit: 'none', // none | warp | masque | chain | wg | proxy
   wgFile: '',
   proxy: '',
   full: true,
@@ -33,7 +33,9 @@ const DEFAULTS = {
 };
 
 let win = null;
+let tray = null;
 let token = null;
+let quitting = false;
 
 const dataDir = () => app.getPath('userData');
 const tokenFile = () => path.join(dataDir(), 'api-token');
@@ -126,6 +128,8 @@ function engineArgs(s) {
   if (s.full) a.push('-full');
   if (s.nrpt) a.push('-nrpt');
   if (s.exit === 'warp') a.push('-warp');
+  if (s.exit === 'masque') a.push('-masque', '-usque-dir', path.join(dataDir(), 'usque'));
+  if (s.exit === 'chain' && s.wgFile) a.push('-chain', s.wgFile, '-usque-dir', path.join(dataDir(), 'usque'));
   if (s.exit === 'wg' && s.wgFile) a.push('-wg', s.wgFile);
   if (s.exit === 'proxy' && s.proxy) a.push('-proxy', s.proxy);
   if (s.blocked.length) a.push('-block', s.blocked.join(','));
@@ -190,8 +194,8 @@ async function startEngine() {
   } catch (e) {
     return { ok: false, error: e.message };
   }
-  // WARP registration on first use can take a few seconds
-  for (let i = 0; i < 60; i++) {
+  // WARP registration and the usque chain can take a while on first use
+  for (let i = 0; i < 120; i++) {
     await new Promise((r) => setTimeout(r, 500));
     if (await engineStatus()) return { ok: true };
   }
@@ -219,6 +223,7 @@ function createWindow() {
     minHeight: 600,
     backgroundColor: '#0E1B21',
     title: 'port1897',
+    icon: path.join(__dirname, 'build', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -231,6 +236,69 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  // the close button hides to the tray; Quit (tray menu) turns protection off
+  win.on('close', (e) => {
+    if (!quitting) {
+      e.preventDefault();
+      win.hide();
+    }
+  });
+}
+
+function showWindow() {
+  if (!win) createWindow();
+  win.show();
+  win.focus();
+}
+
+const trayIcons = {};
+function trayIcon(on) {
+  const key = on ? 'on' : 'off';
+  if (!trayIcons[key]) trayIcons[key] = nativeImage.createFromPath(path.join(__dirname, 'assets', `tray-${key}.png`));
+  return trayIcons[key];
+}
+
+let trayState = null;
+let trayBusy = false;
+function updateTray(st) {
+  const on = !!st;
+  if (!tray || (trayState === on && !trayBusy)) return;
+  trayState = on;
+  tray.setImage(trayIcon(on));
+  tray.setToolTip(on ? `port1897: protected${st.exit ? ' via ' + st.exit : ''}` : 'port1897: not protected');
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: on ? 'Protected' + (st.exit ? ` (${st.exit})` : '') : 'Not protected', enabled: false },
+      { type: 'separator' },
+      {
+        label: on ? 'Stop protection' : 'Start protection',
+        enabled: !trayBusy,
+        click: async () => {
+          trayBusy = true;
+          updateTray(st);
+          const r = on ? await stopEngine() : await startEngine();
+          trayBusy = false;
+          trayState = null;
+          updateTray(await engineStatus());
+          if (!r.ok) {
+            showWindow();
+            dialog.showErrorBox('port1897', r.error + (r.log ? '\n\n' + r.log : ''));
+          }
+        },
+      },
+      { label: 'Open port1897', click: showWindow },
+      { type: 'separator' },
+      { label: 'Quit (turns protection off)', click: () => app.quit() },
+    ])
+  );
+}
+
+function createTray() {
+  tray = new Tray(trayIcon(false));
+  tray.on('click', showWindow);
+  trayState = null;
+  updateTray(null);
+  setInterval(async () => updateTray(await engineStatus()), 2000);
 }
 
 ipcMain.handle('settings:get', () => readSettings());
@@ -286,18 +354,26 @@ ipcMain.handle('open:url', (_e, url) => {
 });
 ipcMain.handle('open:log', () => shell.openPath(logFile()));
 
-app.whenReady().then(() => {
-  Menu.setApplicationMenu(null);
-  createWindow();
-});
+// one copy only; a second launch brings the first one forward
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', showWindow);
+  app.whenReady().then(() => {
+    Menu.setApplicationMenu(null);
+    createWindow();
+    createTray();
+  });
+}
 
-// Closing the app turns protection off, so no engine is left running unseen.
-let quitting = false;
+// Quitting turns protection off, so no engine is left running unseen.
+let stopped = false;
 app.on('before-quit', async (e) => {
-  if (quitting) return;
-  e.preventDefault();
   quitting = true;
+  if (stopped) return;
+  e.preventDefault();
   await stopEngine();
+  stopped = true;
   app.quit();
 });
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => {}); // keep running in the tray

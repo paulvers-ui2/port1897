@@ -74,6 +74,7 @@ type bridge struct {
 	blockmu sync.RWMutex
 	blocked map[string]bool // lowercased exe names or full paths
 	log     *journal
+	bypass  atomic.Value // string: lowercased exe path let straight out (usque)
 	selfpid uint32
 	selfuid int32
 	exit    atomic.Value // string: proxy id for allowed flows and DNS
@@ -99,6 +100,17 @@ func newBridge(binder *ifbind.Binder, blockcsv string) *bridge {
 		b.setBlocked(s, true)
 	}
 	return b
+}
+
+// setBypass lets the program at path connect directly, never through the
+// exit: usque's own connections to Cloudflare would otherwise loop into it.
+func (b *bridge) setBypass(path string) {
+	b.bypass.Store(strings.ToLower(path))
+}
+
+func (b *bridge) isBypass(path string) bool {
+	p, ok := b.bypass.Load().(string)
+	return ok && p != "" && strings.EqualFold(p, path)
 }
 
 // setExit sends allowed flows and DNS queries through proxy id.
@@ -223,7 +235,9 @@ func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probable
 	cid := strconv.FormatInt(b.cid.Add(1), 10)
 	pid := b.exitID()
 	verdict := ""
-	if b.isBlocked(b.apps.path(uid)) {
+	if path := b.apps.path(uid); b.isBypass(path) {
+		pid = x.Base
+	} else if b.isBlocked(path) {
 		pid = x.Block
 		verdict = " BLOCKED"
 	}

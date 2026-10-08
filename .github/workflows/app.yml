@@ -35,6 +35,20 @@ jobs:
           unzip -q wintun.zip
           cp wintun/bin/amd64/wintun.dll ui/engine/
           cp wintun/LICENSE.txt ui/engine/wintun-LICENSE.txt
+      - name: usque (WARP over MASQUE)
+        shell: bash
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+          USQUE_REPO: https://github.com/paulvers-ui/usque.git
+          USQUE_REF: b6c79c7d3058e484d845f461447c91daa03df24e
+        run: |
+          git init -q usque-src
+          git -C usque-src fetch -q --depth 1 "$USQUE_REPO" "$USQUE_REF"
+          git -C usque-src checkout -q FETCH_HEAD
+          (cd usque-src && go build -trimpath -ldflags="-s -w" -o "$GITHUB_WORKSPACE/ui/engine/usque.exe" .)
+          cp usque-src/LICENSE.md ui/engine/usque-LICENSE.md
       - name: Check scripts
         shell: bash
         run: for f in ui/main.js ui/preload.js ui/renderer/app.js ui/renderer/icons.js; do node --check "$f"; done

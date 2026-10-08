@@ -121,7 +121,9 @@
         <p class="desc">Where your traffic leaves. A VPN hides your IP address from the sites you visit.</p>
         <div class="choices" id="exit-choices">
           <label class="choice"><input type="radio" name="exit" value="none"><span><b>Off</b><small>Encrypted DNS and firewall only</small></span></label>
-          <label class="choice"><input type="radio" name="exit" value="warp"><span><b>Cloudflare WARP</b><small>Free. Registers an anonymous account on first use</small></span></label>
+          <label class="choice"><input type="radio" name="exit" value="warp"><span><b>Cloudflare WARP</b><small>Free. WireGuard; registers an anonymous account on first use</small></span></label>
+          <label class="choice"><input type="radio" name="exit" value="masque"><span><b>WARP (MASQUE)</b><small>Free. Looks like normal HTTPS; works where WireGuard is blocked</small></span></label>
+          <label class="choice"><input type="radio" name="exit" value="chain"><span><b>WARP chain</b><small>WARP → your WireGuard server → WARP. Needs a .conf file</small></span></label>
           <label class="choice"><input type="radio" name="exit" value="wg"><span><b>WireGuard</b><small>Any provider's .conf file</small></span></label>
           <label class="choice"><input type="radio" name="exit" value="proxy"><span><b>SOCKS5 / HTTP proxy</b><small>socks5://user:pass@host:port</small></span></label>
         </div>

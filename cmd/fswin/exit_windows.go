@@ -30,9 +30,11 @@ import (
 // Exits: where -full traffic leaves. firestack calls them proxies; WireGuard
 // ones need an id starting with "wg".
 const (
-	exitWG    = "wgconf"
-	exitWarp  = "wgwarp"
-	exitProxy = "socks"
+	exitWG     = "wgconf"
+	exitWarp   = "wgwarp"
+	exitProxy  = "socks"
+	exitMasque = "masque" // usque socks
+	exitChain  = "chain"  // usque chain
 )
 
 // wgQuickToUAPI converts a wg-quick .conf file to the key=value config

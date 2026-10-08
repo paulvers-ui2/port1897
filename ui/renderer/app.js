@@ -18,7 +18,7 @@ const DNS_PRESETS = [
   { id: 'google', name: 'Google', note: '8.8.8.8', url: 'https://dns.google/dns-query', ips: '8.8.8.8,8.8.4.4' },
 ];
 
-const EXIT_NAMES = { none: 'Off', warp: 'Cloudflare WARP', wg: 'WireGuard', proxy: 'Proxy' };
+const EXIT_NAMES = { none: 'Off', warp: 'Cloudflare WARP', masque: 'WARP (MASQUE)', chain: 'WARP chain', wg: 'WireGuard', proxy: 'Proxy' };
 
 const $ = (id) => document.getElementById(id);
 const port = window.port || demoPort();
@@ -293,7 +293,7 @@ function renderConfigure() {
   $('doh-ips').value = settings.dohIps;
 
   document.querySelectorAll('input[name="exit"]').forEach((r) => (r.checked = r.value === settings.exit));
-  $('wg-row').hidden = settings.exit !== 'wg';
+  $('wg-row').hidden = settings.exit !== 'wg' && settings.exit !== 'chain';
   $('proxy-row').hidden = settings.exit !== 'proxy';
   $('wg-file').textContent = settings.wgFile || 'No file chosen';
   $('proxy-url').value = settings.proxy;

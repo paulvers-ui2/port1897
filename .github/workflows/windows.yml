@@ -46,6 +46,20 @@ jobs:
           cp wintun/bin/${{ matrix.goarch }}/wintun.dll dist/
           cp wintun/LICENSE.txt dist/wintun-LICENSE.txt
           cp LICENSE dist/LICENSE.txt
+      - name: usque (WARP over MASQUE)
+        shell: bash
+        env:
+          GOOS: windows
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          USQUE_REPO: https://github.com/paulvers-ui/usque.git
+          USQUE_REF: b6c79c7d3058e484d845f461447c91daa03df24e
+        run: |
+          git init -q usque-src
+          git -C usque-src fetch -q --depth 1 "$USQUE_REPO" "$USQUE_REF"
+          git -C usque-src checkout -q FETCH_HEAD
+          (cd usque-src && go build -trimpath -ldflags="-s -w" -o "$GITHUB_WORKSPACE/dist/usque.exe" .)
+          cp usque-src/LICENSE.md dist/usque-LICENSE.md
       - uses: actions/upload-artifact@v4
         with:
           name: fswin-windows-${{ matrix.goarch }}

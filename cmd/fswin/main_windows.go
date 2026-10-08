@@ -67,6 +67,10 @@ type options struct {
 	wg        string
 	warp      bool
 	proxy     string
+	masque    bool
+	chain     string
+	usqueExe  string
+	usqueDir  string
 	warpFile  string
 	api       string
 	tokenFile string
@@ -90,6 +94,10 @@ func main() {
 	flag.BoolVar(&o.warp, "warp", false, "send all traffic through free Cloudflare WARP; registers on first use and saves fswin-warp.json next to fswin.exe (implies -full)")
 	flag.StringVar(&o.proxy, "proxy", "", "send all traffic through this proxy: socks5://[user:pass@]host:port or http://... (implies -full)")
 	flag.IntVar(&golog, "log", 3, "firestack log level: 0 very verbose ... 5 errors, 8 none")
+	flag.BoolVar(&o.masque, "masque", false, "send all traffic through free Cloudflare WARP over MASQUE (HTTP/3, falls back to HTTP/2), using usque (implies -full)")
+	flag.StringVar(&o.chain, "chain", "", "send all traffic through WARP2 -> this WireGuard server -> WARP1, using usque chain; value is a wg-quick .conf (implies -full)")
+	flag.StringVar(&o.usqueExe, "usque", "", "path to usque.exe (default: next to fswin.exe)")
+	flag.StringVar(&o.usqueDir, "usque-dir", "", "where -masque and -chain keep their WARP identities (default: next to fswin.exe)")
 	flag.StringVar(&o.warpFile, "warp-file", "", "where -warp keeps its account (default: fswin-warp.json next to fswin.exe)")
 	flag.StringVar(&o.api, "api", "", "serve the control API for the app window on this loopback address, e.g. 127.0.0.1:47897")
 	flag.StringVar(&o.tokenFile, "token-file", "", "file holding the secret every -api request must present")
@@ -127,10 +135,11 @@ func run(o options) error {
 	intra.LogLevel(o.golog, 8 /*no console logs; Go logs go to stderr*/)
 
 	// prepare the exit first: WARP registers over the normal network
-	exitID, exitCfg, err := prepareExit(o)
+	exitID, exitCfg, uq, err := prepareExit(o)
 	if err != nil {
 		return err
 	}
+	defer uq.stop()
 	if exitID != "" {
 		o.full = true // a VPN exit only sees traffic in the tunnel
 	}
@@ -175,6 +184,9 @@ func run(o options) error {
 	}
 
 	b := newBridge(binder, o.block)
+	if uq != nil {
+		b.setBypass(uq.path) // its own connections to Cloudflare
+	}
 	// fakedns must be ip:port; a bare ip is rejected and DNS goes unrecognized.
 	t, err := intra.Connect(id, o.mtu, o.mtu, ifaddr4+"/24", fakedns4+":53", dtr, b)
 	if err != nil {
@@ -310,47 +322,74 @@ func withPort(csv, port string) string {
 	return strings.Join(out, ",")
 }
 
-// prepareExit returns the proxy id and config for the chosen exit, if any.
-func prepareExit(o options) (id, cfg string, err error) {
+// prepareExit returns the proxy id and config for the chosen exit, if any,
+// and the usque process behind it for -masque and -chain.
+func prepareExit(o options) (id, cfg string, uq *usque, err error) {
 	n := 0
-	for _, set := range []bool{o.wg != "", o.warp, o.proxy != ""} {
+	for _, set := range []bool{o.wg != "", o.warp, o.proxy != "", o.masque, o.chain != ""} {
 		if set {
 			n++
 		}
 	}
 	if n > 1 {
-		return "", "", errors.New("choose one of -wg, -warp and -proxy")
+		return "", "", nil, errors.New("choose one of -wg, -warp, -proxy, -masque and -chain")
 	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", "", nil, err
+	}
+	here := filepath.Dir(exe)
 	switch {
 	case o.wg != "":
 		b, err := os.ReadFile(o.wg)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 		cfg, err := wgQuickToUAPI(string(b))
-		return exitWG, cfg, err
+		return exitWG, cfg, nil, err
 	case o.warp:
-		exe, err := os.Executable()
-		if err != nil {
-			return "", "", err
-		}
 		path := o.warpFile
 		if path == "" {
-			path = filepath.Join(filepath.Dir(exe), "fswin-warp.json")
+			path = filepath.Join(here, "fswin-warp.json")
 		}
 		a, err := loadOrRegisterWarp(path)
 		if err != nil {
-			return "", "", err
+			return "", "", nil, err
 		}
 		cfg, err := a.uapi()
-		return exitWarp, cfg, err
+		return exitWarp, cfg, nil, err
 	case o.proxy != "":
 		if !strings.HasPrefix(o.proxy, "socks5://") && !strings.HasPrefix(o.proxy, "http://") {
-			return "", "", errors.New("-proxy must start with socks5:// or http://")
+			return "", "", nil, errors.New("-proxy must start with socks5:// or http://")
 		}
-		return exitProxy, o.proxy, nil
+		return exitProxy, o.proxy, nil, nil
+	case o.masque || o.chain != "":
+		s := usqueSetup{
+			exe:     o.usqueExe,
+			dir:     o.usqueDir,
+			chainWG: o.chain,
+			logf:    func(f string, a ...any) { fmt.Printf(f+"\n", a...) },
+		}
+		if s.exe == "" {
+			s.exe = filepath.Join(here, "usque.exe")
+		}
+		if s.dir == "" {
+			s.dir = here
+		}
+		id := exitMasque
+		if o.chain != "" {
+			id = exitChain
+			if _, err := os.Stat(o.chain); err != nil {
+				return "", "", nil, fmt.Errorf("-chain: %w", err)
+			}
+		}
+		uq, err := startUsque(s)
+		if err != nil {
+			return "", "", nil, err
+		}
+		return id, uq.url, uq, nil
 	}
-	return "", "", nil
+	return "", "", nil, nil
 }
 
 func exitName(id string) string {
@@ -361,6 +400,10 @@ func exitName(id string) string {
 		return "Cloudflare WARP"
 	case exitProxy:
 		return "proxy"
+	case exitMasque:
+		return "Cloudflare WARP (MASQUE)"
+	case exitChain:
+		return "WARP chain"
 	case x.Base:
 		return "direct"
 	case x.Block:
