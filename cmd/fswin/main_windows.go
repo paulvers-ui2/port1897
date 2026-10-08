@@ -214,7 +214,7 @@ func run(o options) error {
 	}
 
 	if o.block != "" && !o.full {
-		fmt.Println("fswin: -block only affects traffic in the tunnel; without -full that is DNS only")
+		fmt.Println("fswin: -block needs -full: without it only DNS goes through the tunnel, and DNS is answered for every app")
 	}
 
 	tun.WintunTunnelType = "port1897"

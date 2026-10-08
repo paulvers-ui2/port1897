@@ -335,10 +335,15 @@ func (b *bridge) Preflow(protocol, uid int32, src, dst *x.Gostr) *intra.PreMark 
 
 func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probableDomains, blocklists *x.Gostr) *intra.Mark {
 	cid := strconv.FormatInt(b.cid.Add(1), 10)
-	if dst.V() == fakedns4+":53" {
+	switch dst.V() {
+	case fakedns4 + ":53":
 		// a query to our DNS address: firestack answers it only when marked
 		// Base, whatever the exit, and it shows in the DNS log, not as a flow
 		return &intra.Mark{PIDCSV: x.Base, CID: cid, UID: strconv.Itoa(int(uid))}
+	case fakedns4 + ":853":
+		// DNS over TLS to our address, which we do not serve; as the Android
+		// app does, refuse it so Windows falls back to plain DNS on :53
+		return &intra.Mark{PIDCSV: x.Block, CID: cid, UID: strconv.Itoa(int(uid))}
 	}
 	path := b.apps.path(uid)
 	dap, _ := netip.ParseAddrPort(dst.V()) // zero if unparsable: IP rules then skip it
@@ -467,7 +472,11 @@ func (b *bridge) OnResponse(s *x.DNSSummary) {
 	if why == "" && s.Blocklists != "" {
 		why = "blocklists: " + s.Blocklists
 	}
-	b.log.add(event{Kind: "dns", Domain: strings.TrimSuffix(s.QName, "."), Answer: s.RData,
+	app := ""
+	if u, err := strconv.Atoi(s.UID); err == nil {
+		app = b.appName(int32(u)) // who asked; "?" if unknown
+	}
+	b.log.add(event{Kind: "dns", App: app, Domain: strings.TrimSuffix(s.QName, "."), Answer: s.RData,
 		Via: s.ID, LatencyMs: ms, Blocked: why != "" || (s.Status == x.Complete && isUnspecifiedAnswer(s.RData)),
 		Secure: s.AD, Cached: s.Cached, Rule: why, QType: s.QType, Error: failure})
 }
