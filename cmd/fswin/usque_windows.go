@@ -84,7 +84,7 @@ func startUsque(s usqueSetup) (*usque, error) {
 	args = append(args, s.extra...)
 
 	// usque.exe beside fswin.exe; argv only, no shell; flags checked by usqueFlags
-	cmd := exec.Command(s.exe, args...) // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
+	cmd := exec.Command(s.exe, args...) //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd.Dir = s.dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 	out, err := cmd.StdoutPipe()
@@ -132,7 +132,7 @@ func usqueRegister(s usqueSetup, cfg string) error {
 	}
 	s.logf("usque: registering a free WARP identity in %s", cfg)
 	// usque.exe beside fswin.exe; argv only, no shell
-	cmd := exec.Command(s.exe, "-c", cfg, "register", "--accept-tos") // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
+	cmd := exec.Command(s.exe, "-c", cfg, "register", "--accept-tos") //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd.Dir = s.dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 	b, err := cmd.CombinedOutput()
