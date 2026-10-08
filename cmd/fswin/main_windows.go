@@ -39,6 +39,7 @@ import (
 
 	"github.com/celzero/firestack/intra"
 	x "github.com/celzero/firestack/intra/backend"
+	flog "github.com/celzero/firestack/intra/log"
 	"github.com/celzero/firestack/intra/netstack"
 	"github.com/celzero/firestack/intra/settings"
 	"github.com/celzero/firestack/win/dnspolicy"
@@ -618,6 +619,7 @@ func redirectOutput(path string) error {
 	}
 	os.Stdout, os.Stderr = f, f
 	log.SetOutput(f)
+	flog.SetOutput(f) // firestack's own logs, which say why a DNS query or dial failed
 	_ = windows.SetStdHandle(windows.STD_OUTPUT_HANDLE, windows.Handle(f.Fd()))
 	_ = windows.SetStdHandle(windows.STD_ERROR_HANDLE, windows.Handle(f.Fd()))
 	return nil

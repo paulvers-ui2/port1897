@@ -958,6 +958,8 @@ async function saveDebugZip() {
     const r = await App.port.debugZip();
     if (r.ok) toast('Debug logs saved');
     else if (r.error) toast('Could not save the zip: ' + r.error);
+  } catch (e) {
+    toast('Could not save the zip: ' + ((e && e.message) || e));
   } finally {
     savingZip = false;
   }
