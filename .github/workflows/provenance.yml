@@ -38,7 +38,7 @@ jobs:
       # docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations#generating-build-provenance-for-binaries
       # also: buildsec.github.io/frsca/docs/slsa/frsca-slsa/
       - name: ✅ Attest provenance
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-name: ${{ matrix.subject.name }}
           subject-digest: ${{ matrix.subject.digest }}
@@ -56,7 +56,7 @@ jobs:
         subject: ${{ fromJson(inputs.sbom-info).subjects }}
     steps:
       - name: ⬇️ Download SBOM
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           artifact-ids: ${{ fromJson(inputs.sbom-info).artifactId }}
           path: sbom
@@ -84,7 +84,7 @@ jobs:
         # github.com/actions/attest-sbom
         # docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations#generating-an-sbom-attestation-for-binaries
       - name: 🧶 Attest SBOM
-        uses: actions/attest-sbom@v3
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
         with:
           subject-name: ${{ matrix.subject.name }}
           subject-digest: ${{ matrix.subject.digest }}

@@ -13,11 +13,12 @@ jobs:
     name: Windows app (x64)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
-          go-version-file: go.mod
-      - uses: actions/setup-node@v4
+          go-version: "1.26.x" # newest patch: go.mod's 1.26.0 has known stdlib vulnerabilities
+          check-latest: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - name: Engine and Wintun
@@ -66,12 +67,12 @@ jobs:
           npm install --no-audit --no-fund
           npm run dist
       # one artifact per file: download only the one you need (~120 MB each)
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: port1897-setup-windows-x64
           path: ui/dist/*-Setup-*.exe
           compression-level: 0
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: port1897-portable-windows-x64
           path: ui/dist/*-portable.exe
@@ -86,7 +87,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: port1897-*-windows-x64
           merge-multiple: true
