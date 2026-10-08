@@ -186,11 +186,12 @@ try {
 
   # ---------- a plain DNS upstream that misbehaves ----------
   $hostIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.PrefixOrigin -in 'Dhcp', 'Manual' -and $_.IPAddress -notlike '169.254.*' -and $_.InterfaceAlias -ne 'port1897' } | Select-Object -First 1).IPAddress
+  # not 5353 (mDNS) or 5355 (LLMNR): Windows' DNS client holds those
   $cases = @(
-    @{ s = 'servfail'; addr = '127.0.0.1:5353'; mode = 'servfail'; want = 'answered SERVFAIL' },
-    @{ s = 'refused-hostip'; addr = "${hostIP}:5354"; mode = 'refused'; want = 'answered REFUSED' },
-    @{ s = 'nxdomain'; addr = '127.0.0.1:5355'; mode = 'nxdomain'; want = '' },
-    @{ s = 'drop'; addr = '127.0.0.1:5356'; mode = 'drop'; want = 'no reply from' }
+    @{ s = 'servfail'; addr = '127.0.0.1:25353'; mode = 'servfail'; want = 'answered SERVFAIL' },
+    @{ s = 'refused-hostip'; addr = "${hostIP}:25354"; mode = 'refused'; want = 'answered REFUSED' },
+    @{ s = 'nxdomain'; addr = '127.0.0.1:25355'; mode = 'nxdomain'; want = '' },
+    @{ s = 'drop'; addr = '127.0.0.1:25356'; mode = 'drop'; want = 'no reply from' }
   )
   foreach ($c in $cases) {
     $s = $c.s

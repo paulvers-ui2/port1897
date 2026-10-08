@@ -8,7 +8,7 @@
 // answers every query the same way, so fswin -dns proxy can be shown a
 // misbehaving upstream.
 //
-//	fakedns -addr 127.0.0.1:5353 -mode servfail
+//	fakedns -addr 127.0.0.1:25353 -mode servfail
 package main
 
 import (
@@ -22,7 +22,7 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", "127.0.0.1:5353", "UDP and TCP address to listen on")
+	addr := flag.String("addr", "127.0.0.1:25353", "UDP and TCP address to listen on")
 	mode := flag.String("mode", "ok", "ok (A 192.0.2.10), servfail, refused, nxdomain or drop (never answer)")
 	flag.Parse()
 
