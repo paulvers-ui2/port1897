@@ -24,6 +24,9 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
   (`chrome.exe`, `discord.exe`, ...).
 - **Block programs** (`-block chrome.exe`).
 - **No DNS leaks** (`-nrpt`): a Windows DNS policy sends every lookup to the tunnel.
+- **Every DNS type of the Android app:** DoH, DoT, DNSCrypt (with relays), Oblivious
+  DoH, DNS proxy, RethinkDNS with 195+ blocklists (on the server, or downloaded and
+  applied on this PC).
 - **DNSSEC and DNS booster** (`-dnssec`, `-dns-cache`): bogus answers are blocked,
   repeat lookups come from the cache.
 - **VPN exits:** send everything through free Cloudflare WARP (`-warp`), WARP over
@@ -98,6 +101,10 @@ Please tell us how it went with a
 | `-doh URL -doh-ips IPs` | Use another DNS-over-HTTPS server |
 | `-dnssec` | Block DNS answers that point a public name at a private, loopback or test address (a sign of DNS poisoning); answers with DNSSEC proof are marked in the logs |
 | `-dns-cache` | DNS booster: answer repeat lookups from the cache |
+| `-dns odoh -odoh URL [-odoh-relay URL]` | Oblivious DoH: a relay hides your IP from the DNS server |
+| `-dns proxy -dns-proxy ip:port` | Plain DNS to a server or a local forwarder (like Tor's DNSPort) |
+| `-dnscrypt-relays sdns://...` | Anonymized DNSCrypt through relays |
+| `-blocklists DIR -blocklist-stamp 1-...` | On-device RethinkDNS blocklists (the app downloads them, ~60 MB) |
 | `-masque` | Use free Cloudflare WARP over MASQUE (needs `usque.exe` next to `fswin.exe`) |
 | `-chain my.conf` | WARP -> the WireGuard server in `my.conf` -> WARP (needs `usque.exe`) |
 | `-killswitch` | Block all traffic outside the tunnel, even if `fswin` crashes |

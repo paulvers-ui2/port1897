@@ -28,6 +28,13 @@ contextBridge.exposeInMainWorld('port', {
   pause: call('engine:pause'),
   conns: call('conns:list'),
   closeConns: call('conns:close'),
+  blocklists: {
+    status: call('bl:status'),
+    filetag: call('bl:filetag'),
+    download: call('bl:download'),
+    latest: call('bl:latest'),
+    remove: call('bl:delete'),
+  },
   usque: {
     status: call('usque:status'),
     register: call('usque:register'),

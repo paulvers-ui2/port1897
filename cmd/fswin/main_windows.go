@@ -94,6 +94,15 @@ type options struct {
 	usqueFlags  string
 	allowLAN    bool
 
+	dnscryptRelays string // csv of relay stamps for -dns dnscrypt
+	odoh           string // ODoH target for -dns odoh
+	odohRelay      string // ODoH relay (proxy) URL; direct if empty
+	odohIPs        string
+	dnsProxy       string // ip:port for -dns proxy
+	blocklistDir   string // on-device blocklists (td.txt, rd.txt, basicconfig.json, filetag.json)
+	blocklistStamp string // which of them to block, as a RethinkDNS stamp
+	filetag        string // filetag.json naming the lists a RethinkDNS server blocks by
+
 	rulesFile    string
 	dialStrategy string // anti-censorship: never, auto, split-tcp, split-tls
 	dialRetry    string // never, split (retry with split), plain (retry as-is)
@@ -127,7 +136,7 @@ func main() {
 	flag.StringVar(&o.api, "api", "", "serve the control API for the app window on this loopback address, e.g. 127.0.0.1:47897")
 	flag.StringVar(&o.tokenFile, "token-file", "", "file holding the secret every -api request must present")
 	flag.StringVar(&o.logFile, "logfile", "", "write output to this file instead of the console")
-	flag.StringVar(&o.dnsType, "dns", dnsDoH, "DNS type: doh, dot, dnscrypt or system (the network adapter's own DNS servers)")
+	flag.StringVar(&o.dnsType, "dns", dnsDoH, "DNS type: doh, dot, dnscrypt, odoh (Oblivious DoH), proxy (plain DNS to -dns-proxy) or system (the network adapter's own DNS servers)")
 	flag.StringVar(&o.dot, "dot", "", "DNS-over-TLS server for -dns dot, e.g. tls://dns.adguard-dns.com")
 	flag.StringVar(&o.dotIPs, "dot-ips", "", "comma-separated IPs of the -dot server (optional)")
 	flag.StringVar(&o.dnscrypt, "dnscrypt", "", "DNSCrypt server stamp (sdns://...) for -dns dnscrypt")
@@ -140,6 +149,14 @@ func main() {
 	flag.StringVar(&o.fallbackIPs, "fallback-ips", "", "comma-separated IPs of -fallback-doh (default: -doh-ips)")
 	flag.StringVar(&o.usqueFlags, "usque-flags", "", "extra usque flags for -masque or -chain, space-separated; core flags (-b -p -u -w -c --wg --exit-config) are refused")
 	flag.BoolVar(&o.allowLAN, "allow-lan", false, "with -killswitch, let private and link-local addresses (printers, shares) through")
+	flag.StringVar(&o.dnscryptRelays, "dnscrypt-relays", "", "comma-separated DNSCrypt relay stamps (sdns://...) for -dns dnscrypt, to hide your IP from the resolver")
+	flag.StringVar(&o.odoh, "odoh", "", "Oblivious DoH target for -dns odoh, e.g. https://odoh.cloudflare-dns.com/dns-query")
+	flag.StringVar(&o.odohRelay, "odoh-relay", "", "Oblivious DoH relay (proxy) URL; without one, queries go to the target directly")
+	flag.StringVar(&o.odohIPs, "odoh-ips", "", "comma-separated IPs of the ODoH relay or target (optional)")
+	flag.StringVar(&o.dnsProxy, "dns-proxy", "", "plain DNS server ip:port for -dns proxy, e.g. 9.9.9.9:53 or a local DNS forwarder like 127.0.0.1:5400")
+	flag.StringVar(&o.blocklistDir, "blocklists", "", "folder with the on-device RethinkDNS blocklists (td.txt, rd.txt, basicconfig.json, filetag.json)")
+	flag.StringVar(&o.blocklistStamp, "blocklist-stamp", "", "RethinkDNS stamp of the on-device blocklists to block, e.g. 1-...")
+	flag.StringVar(&o.filetag, "filetag", "", "filetag.json, to name the blocklists a RethinkDNS server blocked a domain by")
 	flag.StringVar(&o.rulesFile, "rules", "", "firewall rules (JSON, as the app writes them) to start with; the app updates them through -api")
 	flag.StringVar(&o.dialStrategy, "dial-strategy", dialNever, "anti-censorship: never (connect as-is), auto, split-tcp (split the first TCP segment) or split-tls (fragment the TLS ClientHello)")
 	flag.StringVar(&o.dialRetry, "dial-retry", "", "when a connection fails: never, split (retry with the split) or plain (retry as-is); default: never for -dial-strategy never, else plain")
@@ -269,6 +286,13 @@ func run(o options) error {
 		return fmt.Errorf("dns: %w", err)
 	}
 	b.setDNS(tid)
+	lists, err := setupBlocklists(t, o)
+	if err != nil {
+		fmt.Println("fswin: blocklists:", err)
+	}
+	if lists {
+		dnsLabel += " + on-device blocklists"
+	}
 
 	if exitID != "" {
 		pxs, err := t.GetProxies()

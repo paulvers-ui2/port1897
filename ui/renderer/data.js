@@ -138,5 +138,71 @@ const DNS_LISTS = {
    "url": "sdns://AQYAAAAAAAAADTkuOS45LjEyOjg0NDMgZ8hHuMh1jNEgJFVDvnVnRt803x2EwAuMRwNo34Idhj4ZMi5kbnNjcnlwdC1jZXJ0LnF1YWQ5Lm5ldA",
    "desc": "Quad9 (anycast) no–dnssec/no–log/no–filter/ecs 9.9.9.12 – 149.112.112.12"
   }
+ ],
+ "odoh": [
+  {
+   "name": "Cloudflare",
+   "url": "https://odoh.cloudflare-dns.com/dns-query",
+   "relay": "",
+   "desc": "Cloudflare ODoH server"
+  },
+  {
+   "name": "ODoH Crypto",
+   "url": "https://odoh.crypto.sx/dns-query",
+   "relay": "",
+   "desc": "ODoH target server. Anycast, no logs. Backend hosted by Scaleway. Maintained by Frank Denis."
+  },
+  {
+   "name": "Ibksturm",
+   "url": "https://ibksturm.synology.me/dns-query",
+   "relay": "",
+   "desc": "ODoH target server hosted by Ibksturm. No logs, No Filter, DNSSEC."
+  }
+ ],
+ "proxy": [
+  {
+   "name": "Google",
+   "url": "8.8.8.8:53",
+   "desc": "Plain DNS (unencrypted) to Google"
+  },
+  {
+   "name": "Cloudflare",
+   "url": "1.1.1.1:53",
+   "desc": "Plain DNS (unencrypted) to Cloudflare"
+  },
+  {
+   "name": "Quad9",
+   "url": "9.9.9.9:53",
+   "desc": "Plain DNS (unencrypted) to Quad9"
+  },
+  {
+   "name": "Tor DNSPort",
+   "url": "127.0.0.1:5400",
+   "desc": "Tor's DNS port on this PC (like Orbot on Android). Needs Tor running with DNSPort 5400."
+  }
  ]
 };
+
+// DNSCrypt relays from the same database (Android: DNSCrypt relays dialog).
+const DNSCRYPT_RELAYS = [
+ {
+  "name": "Netherlands",
+  "url": "sdns://gRI1MS4xNS4xMjQuMjA4OjQzNDM"
+ },
+ {
+  "name": "France",
+  "url": "sdns://gREyMTIuMTI5LjQ2LjMyOjQ0Mw"
+ },
+ {
+  "name": "Sweden",
+  "url": "sdns://gRMxMjguMTI3LjEwNC4xMDg6NDQz"
+ },
+ {
+  "name": "US - Los Angeles, CA",
+  "url": "sdns://gRAyMy4xOS42Ny4xMTY6NDQz"
+ },
+ {
+  "name": "Singapore",
+  "url": "sdns://gRMxNzQuMTM4LjI5LjE3NToxNDQz"
+ }
+];

@@ -15,11 +15,14 @@
 const PAGES = {};
 const PAGE_TICK = {};
 
+// In the Android app's order.
 const DNS_TYPES = [
   { id: 'doh', title: 'DoH', sub: 'DNS-over-HTTPS' },
-  { id: 'dot', title: 'DoT', sub: 'DNS-over-TLS' },
   { id: 'dnscrypt', title: 'DNSCrypt', sub: 'DNSCrypt' },
+  { id: 'proxy', title: 'DNS Proxy', sub: 'Plain DNS to an IP and port' },
   { id: 'rdns', title: 'RethinkDNS', sub: 'Blocklists, by RethinkDNS' },
+  { id: 'dot', title: 'DoT', sub: 'DNS-over-TLS' },
+  { id: 'odoh', title: 'ODoH', sub: 'Oblivious DNS-over-HTTPS' },
 ];
 
 const EXIT_LABEL = {
@@ -161,7 +164,11 @@ function dnsCurrent() {
     case 'dot':
       return { name: s.dotName || s.dot, kind: 'DNS over TLS' };
     case 'dnscrypt':
-      return { name: s.dnscryptName || 'DNSCrypt', kind: 'DNSCrypt' };
+      return { name: s.dnscryptName || 'DNSCrypt', kind: s.dnscryptRelays.length ? 'DNSCrypt via relays' : 'DNSCrypt' };
+    case 'odoh':
+      return { name: s.odohName || hostOf(s.odoh), kind: s.odohRelay ? 'Oblivious DoH via ' + hostOf(s.odohRelay) : 'Oblivious DoH' };
+    case 'proxy':
+      return { name: s.dnsProxyName || s.dnsProxy, kind: 'DNS proxy (unencrypted)' };
     case 'rdns':
       return { name: s.dohName || 'RethinkDNS', kind: 'DNS over HTTPS (RethinkDNS)' };
     default:
@@ -203,6 +210,8 @@ PAGES.dns = () => {
       switchRow({ ico: 'ic_undelegated_domain', title: 'Use System DNS for undelegated domains', sub: 'Use System DNS for undelegated domains like .lan, .internal, etc.', value: s.undelegated, onchange: (v) => save({ undelegated: v }) }),
       row({ ico: 'ic_filter', title: 'Allowed DNS record types', sub: 'Select which DNS resource record types to allow. Now: ' + recordTypesSummary(), right: chevron(), onclick: chooseRecordTypes })
     ),
+    sectionLabel('Blocklists'),
+    blocklistsCard(),
     sectionLabel('Rules'),
     card(row({ ico: 'dns_home_screen', title: 'Domain rules', sub: countRules('domains', '') + ' for all apps. Blocked domains get no DNS answer.', right: chevron(), onclick: () => ((rulesTab = 'domains'), App.go('custom-rules', {})) }))
   );
@@ -229,6 +238,10 @@ function dnsPatch(type, e) {
       return { dnsType: 'dot', dot: e.url, dotName: e.name, lastOtherType: 'dot' };
     case 'dnscrypt':
       return { dnsType: 'dnscrypt', dnscrypt: e.url, dnscryptName: e.name, lastOtherType: 'dnscrypt' };
+    case 'odoh':
+      return { dnsType: 'odoh', odoh: e.url, odohRelay: e.relay || '', odohName: e.name, lastOtherType: 'odoh' };
+    case 'proxy':
+      return { dnsType: 'proxy', dnsProxy: e.url, dnsProxyName: e.name, lastOtherType: 'proxy' };
     default:
       return { dnsType: type, doh: e.url, dohIps: e.ips || '', dohName: e.name, lastOtherType: type };
   }
@@ -239,6 +252,8 @@ function dnsSelected(type, e) {
   if (s.dnsType !== type) return false;
   if (type === 'dot') return s.dot === e.url;
   if (type === 'dnscrypt') return s.dnscrypt === e.url;
+  if (type === 'odoh') return s.odoh === e.url && (s.odohRelay || '') === (e.relay || '');
+  if (type === 'proxy') return s.dnsProxy === e.url;
   return s.doh === e.url;
 }
 
@@ -264,20 +279,65 @@ PAGES['dns-list'] = ({ type }) => {
       );
     })
   );
-  return screen(meta ? meta.sub : 'DNS', list, h('div', { class: 'actions' }, btn('+ Add custom', () => addCustomDns(type))));
+  return screen(
+    meta ? meta.sub : 'DNS',
+    type === 'rdns' ? card(row({ ico: 'ic_configure', title: 'Configure 195+ blocklists', sub: App.settings.remoteFlags.length ? `${App.settings.remoteFlags.length} blocklists on the RethinkDNS server` : 'Pick what the RethinkDNS server blocks for you', right: chevron(), onclick: () => App.go('blocklists', { kind: 'remote' }) })) : null,
+    type === 'proxy' ? note('Plain DNS is not encrypted: your network can see and change it. Use it for a local DNS forwarder, like Tor’s DNSPort.', 'bad') : null,
+    type === 'odoh' ? note('Oblivious DoH: a relay hides your IP address from the DNS server, and the server’s encryption hides your lookups from the relay. Add a server with a relay below; without one, queries go to the server directly.') : null,
+    list,
+    type === 'dnscrypt' ? relaysCard() : null,
+    h('div', { class: 'actions' }, btn('+ Add custom', () => addCustomDns(type)))
+  );
 };
+
+// DNSCrypt relays (Android: DNSCrypt relays dialog): anonymized DNSCrypt
+// sends queries through a relay, which never sees what you look up.
+function relaysCard() {
+  const s = App.settings;
+  const custom = (s.customDns || {}).relay || [];
+  const all = DNSCRYPT_RELAYS.concat(custom.map((c) => ({ ...c, custom: true })));
+  return h(
+    'div',
+    {},
+    sectionLabel('Relays'),
+    note('Anonymized DNSCrypt: queries go through a relay, so the DNS server does not see your IP address. Pick one or more.'),
+    card(
+      all.map((r) => {
+        const c = h('input', { type: 'checkbox', checked: s.dnscryptRelays.includes(r.url), 'aria-label': r.name });
+        c.addEventListener('change', () => {
+          const set = new Set(App.settings.dnscryptRelays);
+          if (c.checked) set.add(r.url);
+          else set.delete(r.url);
+          save({ dnscryptRelays: [...set] });
+        });
+        return h('label', { class: 'pick-row' }, h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: r.name }), h('span', { class: 'row-sub', text: r.custom ? 'Custom relay' : 'DNSCrypt relay' })), c);
+      })
+    ),
+    h('div', { class: 'actions' }, btn('+ Add relay', async () => {
+      const name = field({ label: 'Name', placeholder: 'My relay' });
+      const url = field({ label: 'Relay stamp', placeholder: 'sdns://g...' });
+      if (!(await dialog({ title: 'Add DNSCrypt relay', body: h('div', {}, name, url), ok: 'Add' }))) return;
+      const v = url.input.value.trim();
+      if (!v.startsWith('sdns://')) return toast('A relay stamp starts with sdns://');
+      const list = { ...(App.settings.customDns || {}) };
+      list.relay = (list.relay || []).concat({ name: name.input.value.trim() || 'Relay', url: v });
+      await save({ customDns: list, dnscryptRelays: [...new Set(App.settings.dnscryptRelays.concat(v))] });
+    }))
+  );
+}
 
 async function addCustomDns(type) {
   const name = field({ label: 'Name', placeholder: 'My DNS' });
   const url = field({
-    label: type === 'dnscrypt' ? 'Stamp' : 'URL',
-    placeholder: type === 'dot' ? 'tls://dns.example.com' : type === 'dnscrypt' ? 'sdns://...' : 'https://dns.example.com/dns-query',
+    label: type === 'dnscrypt' ? 'Stamp' : type === 'proxy' ? 'IP address and port' : type === 'odoh' ? 'Server (target) URL' : 'URL',
+    placeholder: type === 'dot' ? 'tls://dns.example.com' : type === 'dnscrypt' ? 'sdns://...' : type === 'proxy' ? '9.9.9.9:53' : 'https://dns.example.com/dns-query',
   });
   const ips = field({ label: 'IP addresses (optional)', placeholder: '1.2.3.4,5.6.7.8' });
-  const ok = await dialog({ title: 'Add DNS', body: h('div', {}, name, url, type === 'doh' || type === 'rdns' ? ips : null), ok: 'Add' });
+  const relay = field({ label: 'Relay URL (optional)', placeholder: 'https://odoh-relay.example.com/proxy' });
+  const ok = await dialog({ title: 'Add DNS', body: h('div', {}, name, url, type === 'doh' || type === 'rdns' ? ips : null, type === 'odoh' ? relay : null), ok: 'Add' });
   if (!ok) return;
-  const e = { name: name.input.value.trim() || url.input.value.trim(), url: url.input.value.trim(), ips: ips.input.value.trim(), desc: 'Custom' };
-  const valid = type === 'dot' ? /^(tls:\/\/)?[a-z0-9.-]+(:\d+)?$/i.test(e.url) : type === 'dnscrypt' ? e.url.startsWith('sdns://') : /^https:\/\/\S+$/.test(e.url);
+  const e = { name: name.input.value.trim() || url.input.value.trim(), url: url.input.value.trim(), ips: ips.input.value.trim(), relay: relay.input.value.trim(), desc: 'Custom' };
+  const valid = type === 'dot' ? /^(tls:\/\/)?[a-z0-9.-]+(:\d+)?$/i.test(e.url) : type === 'dnscrypt' ? e.url.startsWith('sdns://') : type === 'proxy' ? /^(\d{1,3}\.){3}\d{1,3}:\d{1,5}$/.test(e.url) : /^https:\/\/\S+$/.test(e.url) && (!e.relay || /^https:\/\/\S+$/.test(e.relay));
   if (!valid) return toast('That address does not look right');
   const all = { ...(App.settings.customDns || {}) };
   all[type] = (all[type] || []).concat(e);

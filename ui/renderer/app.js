@@ -253,6 +253,8 @@ function demoPort() {
     universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false },
     dnsTypesAuto: true, dnsTypes: [1, 28, 5, 65, 64, 45], knownApps: [], pausedUntil: 0,
     dialStrategy: 'never', dialRetry: '', dialTimeout: 0, tcpKeepAlive: false, eim: false,
+    odoh: '', odohRelay: '', odohName: '', dnsProxy: '', dnsProxyName: '', dnscryptRelays: [],
+    blocklistsLocal: false, localFlags: [], localStamp: '', remoteFlags: [], remoteStamp: '',
     history: true, logLevel: 3, notify: true, statusAlerts: true, theme: 'darkplus', autostart: false,
   };
   let running = false;
@@ -265,6 +267,7 @@ function demoPort() {
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
   const reg = { warp1: { registered: true }, warp2: { registered: false }, wg0: { present: false, text: '' } };
   const isBlocked = (app) => (s.rules.apps[app] || {}).mode === 'block';
+  let bl = false;
   return {
     getSettings: async () => ({ ...s }),
     setSettings: async (p) => (s = { ...s, ...p }),
@@ -313,6 +316,24 @@ function demoPort() {
     pause: async (m) => ((s = { ...s, pausedUntil: m ? Date.now() + m * 60000 : 0 }), { ...s }),
     conns: async () => (running ? [{ cid: '1', app: 'chrome.exe', proto: 'tcp', dst: '104.16.0.1:443', domain: 'github.com', since: Date.now() - 5000 }] : []),
     closeConns: async () => ({ closed: running ? 1 : 0 }),
+    blocklists: {
+      status: async () => ({ local: bl ? { timestamp: Date.now() - 864e5, size: 61e6 } : null, filetag: true, job: null }),
+      filetag: async () => ({
+        ok: true,
+        lists: [
+          { value: 0, vname: 'OISD (full)', group: 'privacy', subg: '', entries: 260000, pack: ['liteprivacy'], level: [0] },
+          { value: 3, vname: 'AdGuard DNS filter', group: 'privacy', subg: 'rethinkdns-recommended', entries: 70000, pack: ['recommended'], level: [0] },
+          { value: 17, vname: '1Hosts (Pro)', group: 'privacy', subg: '', entries: 400000, pack: ['aggressiveprivacy'], level: [1] },
+          { value: 95, vname: 'URLhaus', group: 'security', subg: 'threat-intelligence-feeds', entries: 3000, pack: ['malware'], level: [0] },
+          { value: 103, vname: 'Phishing Army', group: 'security', subg: 'threat-intelligence-feeds', entries: 140000, pack: ['scams & phishing'], level: [1] },
+          { value: 146, vname: 'StevenBlack Porn', group: 'parentalcontrol', subg: 'porn', entries: 76000, pack: ['adult'], level: [0] },
+          { value: 170, vname: 'Gambling list', group: 'parentalcontrol', subg: 'gambling', entries: 9000, pack: ['gambling'], level: [2] },
+        ],
+      }),
+      download: async () => ((bl = true), { ok: true }),
+      latest: async () => ({ ok: true, timestamp: Date.now() }),
+      remove: async () => ((bl = false), { ok: true }),
+    },
     usque: {
       status: async () => reg,
       register: async (w) => ((reg[w].registered = true), { ok: true }),

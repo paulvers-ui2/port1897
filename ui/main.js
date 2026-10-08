@@ -33,8 +33,20 @@ const DEFAULTS = {
   dotName: '',
   dnscrypt: '',
   dnscryptName: '',
+  odoh: '',
+  odohRelay: '',
+  odohName: '',
+  dnsProxy: '',
+  dnsProxyName: '',
+  dnscryptRelays: [], // relay stamps
   lastOtherType: 'doh',
   customDns: {},
+  // RethinkDNS blocklists: on-device (downloaded) and on the server (stamp in the URL)
+  blocklistsLocal: false,
+  localFlags: [],
+  localStamp: '',
+  remoteFlags: [],
+  remoteStamp: '',
   dnsDirect: false,
   dnsCache: false, // "DNS booster"
   dnssec: true, // block bogus answers, as on Android
@@ -180,7 +192,7 @@ function migrate(s) {
   }
   s.rules = { apps: {}, ips: [], domains: [], ...s.rules };
   s.universal = { ...DEFAULTS.universal, ...s.universal };
-  if (!Array.isArray(s.knownApps)) s.knownApps = [];
+  for (const k of ['knownApps', 'dnscryptRelays', 'localFlags', 'remoteFlags']) if (!Array.isArray(s[k])) s[k] = [];
   return s;
 }
 
@@ -250,6 +262,144 @@ function learnApps(evs) {
   }
 }
 
+
+// ---------- RethinkDNS blocklists (Android: "Configure 195+ blocklists") ----------
+
+const blDir = () => path.join(dataDir(), 'blocklists');
+const BL_BASE = 'https://dl.rethinkdns.com';
+// what the Android app downloads; "?compressed" is served brotli-encoded
+const BL_FILES = [
+  ['basicconfig', 'basicconfig.json', 'cfgmd5'],
+  ['blocklists', 'filetag.json', 'ftmd5'],
+  ['rank?compressed', 'rd.txt', 'rdmd5'],
+  ['trie?compressed', 'td.txt', 'tdmd5'],
+];
+const BL_NEEDED = ['td.txt', 'rd.txt', 'basicconfig.json', 'filetag.json'];
+let blJob = null; // { file, done, total } while downloading; { error } after a failure
+
+// The newest complete on-device download, or ''.
+function blLocalDir() {
+  const root = path.join(blDir(), 'local');
+  try {
+    const dirs = fs.readdirSync(root).filter((d) => /^\d+$/.test(d)).sort((a, b) => Number(b) - Number(a));
+    for (const d of dirs) {
+      const p = path.join(root, d);
+      if (BL_NEEDED.every((f) => fs.existsSync(path.join(p, f)))) return p;
+    }
+  } catch {
+    // nothing downloaded
+  }
+  return '';
+}
+
+async function fetchTo(url, file, onBytes) {
+  const res = await net.fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  const total = Number(res.headers.get('content-length')) || 0;
+  const out = fs.createWriteStream(file);
+  const hash = crypto.createHash('md5');
+  const reader = res.body.getReader();
+  let done = 0;
+  try {
+    for (;;) {
+      const { value, done: end } = await reader.read();
+      if (end) break;
+      const buf = Buffer.from(value);
+      hash.update(buf);
+      done += buf.length;
+      onBytes(done, total);
+      if (!out.write(buf)) await new Promise((r) => out.once('drain', r));
+    }
+  } finally {
+    await new Promise((r) => out.end(r));
+  }
+  return hash.digest('hex');
+}
+
+// basicconfig's timestamp looks like "2026/1790903143399".
+function blTimestamp(cfg) {
+  const m = /(\d{10,})/.exec(String(cfg.timestamp || ''));
+  return m ? m[1] : '';
+}
+
+async function blLatest() {
+  const res = await net.fetch(`${BL_BASE}/basicconfig`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return blTimestamp(await res.json());
+}
+
+function blStatus() {
+  const dir = blLocalDir();
+  let size = 0;
+  if (dir) for (const f of BL_NEEDED) size += fs.statSync(path.join(dir, f)).size;
+  return {
+    local: dir ? { timestamp: Number(path.basename(dir)), size } : null,
+    filetag: fs.existsSync(path.join(blDir(), 'filetag.json')),
+    job: blJob,
+  };
+}
+
+// Only the filetag (the list of lists, ~50 KB), for RethinkDNS servers.
+async function blFiletag() {
+  const f = path.join(blDir(), 'filetag.json');
+  if (!fs.existsSync(f)) {
+    fs.mkdirSync(blDir(), { recursive: true });
+    await fetchTo(`${BL_BASE}/blocklists`, f + '.part', () => {});
+    fs.renameSync(f + '.part', f);
+  }
+  const ft = JSON.parse(fs.readFileSync(f, 'utf8'));
+  return Object.values(ft).map((v) => ({
+    value: v.value,
+    vname: v.vname,
+    group: v.group,
+    subg: v.subg,
+    url: Array.isArray(v.url) ? v.url[0] : v.url,
+    entries: v.entries,
+    pack: v.pack || [],
+    level: v.level || [],
+  }));
+}
+
+async function blDownload() {
+  if (blJob && !blJob.error) return { ok: false, error: 'Already downloading' };
+  blJob = { file: 'basicconfig.json', done: 0, total: 0 };
+  const tmp = path.join(blDir(), 'tmp-' + Date.now());
+  try {
+    fs.mkdirSync(tmp, { recursive: true });
+    const sums = {};
+    for (const [u, f, key] of BL_FILES) {
+      blJob = { file: f, done: 0, total: 0 };
+      sums[key] = await fetchTo(`${BL_BASE}/${u}`, path.join(tmp, f), (d, t) => {
+        blJob.done = d;
+        blJob.total = t;
+      });
+    }
+    const cfg = JSON.parse(fs.readFileSync(path.join(tmp, 'basicconfig.json'), 'utf8'));
+    for (const [, f, key] of BL_FILES) {
+      if (cfg[key] && cfg[key] !== sums[key]) throw new Error(`${f}: integrity check failed; try again`);
+    }
+    const ts = blTimestamp(cfg) || String(Date.now());
+    const dest = path.join(blDir(), 'local', ts);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+    fs.renameSync(tmp, dest);
+    fs.copyFileSync(path.join(dest, 'filetag.json'), path.join(blDir(), 'filetag.json'));
+    for (const d of fs.readdirSync(path.dirname(dest))) {
+      if (d === ts) continue;
+      try {
+        fs.rmSync(path.join(path.dirname(dest), d), { recursive: true, force: true });
+      } catch {
+        // still loaded by a running engine; removed next time
+      }
+    }
+    blJob = null;
+    return { ok: true, timestamp: Number(ts) };
+  } catch (e) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    blJob = { error: e.message };
+    return { ok: false, error: e.message };
+  }
+}
 
 // ---------- engine API ----------
 
@@ -344,7 +494,18 @@ function engineArgs(s) {
   a.push('-dns', type);
   if (type === 'doh') a.push('-doh', s.doh, '-doh-ips', s.dohIps || '');
   if (type === 'dot') a.push('-dot', s.dot);
-  if (type === 'dnscrypt') a.push('-dnscrypt', s.dnscrypt);
+  if (type === 'dnscrypt') {
+    a.push('-dnscrypt', s.dnscrypt);
+    if (s.dnscryptRelays.length) a.push('-dnscrypt-relays', s.dnscryptRelays.join(','));
+  }
+  if (type === 'odoh') {
+    a.push('-odoh', s.odoh);
+    if (s.odohRelay) a.push('-odoh-relay', s.odohRelay);
+  }
+  if (type === 'proxy') a.push('-dns-proxy', s.dnsProxy);
+  const bl = blLocalDir();
+  if (s.blocklistsLocal && s.localStamp && bl) a.push('-blocklists', bl, '-blocklist-stamp', s.localStamp);
+  if (fs.existsSync(path.join(blDir(), 'filetag.json'))) a.push('-filetag', path.join(blDir(), 'filetag.json'));
   if (s.dnsDirect) a.push('-dns-direct');
   if (s.dnsCache) a.push('-dns-cache');
   if (s.dnssec) a.push('-dnssec');
@@ -970,6 +1131,30 @@ ipcMain.handle('engine:events', (_e, after) => {
 });
 ipcMain.handle('engine:stats', (_e, range) => stats(String(range)));
 ipcMain.handle('engine:appStats', (_e, appName) => appStats(appName));
+ipcMain.handle('bl:status', () => blStatus());
+ipcMain.handle('bl:filetag', async () => {
+  try {
+    return { ok: true, lists: await blFiletag() };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+ipcMain.handle('bl:download', () => blDownload());
+ipcMain.handle('bl:latest', async () => {
+  try {
+    return { ok: true, timestamp: Number(await blLatest()) };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+ipcMain.handle('bl:delete', async () => {
+  if (await engineStatus()) return { ok: false, error: 'Stop protection first: the engine has the blocklists open.' };
+  fs.rmSync(path.join(blDir(), 'local'), { recursive: true, force: true });
+  const s = readSettings();
+  s.blocklistsLocal = false;
+  writeSettings(s);
+  return { ok: true };
+});
 ipcMain.handle('engine:block', async (_e, appName, block) => {
   const name = String(appName).trim().toLowerCase();
   const s = readSettings();

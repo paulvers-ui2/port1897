@@ -50,6 +50,7 @@ firewall rules) is Phase 2 work.
 | Kill switch with the Windows Filtering Platform, persistent across crashes | done (flag) | `win/wfp`, `fswin -killswitch` / `-cleanup` |
 | App window (Electron) with tray icon, styled after the Android home screen | done | `ui/` |
 | Rules engine ported from the Android app: app modes (block, isolate, bypass DNS & firewall, bypass universal, exclude, allow for 15 min), per-app and global IP / domain rules, universal rules, DNS record types, pause; rules apply live through the API and close blocked connections | done | `cmd/fswin/rules_windows.go`, `ui/renderer/firewall.js` |
+| DNS types ODoH (with relay) and DNS proxy, DNSCrypt relays, RethinkDNS blocklists on-device (download + md5 check) and on the server (stamp in the URL) | done | `cmd/fswin/dns_windows.go`, `ui/renderer/blocklists.js` |
 | Anti-censorship dial strategy (split TCP / TLS ClientHello); desync is not implemented on Windows | done (flags) | `fswin -dial-strategy` |
 | Windows service + named-pipe API for the UI | later | |
 
