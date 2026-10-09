@@ -457,10 +457,7 @@ func pipeClientToken(h windows.Handle) (windows.Token, error) {
 			return
 		}
 		var t windows.Token
-		thread, err := windows.GetCurrentThread()
-		if err == nil {
-			err = windows.OpenThreadToken(thread, windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, true, &t)
-		}
+		err := windows.OpenThreadToken(windows.CurrentThread(), windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, true, &t)
 		if windows.RevertToSelf() == nil {
 			runtime.UnlockOSThread()
 		}

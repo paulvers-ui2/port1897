@@ -66,7 +66,8 @@ func ps(script string) error {
 }
 
 func psOut(script string) (string, error) {
-	out, err := exec.Command(powershell(), "-NoProfile", "-NonInteractive", //nolint:gosec // G204: Windows PowerShell from System32
+	// Windows PowerShell from System32, running our own fixed scripts
+	out, err := exec.Command(powershell(), "-NoProfile", "-NonInteractive", //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 		"-Command", "$ErrorActionPreference = 'Stop'; "+script).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("dnspolicy: %w: %s", err, strings.TrimSpace(string(out)))

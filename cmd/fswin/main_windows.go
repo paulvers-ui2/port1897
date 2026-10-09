@@ -548,7 +548,8 @@ func systemTool(name string) string {
 
 func netsh(cmds [][]string) error {
 	for _, args := range cmds {
-		out, err := exec.Command(systemTool("netsh.exe"), args...).CombinedOutput() //nolint:gosec // G204: netsh from System32, plain arguments
+		// netsh from System32, with plain arguments
+		out, err := exec.Command(systemTool("netsh.exe"), args...).CombinedOutput() //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 		if err != nil {
 			return fmt.Errorf("netsh %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		}
