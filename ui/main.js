@@ -704,8 +704,8 @@ function engineArgs(s) {
     if (s.odohRelay) a.push('-odoh-relay', s.odohRelay);
   }
   if (type === 'proxy') a.push('-dns-proxy', s.dnsProxy);
-  const bl = blLocalDir();
-  if (s.blocklistsLocal && s.localStamp && bl) a.push('-blocklists', bl, '-blocklist-stamp', s.localStamp);
+  // on-device blocklists are not offered any more (the DNS screen has no
+  // Blocklists section), so one switched on earlier stays off
   if (fs.existsSync(path.join(blDir(), 'filetag.json'))) a.push('-filetag', path.join(blDir(), 'filetag.json'));
   if (s.dnsDirect) a.push('-dns-direct');
   if (s.dnsCache) a.push('-dns-cache');
