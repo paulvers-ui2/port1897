@@ -228,13 +228,19 @@ func (a *apiServer) conns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, a.b.conns.list(r.URL.Query().Get("app")))
 }
 
-// closeConns takes {"app": "chrome.exe"} or {"app": ""} for all.
+// closeConns takes {"app": "chrome.exe"}, {"app": ""} for all, or
+// {"cids": ["12"]} for single connections, as the Logs screen closes them.
 func (a *apiServer) closeConns(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		App string `json:"app"`
+		App  string   `json:"app"`
+		CIDs []string `json:"cids"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
-		http.Error(w, "want {\"app\": \"name.exe\"}", http.StatusBadRequest)
+		http.Error(w, "want {\"app\": \"name.exe\"} or {\"cids\": [\"12\"]}", http.StatusBadRequest)
+		return
+	}
+	if len(req.CIDs) > 0 {
+		writeJSON(w, map[string]int{"closed": a.b.closeIDs(req.CIDs)})
 		return
 	}
 	writeJSON(w, map[string]int{"closed": a.b.closeApp(req.App)})

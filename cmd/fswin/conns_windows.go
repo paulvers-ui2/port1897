@@ -22,14 +22,17 @@ import (
 // firewalled, just not closed early when a rule changes.
 const maxConns = 50000
 
-// liveConn is an open connection, kept so that a new rule can close it.
+// liveConn is an open connection, kept so that a new rule can close it and
+// the Logs screen can list it.
 type liveConn struct {
 	uid     int32
 	proto   int32
 	dst     netip.AddrPort
 	domains []string
 	app     string
-	at      int64 // unix millis
+	via     string // the exit or route it leaves through
+	country string // two-letter code of dst
+	at      int64  // unix millis
 }
 
 type connTable struct {
@@ -64,12 +67,14 @@ func (t *connTable) all() map[string]liveConn {
 
 // openConn is what GET /api/conns returns per connection.
 type openConn struct {
-	CID    string `json:"cid"`
-	App    string `json:"app"`
-	Proto  string `json:"proto"`
-	Dst    string `json:"dst"`
-	Domain string `json:"domain,omitempty"`
-	Since  int64  `json:"since"` // unix millis
+	CID     string `json:"cid"`
+	App     string `json:"app"`
+	Proto   string `json:"proto"`
+	Dst     string `json:"dst"`
+	Domain  string `json:"domain,omitempty"`
+	Country string `json:"country,omitempty"` // two-letter code of Dst
+	Via     string `json:"via,omitempty"`
+	Since   int64  `json:"since"` // unix millis
 }
 
 // list returns the open connections of app (all if ""), newest first.
@@ -80,7 +85,8 @@ func (t *connTable) list(app string) []openConn {
 		if app != "" && strings.ToLower(c.app) != app {
 			continue
 		}
-		o := openConn{CID: cid, App: c.app, Proto: proto(c.proto), Dst: c.dst.String(), Since: c.at}
+		o := openConn{CID: cid, App: c.app, Proto: proto(c.proto), Dst: c.dst.String(),
+			Country: c.country, Via: c.via, Since: c.at}
 		if len(c.domains) > 0 {
 			o.Domain = c.domains[0]
 		}

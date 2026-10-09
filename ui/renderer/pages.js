@@ -998,7 +998,7 @@ let logFilter = 'flow';
 let logShow = 'all';
 PAGES.logs = () => {
   const list = h('div', { class: 'group' });
-  const search = field({ placeholder: 'Search app or domain', oninput: () => fillLog(list, search.input.value) });
+  const search = field({ placeholder: 'Search app, domain or country', oninput: () => fillLog(list, search.input.value) });
   const tabs = h(
     'div',
     { class: 'seg-wrap' },
@@ -1011,15 +1011,18 @@ PAGES.logs = () => {
       ].map(([id, name]) =>
         h('button', { class: logFilter === id ? 'on' : '', type: 'button', onclick: () => {
           logFilter = id;
+          if (id !== 'flow' && logShow === 'active') logShow = 'all';
           App.render();
         }, text: name })
       )
     )
   );
+  // Active: the connections open right now (Network only)
+  const showIds = [['all', 'All'], ['allowed', 'Allowed'], ['blocked', 'Blocked']].concat(logFilter === 'flow' ? [['active', 'Active']] : []);
   const shows = h(
     'div',
     { class: 'chips center' },
-    [['all', 'All'], ['allowed', 'Allowed'], ['blocked', 'Blocked']].map(([id, name]) => h('button', { class: 'chip' + (logShow === id ? ' on' : ''), type: 'button', text: name, onclick: () => {
+    showIds.map(([id, name]) => h('button', { class: 'chip' + (logShow === id ? ' on' : ''), type: 'button', text: name, onclick: () => {
       logShow = id;
       shows.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c.textContent === name));
       fillLog(list, search.input.value);
@@ -1042,11 +1045,20 @@ function siteIcon(domain) {
   return img;
 }
 
+// Matches the search box against the given fields and the country's name.
+function matches(q, fields, cc) {
+  return !q || fields.concat(cc || '', countryName(cc)).some((v) => String(v || '').toLowerCase().includes(q));
+}
+
 function fillLog(list, q) {
+  if (logFilter === 'flow' && logShow === 'active') {
+    fillActive(list, q);
+    return;
+  }
   q = (q || '').trim().toLowerCase();
   const rows = App.events
     .filter((e) => e.kind === logFilter && (logShow === 'all' || (logShow === 'blocked') === !!e.blocked))
-    .filter((e) => !q || (e.app || '').toLowerCase().includes(q) || (e.domain || '').toLowerCase().includes(q) || (e.dst || '').includes(q))
+    .filter((e) => matches(q, [e.app, e.domain, e.dst], e.country))
     .slice(-300)
     .reverse();
   list.replaceChildren();
@@ -1067,8 +1079,8 @@ function fillLog(list, q) {
           h(
             'span',
             { class: 'row-text' },
-            h('span', { class: 'row-title', text: (e.domain || e.dst) + (e.blocked ? '  · blocked' : '') }),
-            h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.app || '?'} · ${e.proto} ${e.dst}${e.via && e.via !== 'direct' && e.via !== 'blocked' ? ' · via ' + e.via : ''}${e.blocked && e.rule ? ' · ' + e.rule : ''}` })
+            h('span', { class: 'row-title' }, flag(e.country), (e.domain || e.dst) + (e.blocked ? '  · blocked' : '')),
+            h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.app || '?'} · ${e.proto} ${e.dst}${e.country ? ' · ' + countryName(e.country) : ''}${e.via && e.via !== 'direct' && e.via !== 'blocked' ? ' · via ' + e.via : ''}${e.blocked && e.rule ? ' · ' + e.rule : ''}` })
           )
         )
       );
@@ -1081,10 +1093,46 @@ function fillLog(list, q) {
           'div',
           o,
           siteIcon(e.domain),
-          h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: e.domain || '' }), h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.qtype ? rrName(e.qtype) + ' · ' : ''}${e.answer || 'no answer'}${e.error ? ' (' + e.error + ')' : ''} · ${e.latencyMs} ms${marks ? ' · ' + marks : ''}` }))
+          h('span', { class: 'row-text' }, h('span', { class: 'row-title' }, flag(e.country), e.domain || ''), h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.qtype ? rrName(e.qtype) + ' · ' : ''}${e.answer || 'no answer'}${e.country ? ' · ' + countryName(e.country) : ''}${e.error ? ' (' + e.error + ')' : ''} · ${e.latencyMs} ms${marks ? ' · ' + marks : ''}` }))
         )
       );
     }
+  }
+}
+
+// The connections open right now (Android: Active Connections), newest
+// first, with the domain and country of each address. Fetched again on
+// every refresh while shown; a slower, older fetch never overwrites a newer.
+let activeSeq = 0;
+async function fillActive(list, q) {
+  const seq = ++activeSeq;
+  const conns = App.status ? await App.port.conns('') : [];
+  if (seq !== activeSeq || !list.isConnected || logShow !== 'active') return;
+  q = (q || '').trim().toLowerCase();
+  const rows = conns.filter((c) => matches(q, [c.app, c.domain, c.dst], c.country));
+  list.replaceChildren();
+  if (!rows.length) {
+    list.append(h('p', { class: 'empty', text: !App.status ? 'Start protection to see connections.' : conns.length ? 'No active connections match.' : 'No active connections' }));
+    return;
+  }
+  const now = Date.now();
+  list.append(h('p', { class: 'list-head', text: `${rows.length} active connection${rows.length === 1 ? '' : 's'}${rows.length > 300 ? ' (newest 300 shown)' : ''}` }));
+  for (const c of rows.slice(0, 300)) {
+    const where = c.country ? ' · ' + countryName(c.country) : '';
+    const via = c.via && c.via !== 'direct' ? ' · via ' + c.via : '';
+    list.append(
+      h(
+        'div',
+        { class: 'row clickable', tabindex: '0', onclick: () => activeDetails(c), onkeydown: (ev) => ev.key === 'Enter' && activeDetails(c) },
+        avatar(c.app),
+        h(
+          'span',
+          { class: 'row-text' },
+          h('span', { class: 'row-title' }, flag(c.country), c.domain || c.dst),
+          h('span', { class: 'row-sub', text: `${c.app || '?'} · ${c.proto} ${c.dst}${where} · open ${fmtAge(now - c.since)}${via}` })
+        )
+      )
+    );
   }
 }
 
@@ -1218,5 +1266,5 @@ PAGES.about = () =>
       h('p', { class: 'desc', text: 'The zip has everything needed to debug: the engine log (DNS, firewall, WireGuard, WARP) and the app’s own log, both for this run and the one before, the usque (WARP over MASQUE) log, settings and rules, two days of activity, and this PC’s adapters, routes, DNS servers, other VPNs, Windows Firewall and recent crashes. Private keys, tokens and passwords are left out; the logs do list the sites and apps you used.' }),
       h('div', { class: 'actions' }, btn('Save debug zip', saveDebugZip, { primary: true }))
     ),
-    h('div', { class: 'group pad' }, h('h2', { class: 'modal-title', text: 'Licenses' }), h('p', { class: 'desc', text: 'Mozilla Public License 2.0. Icons, layout and DNS lists from the Rethink Android app (Apache-2.0). usque (MIT). Kill switch rules adapted from WireGuard for Windows (MIT). Wintun © WireGuard LLC, prebuilt-binaries license.' }))
+    h('div', { class: 'group pad' }, h('h2', { class: 'modal-title', text: 'Licenses' }), h('p', { class: 'desc', text: 'Mozilla Public License 2.0. Icons, layout and DNS lists from the Rethink Android app (Apache-2.0). usque (MIT). Kill switch rules adapted from WireGuard for Windows (MIT). Wintun © WireGuard LLC, prebuilt-binaries license. Geo-IP: db-ip.com / IPinfo Lite, via the Android app (CC BY 4.0).' }))
   );

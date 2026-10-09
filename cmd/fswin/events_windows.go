@@ -25,6 +25,7 @@ type event struct {
 	Proto     string `json:"proto,omitempty"`
 	Dst       string `json:"dst,omitempty"`
 	Domain    string `json:"domain,omitempty"`
+	Country   string `json:"country,omitempty"` // two-letter code of Dst, or of a DNS answer's first address
 	Answer    string `json:"answer,omitempty"`
 	Via       string `json:"via,omitempty"`
 	LatencyMs int64  `json:"latencyMs,omitempty"`

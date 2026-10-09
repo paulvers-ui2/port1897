@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('port', {
   conns: call('conns:list'),
   proxies: call('engine:proxies'),
   closeConns: call('conns:close'),
+  closeConn: call('conns:closeOne'),
   blocklists: {
     status: call('bl:status'),
     filetag: call('bl:filetag'),

@@ -223,3 +223,32 @@ function avatar(name) {
   a.style.background = `hsl(${hue} 45% 32%)`;
   return a;
 }
+
+// The country of an address comes from the engine as a two-letter code
+// (geo-IP by db-ip.com). Its flag is the regional-indicator emoji, as the
+// Android app shows it (Utilities.getFlag).
+const REGION_NAMES = typeof Intl.DisplayNames === 'function' ? new Intl.DisplayNames(['en'], { type: 'region' }) : null;
+
+function countryName(cc) {
+  if (!/^[A-Z]{2}$/.test(cc || '')) return '';
+  try {
+    return (REGION_NAMES && REGION_NAMES.of(cc)) || cc;
+  } catch {
+    return cc;
+  }
+}
+
+function flag(cc) {
+  if (!/^[A-Z]{2}$/.test(cc || '')) return null;
+  const name = countryName(cc);
+  const emoji = String.fromCodePoint(...[...cc].map((c) => 0x1f1a5 + c.charCodeAt(0)));
+  return h('span', { class: 'flag', role: 'img', title: name, 'aria-label': name, text: emoji });
+}
+
+// How long ago, for open connections: "40 s", "3 min", "2 h 5 min".
+function fmtAge(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${m % 60} min`;
+}
