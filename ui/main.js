@@ -655,15 +655,40 @@ function winQuote(arg) {
 
 const psQuote = (s) => "'" + s.replace(/'/g, "''") + "'";
 
+// launchElevated starts exe as admin (a UAC prompt) and resolves with its
+// process id, so a caller can tell when it exits.
 function launchElevated(exe, args) {
-  const cmd = `Start-Process -FilePath ${psQuote(exe)} -Verb RunAs -WindowStyle Hidden -ArgumentList ${psQuote(args.map(winQuote).join(' '))}`;
+  const cmd = `(Start-Process -FilePath ${psQuote(exe)} -Verb RunAs -WindowStyle Hidden -PassThru -ArgumentList ${psQuote(args.map(winQuote).join(' '))}).Id`;
   return new Promise((resolve, reject) => {
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { windowsHide: true }, (err, _stdout, stderr) => {
-      if (!err) return resolve();
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { windowsHide: true }, (err, stdout, stderr) => {
+      if (!err) return resolve(Number(String(stdout).trim()) || 0);
       const msg = String(stderr || err.message);
       reject(new Error(/cancel/i.test(msg) ? 'Admin permission was declined.' : msg.trim()));
     });
   });
+}
+
+// alive reports whether process pid still runs. An elevated process cannot
+// be signalled from here (EPERM), which still means it exists.
+function alive(pid) {
+  if (!pid) return true; // unknown: rely on the API alone
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+}
+
+// engineFailure is the reason fswin gave for stopping, from the end of its
+// log: its last "fswin: ..." line that is not a warning.
+function engineFailure() {
+  const lines = lastLogLines(60).split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = /^fswin: (?!warning)(.+)$/.exec(lines[i].trim());
+    if (m) return m[1];
+  }
+  return '';
 }
 
 function lastLogLines(n) {
@@ -705,20 +730,27 @@ async function startEngineOnce() {
       await new Promise((r) => setTimeout(r, 250));
     }
   }
+  let pid = 0;
   try {
-    await launchElevated(exe, engineArgs(s));
+    pid = await launchElevated(exe, engineArgs(s));
   } catch (e) {
     return { ok: false, error: e.message };
   }
-  // WARP registration and the usque chain can take a while on first use
+  // WARP registration and the usque chain can take a while on first use; an
+  // engine that exits instead is reported at once, with its own reason
   for (let i = 0; i < 120; i++) {
     await new Promise((r) => setTimeout(r, 500));
     if (await engineStatus()) {
       writeSettings({ ...readSettings(), wasRunning: true });
       return { ok: true };
     }
+    if (!alive(pid)) {
+      await new Promise((r) => setTimeout(r, 300)); // let its last log lines land
+      const why = engineFailure();
+      return { ok: false, error: why ? `The engine stopped: ${why}` : 'The engine stopped while starting.', log: lastLogLines(15) };
+    }
   }
-  return { ok: false, error: 'The engine did not start.', log: lastLogLines(15) };
+  return { ok: false, error: 'The engine did not start in 60 seconds.', log: lastLogLines(15) };
 }
 
 async function stopEngine(byUser = true) {

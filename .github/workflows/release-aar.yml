@@ -1,21 +1,28 @@
-name: Build and Deploy AAR
+name: Release AAR
 
+# Builds firestack's Android library (AAR) and attaches it to a release in
+# this repository, next to the Windows app. Nothing is pushed anywhere else.
+# app.yml starts this for every release it publishes (a release made with
+# the workflow token starts no workflows by itself); a release published by
+# hand starts it through the release event.
 on:
   release:
     types: [published]
-  # Optional: allow manual runs for testing
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release to attach the AAR to, e.g. v0.2.1 (empty: build only)"
+        required: false
+        type: string
 
 env:
-  NDK_VERSION: "28.2.13676358"
-  PLATFORM_VERSION: "android-36"
   GOTOOLCHAIN: local
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-24.04
     permissions:
-      contents: write # 'Attach AAR to release'; the rethink-app push uses RETHINK_APP_PUSH_TOKEN
+      contents: write # attach the AAR to the release
     steps:
       - name: Checkout firestack
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -29,78 +36,34 @@ jobs:
           go-version-file: go.mod # its toolchain line: the patched Go every build uses
           cache: false # release build
 
-      - name: Set up JDK (for Android/gomobile toolchain)
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
-        with:
-          distribution: "temurin"
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
-
-      - name: Install Android NDK
-        run: |
-          sdkmanager --install "platforms;${{ env.PLATFORM_VERSION }}" "ndk;${{ env.NDK_VERSION }}"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-
+      # The runner already has the Android SDK, the latest NDK and a JDK: the
+      # AAR is built the way go.yml builds it (setup-android@v3 broke when the
+      # SDK dropped its old "tools" package).
       - name: Build AAR
         run: |
-          make clean
-          make intra
-
-      - name: Verify build output
-        run: |
-          ls -la build/intra/
-          test -f build/intra/tun2socks.aar
+          chmod +x make-aar
+          ./make-aar nogo release
+          test -f firestack.aar
 
       - name: Upload build artifact (CI record)
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: firestack-aar
           path: |
-            build/intra/tun2socks.aar
+            firestack.aar
             build/intra/tun2socks-sources.jar
           if-no-files-found: error
 
-      # --- 1. Attach AAR to the GitHub Release ---
-      - name: Attach AAR to release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          files: |
-            build/intra/tun2socks.aar
-            build/intra/tun2socks-sources.jar
-
-      # --- 2. Push AAR into paulvers-ui/rethink-app:app/firestack ---
-      # credentials must persist: the 'Commit and push' step pushes with this PAT; nothing uploads or runs third-party code after it
-      - name: Checkout rethink-app # zizmor: ignore[artipacked]
-        if: github.event_name == 'release'
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: paulvers-ui/rethink-app
-          token: ${{ secrets.RETHINK_APP_PUSH_TOKEN }}
-          path: rethink-app
-
-      - name: Copy AAR into rethink-app
-        if: github.event_name == 'release'
-        run: |
-          mkdir -p rethink-app/app/firestack
-          cp build/intra/tun2socks.aar rethink-app/app/firestack/
-          cp build/intra/tun2socks-sources.jar rethink-app/app/firestack/ || true
-
-      - name: Commit and push to rethink-app
-        if: github.event_name == 'release'
-        working-directory: rethink-app
+      - name: Attach AAR to the release
+        if: github.event_name == 'release' || inputs.tag != ''
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add app/firestack/tun2socks.aar app/firestack/tun2socks-sources.jar
-          if git diff --cached --quiet; then
-            echo "No changes to commit."
-          else
-            git commit -m "chore: update firestack AAR to ${TAG}"
-            git push origin HEAD
+          mkdir -p release
+          cp firestack.aar "release/firestack-android-$TAG.aar"
+          if [ -f build/intra/tun2socks-sources.jar ]; then
+            cp build/intra/tun2socks-sources.jar "release/firestack-android-$TAG-sources.jar"
           fi
+          (cd release && sha256sum ./* | sed 's# \./# #' > "firestack-android-$TAG-SHA256SUMS.txt" && cat ./*SHA256SUMS.txt)
+          gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"

@@ -204,6 +204,14 @@ func run(o options) error {
 
 	intra.LogLevel(o.golog, 8 /*no console logs; Go logs go to stderr*/)
 
+	// fail before changing anything on the PC (adapter, routes, DNS rules,
+	// firewall) if the app could not reach us anyway
+	if o.api != "" {
+		if err := apiPreflight(o.api, o.tokenFile); err != nil {
+			return fmt.Errorf("api: %w", err)
+		}
+	}
+
 	// prepare the exit first: WARP registers over the normal network
 	exitID, exitCfg, uq, err := prepareExit(o)
 	if err != nil {
@@ -387,10 +395,14 @@ func run(o options) error {
 		}
 	}()
 	if o.kill {
+		// without the kill switch protection still runs, rather than not at
+		// all; the status carries the error and the app shows it
 		if err := b.kill.set(true, o.allowLAN); err != nil {
-			return fmt.Errorf("-killswitch: %w", err)
+			fmt.Println("fswin: warning: -killswitch: not on:", err)
+			mode += "; kill switch FAILED"
+		} else {
+			mode += "; kill switch on"
 		}
-		mode += "; kill switch on"
 	}
 	if exitID != "" {
 		mode += "; exit: " + exitName(exitID)
