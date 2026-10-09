@@ -11,11 +11,21 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+// isServiceSID tells whether s, a SID in string form, is a service SID:
+// S-1-5-80 and at least 6 sub-authorities in all. It reads the string, not
+// SID.SubAuthority and friends: those return pointers into the SID from a
+// syscall, which Go's pointer checks (race builds) refuse.
+func isServiceSID(s string) bool {
+	p := strings.Split(s, "-")
+	return len(p) >= 3+6 && p[0] == "S" && p[1] == "1" && p[2] == "5" && p[3] == "80"
+}
 
 func runTransaction(session uintptr, operation wfpObjectInstaller) error {
 	err := fwpmTransactionBegin0(session, 0)
@@ -92,7 +102,7 @@ func getCurrentProcessSecurityDescriptor() (*windows.SECURITY_DESCRIPTOR, error)
 		// We could be checking != 6, but hopefully Microsoft will update
 		// RtlCreateServiceSid to use SHA2, which will then likely bump
 		// this up. So instead just roll with a minimum.
-		if !g.Sid.IsValid() || g.Sid.IdentifierAuthority() != windows.SECURITY_NT_AUTHORITY || g.Sid.SubAuthorityCount() < 6 || g.Sid.SubAuthority(0) != 80 {
+		if !g.Sid.IsValid() || !isServiceSID(g.Sid.String()) {
 			continue
 		}
 		sid = g.Sid
