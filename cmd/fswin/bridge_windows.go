@@ -245,6 +245,20 @@ func (b *bridge) closeApp(app string) int {
 	return len(cids)
 }
 
+// closeIDs closes the open connections among ids and returns how many it
+// found open.
+func (b *bridge) closeIDs(ids []string) int {
+	open := b.conns.all()
+	var cids []string
+	for _, id := range ids {
+		if _, ok := open[id]; ok {
+			cids = append(cids, id)
+		}
+	}
+	b.closeConns(cids)
+	return len(cids)
+}
+
 func (b *bridge) closeConns(cids []string) {
 	if len(cids) == 0 {
 		return
@@ -371,14 +385,16 @@ func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probable
 	if len(doms) > 0 {
 		domain = doms[0]
 	}
+	cc := country(dap.Addr())
 	b.log.flows.Add(1)
 	if d.block {
 		b.log.flowsBlocked.Add(1)
 	} else {
-		b.conns.add(cid, liveConn{uid: uid, proto: protocol, dst: dap, domains: doms, app: app, at: time.Now().UnixMilli()})
+		b.conns.add(cid, liveConn{uid: uid, proto: protocol, dst: dap, domains: doms, app: app,
+			via: via, country: cc, at: time.Now().UnixMilli()})
 	}
 	b.log.add(event{Kind: "flow", App: app, Proto: proto(protocol), Dst: dst.V(),
-		Domain: domain, Via: via, Blocked: d.block, Rule: d.why, CID: cid})
+		Domain: domain, Country: cc, Via: via, Blocked: d.block, Rule: d.why, CID: cid})
 	return &intra.Mark{PIDCSV: pid, CID: cid, UID: strconv.Itoa(int(uid))}
 }
 
@@ -396,8 +412,9 @@ func (b *bridge) Inflow(protocol, uid int32, src, dst *x.Gostr) *intra.Mark {
 	b.log.flows.Add(1)
 	b.log.flowsBlocked.Add(1)
 	// the remote end is the source; the event shows it as the address
+	sap, _ := netip.ParseAddrPort(src.V())
 	b.log.add(event{Kind: "flow", App: b.appName(uid), Proto: proto(protocol) + " in", Dst: src.V(),
-		Via: exitName(x.Block), Blocked: true, Rule: why, CID: cid})
+		Country: country(sap.Addr()), Via: exitName(x.Block), Blocked: true, Rule: why, CID: cid})
 	mark.PIDCSV = x.Block
 	return mark
 }
@@ -492,8 +509,9 @@ func (b *bridge) OnResponse(s *x.DNSSummary) {
 		app = b.appName(int32(u)) // who asked; "?" if unknown
 	}
 	b.log.add(event{Kind: "dns", App: app, Domain: strings.TrimSuffix(s.QName, "."), Answer: s.RData,
-		Via: s.ID, LatencyMs: ms, Blocked: why != "" || (s.Status == x.Complete && isUnspecifiedAnswer(s.RData)),
-		Secure: s.AD, Cached: s.Cached, Rule: why, QType: s.QType, Error: failure})
+		Country: answerCountry(s.RData), Via: s.ID, LatencyMs: ms, Secure: s.AD, Cached: s.Cached,
+		Blocked: why != "" || (s.Status == x.Complete && isUnspecifiedAnswer(s.RData)), Rule: why,
+		QType: s.QType, Error: failure})
 }
 
 // dnsFailure says why a query got no answer, from firestack's summary, in

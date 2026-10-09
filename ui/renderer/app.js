@@ -287,6 +287,7 @@ function demoPort() {
   const wgs = [];
   const apps = ['msedge.exe', 'chrome.exe', 'discord.exe', 'spotify.exe', 'svchost.exe', 'notepad.exe'];
   const doms = ['example.com', 'github.com', 'discord.gg', 'spotify.com', 'windowsupdate.com', 'cloudflare.com'];
+  const ips = [['104.16.0.1', 'US'], ['185.15.59.224', 'NL'], ['2.16.10.9', 'DE'], ['200.82.253.26', 'VE'], ['13.107.42.14', 'IE']];
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
   const reg = { warp1: { registered: true }, warp2: { registered: false }, wg0: { present: false, text: '' } };
   const isBlocked = (app) => (s.rules.apps[app] || {}).mode === 'block';
@@ -316,8 +317,9 @@ function demoPort() {
       for (let i = 0; i < 3; i++) {
         const app = pick(apps);
         const dom = pick(doms);
-        out.push({ id: ++id, at: Date.now(), kind: 'dns', domain: dom, answer: '104.16.0.1', latencyMs: 20, secure: dom.endsWith('.com'), qtype: 1 });
-        out.push({ id: ++id, at: Date.now(), kind: 'flow', app, proto: 'tcp', dst: '104.16.0.1:443', domain: dom, via: 'Cloudflare WARP', blocked: isBlocked(app), rule: isBlocked(app) ? 'app blocked' : '', cid: String(id) });
+        const [ip, cc] = pick(ips);
+        out.push({ id: ++id, at: Date.now(), kind: 'dns', domain: dom, answer: ip, country: cc, latencyMs: 20, secure: dom.endsWith('.com'), qtype: 1 });
+        out.push({ id: ++id, at: Date.now(), kind: 'flow', app, proto: 'tcp', dst: ip + ':443', domain: dom, country: cc, via: 'Cloudflare WARP', blocked: isBlocked(app), rule: isBlocked(app) ? 'app blocked' : '', cid: String(id) });
       }
       return out;
     },
@@ -339,8 +341,18 @@ function demoPort() {
     setRules: async (p) => ((s = { ...s, ...p }), { settings: { ...s }, warnings: '' }),
     pause: async (m) => ((s = { ...s, pausedUntil: m ? Date.now() + m * 60000 : 0 }), { ...s }),
     proxies: async () => (running ? [{ id: 'masque', name: 'Cloudflare WARP (MASQUE)', status: 'connected', rx: 5e7, tx: 4e6, lastOK: Date.now() - 12000 }] : []),
-    conns: async () => (running ? [{ cid: '1', app: 'chrome.exe', proto: 'tcp', dst: '104.16.0.1:443', domain: 'github.com', since: Date.now() - 5000 }] : []),
+    conns: async () =>
+      running
+        ? [
+            { cid: '1', app: 'chrome.exe', proto: 'tcp', dst: '104.16.0.1:443', domain: 'github.com', country: 'US', via: 'Cloudflare WARP (MASQUE)', since: Date.now() - 5000 },
+            { cid: '2', app: 'Code.exe', proto: 'tcp', dst: '34.49.39.67:443', country: 'US', via: 'Cloudflare WARP (MASQUE)', since: Date.now() - 95000 },
+            { cid: '3', app: 'opera.exe', proto: 'udp', dst: '185.15.59.224:443', domain: 'upload.wikimedia.org', country: 'NL', via: 'Cloudflare WARP (MASQUE)', since: Date.now() - 4e6 },
+            { cid: '4', app: 'AvastSvc.exe', proto: 'tcp', dst: '200.82.253.26:443', domain: 'ncc.avast.com', country: 'VE', via: 'Cloudflare WARP (MASQUE)', since: Date.now() - 61000 },
+            { cid: '5', app: 'svchost.exe', proto: 'udp', dst: '192.168.1.1:53', via: 'direct', since: Date.now() - 2000 },
+          ]
+        : [],
     closeConns: async () => ({ closed: running ? 1 : 0 }),
+    closeConn: async () => ({ closed: running ? 1 : 0 }),
     blocklists: {
       status: async () => ({ local: bl ? { timestamp: Date.now() - 864e5, size: 61e6 } : null, filetag: true, job: null }),
       filetag: async () => ({

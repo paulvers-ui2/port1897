@@ -1354,6 +1354,16 @@ ipcMain.handle('conns:close', async (_e, appName) => {
     return { closed: 0 };
   }
 });
+// One connection, from the Logs screen's active list; never "all".
+ipcMain.handle('conns:closeOne', async (_e, cid) => {
+  const id = String(cid || '');
+  if (!/^\d{1,20}$/.test(id)) return { closed: 0 };
+  try {
+    return await api('POST', '/api/close', { cids: [id] });
+  } catch {
+    return { closed: 0 };
+  }
+});
 ipcMain.handle('engine:start', () => startEngine());
 ipcMain.handle('engine:stop', () => stopEngine());
 // Removes a kill switch (and DNS rule) left behind if the engine crashed.

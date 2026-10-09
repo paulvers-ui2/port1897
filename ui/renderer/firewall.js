@@ -292,7 +292,7 @@ PAGES['app-info'] = ({ app }) => {
     const list = App.status ? await App.port.conns(app) : [];
     connsBox.replaceChildren(
       list.length
-        ? card(list.slice(0, 50).map((c) => row({ ico: 'ic_network', title: c.domain || c.dst, sub: `${c.proto} ${c.dst} · since ${fmtTime(c.since)}` })))
+        ? card(list.slice(0, 50).map((c) => row({ ico: 'ic_network', title: c.domain || c.dst, sub: `${c.proto} ${c.dst}${c.country ? ' · ' + countryName(c.country) : ''} · since ${fmtTime(c.since)}` })))
         : note(App.status ? 'No open connections.' : 'Start protection to see open connections.')
     );
   };
@@ -406,6 +406,7 @@ function connDetails(e) {
       kv('Time', new Date(e.at).toLocaleString()),
       kv('Destination', `${e.proto} ${e.dst}`),
       e.domain ? kv('Domain', e.domain) : null,
+      e.country ? kv('Country', countryName(e.country)) : null,
       kv('Via', e.via),
       kv(e.blocked ? 'Blocked by' : 'Rule', e.rule || (e.blocked ? 'app blocked' : 'none'))
     ),
@@ -415,6 +416,40 @@ function connDetails(e) {
       ip ? { text: `Block or trust this IP${app ? ' for this app' : ''}…`, onclick: () => ruleSheet('ips', app, ip, 0) } : null,
       ip && port ? { text: `Block or trust ${ip}:${port}…`, onclick: () => ruleSheet('ips', app, ip, Number(port)) } : null,
       e.domain ? { text: `Block or trust this domain${app ? ' for this app' : ''}…`, onclick: () => ruleSheet('domains', app, e.domain) } : null,
+    ],
+  });
+}
+
+// An open connection from the Logs screen's Active list.
+function activeDetails(c) {
+  const app = c.app && c.app !== '?' ? c.app : '';
+  const [ip, port] = splitHostPort(c.dst);
+  sheet({
+    title: c.domain || c.dst,
+    body: h(
+      'div',
+      {},
+      app ? h('div', { class: 'app-head small' }, avatar(app), h('div', {}, h('b', { text: app }), h('p', { class: 'row-sub', text: appStatusText(app) }))) : null,
+      kv('Destination', `${c.proto} ${c.dst}`),
+      c.domain ? kv('Domain', c.domain) : null,
+      kv('Country', c.country ? countryName(c.country) : 'unknown: a private or unassigned address'),
+      kv('Open since', `${new Date(c.since).toLocaleString()} (${fmtAge(Date.now() - c.since)})`),
+      kv('Via', c.via || 'direct')
+    ),
+    actions: [
+      {
+        text: 'Close this connection',
+        primary: true,
+        onclick: async () => {
+          const r = await App.port.closeConn(c.cid);
+          toast(r.closed ? 'Connection closed' : 'It had already closed');
+          App.render();
+        },
+      },
+      app ? { text: 'App info: block, bypass, exclude, isolate this app', onclick: () => App.go('app-info', { app }) } : null,
+      ip ? { text: `Block or trust this IP${app ? ' for this app' : ''}…`, onclick: () => ruleSheet('ips', app, ip, 0) } : null,
+      ip && port ? { text: `Block or trust ${ip}:${port}…`, onclick: () => ruleSheet('ips', app, ip, Number(port)) } : null,
+      c.domain ? { text: `Block or trust this domain${app ? ' for this app' : ''}…`, onclick: () => ruleSheet('domains', app, c.domain) } : null,
     ],
   });
 }
@@ -429,6 +464,7 @@ function dnsDetails(e) {
       kv('Time', new Date(e.at).toLocaleString()),
       kv('Query type', e.qtype ? `${rrName(e.qtype)} (${e.qtype})` : ''),
       kv('Answer', e.answer || 'no answer'),
+      e.country ? kv('Country', countryName(e.country)) : null,
       e.error ? kv('Failed', e.error) : null,
       kv('Resolver', e.via),
       kv('Latency', `${e.latencyMs} ms`),
