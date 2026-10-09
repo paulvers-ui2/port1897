@@ -84,8 +84,10 @@ func TestUserTokenKeepsAdminFilesOut(t *testing.T) {
 	}
 }
 
-// usque runs with the user token: not elevated, at medium integrity, the
-// Administrators group for deny only.
+// usque runs with the user token: at medium integrity, the Administrators
+// group for deny only, and no privilege but SeChangeNotify. (Windows keeps
+// the "elevated" flag on a restricted copy of an admin token; the groups,
+// privileges and integrity are what give rights.)
 func TestUserTokenStartsUnelevatedChildren(t *testing.T) {
 	needAdmin(t)
 	u, err := newUserToken()
@@ -115,8 +117,18 @@ func TestUserTokenStartsUnelevatedChildren(t *testing.T) {
 	}
 	defer tok.Close()
 
-	if tok.IsElevated() {
-		t.Error("the child is elevated")
+	name, err := windows.UTF16PtrFromString("SeChangeNotifyPrivilege")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changeNotify windows.LUID
+	if err := windows.LookupPrivilegeValue(nil, name, &changeNotify); err != nil {
+		t.Fatal(err)
+	}
+	for _, priv := range tokenInfo[windows.Tokenprivileges](t, tok, windows.TokenPrivileges).AllPrivileges() {
+		if priv.Luid != changeNotify {
+			t.Errorf("the child has a privilege besides SeChangeNotify: %+v", priv.Luid)
+		}
 	}
 	const mediumRID = 0x2000 // SECURITY_MANDATORY_MEDIUM_RID
 	if rid := integrityRID(t, tok); rid != mediumRID {
@@ -139,16 +151,21 @@ func TestUserTokenStartsUnelevatedChildren(t *testing.T) {
 
 func integrityRID(t *testing.T, tok windows.Token) uint32 {
 	t.Helper()
+	sid := tokenInfo[windows.Tokenmandatorylabel](t, tok, windows.TokenIntegrityLevel).Label.Sid
+	return sid.SubAuthority(uint32(sid.SubAuthorityCount()) - 1)
+}
+
+// tokenInfo reads one class of information about tok, as a T.
+func tokenInfo[T any](t *testing.T, tok windows.Token, class uint32) *T {
+	t.Helper()
 	var n uint32
-	_ = windows.GetTokenInformation(tok, windows.TokenIntegrityLevel, nil, 0, &n)
+	_ = windows.GetTokenInformation(tok, class, nil, 0, &n)
 	if n == 0 {
-		t.Fatal("no integrity level")
+		t.Fatalf("no token information of class %d", class)
 	}
 	buf := make([]byte, n)
-	if err := windows.GetTokenInformation(tok, windows.TokenIntegrityLevel, &buf[0], n, &n); err != nil {
+	if err := windows.GetTokenInformation(tok, class, &buf[0], n, &n); err != nil {
 		t.Fatal(err)
 	}
-	label := (*windows.Tokenmandatorylabel)(unsafe.Pointer(&buf[0])) //nolint:gosec // G103: the call fills a TOKEN_MANDATORY_LABEL
-	sid := label.Label.Sid
-	return sid.SubAuthority(uint32(sid.SubAuthorityCount()) - 1)
+	return (*T)(unsafe.Pointer(&buf[0])) //nolint:gosec // G103: the call fills the struct
 }
