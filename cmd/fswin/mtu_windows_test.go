@@ -70,6 +70,23 @@ func TestPlanMTU(t *testing.T) {
 	}
 }
 
+func TestParseMTU(t *testing.T) {
+	for in, want := range map[string]int{"1420": 1420, " 1280 ": 1280, "65535": 65535} {
+		if got, err := parseMTU(in); err != nil || got != want {
+			t.Errorf("parseMTU(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"65536", "-1", "auto", "", "99999999999999999999"} {
+		if _, err := parseMTU(in); err == nil {
+			t.Errorf("parseMTU(%q): no error", in)
+		}
+	}
+	// a hand-set MTU stays within 1280 and 1500 too
+	if p := planMTU(1500, "Wi-Fi", "", "", nil, 9000); p.Adapter != 1500 || p.Auto {
+		t.Errorf("-mtu 9000: %+v", p)
+	}
+}
+
 func TestClampMTU(t *testing.T) {
 	for in, want := range map[int]int{9000: 1500, 1500: 1500, 1492: 1492, 576: 1280} {
 		if got := clampMTU(in); got != want {
