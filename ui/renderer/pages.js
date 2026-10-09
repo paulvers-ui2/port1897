@@ -25,6 +25,10 @@ const DNS_TYPES = [
   { id: 'odoh', title: 'ODoH', sub: 'Oblivious DNS-over-HTTPS' },
 ];
 
+// Other DNS offers these two. The rest still work for a setting chosen
+// earlier (dnsCurrent, the engine), but are not offered any more.
+const OFFERED_DNS_TYPES = ['doh', 'dot'];
+
 const EXIT_LABEL = {
   none: 'Off',
   masque: 'Cloudflare WARP (MASQUE)',
@@ -250,7 +254,7 @@ PAGES['dns-type'] = () => {
     h(
       'div',
       { class: 'type-grid' },
-      DNS_TYPES.map((t) =>
+      DNS_TYPES.filter((t) => OFFERED_DNS_TYPES.includes(t.id)).map((t) =>
         h('button', { class: 'type-card' + (cur === t.id ? ' sel' : ''), type: 'button', onclick: () => App.go('dns-list', { type: t.id }) }, h('b', { text: t.title }), h('small', { text: t.sub }))
       )
     )
