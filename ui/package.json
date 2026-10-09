@@ -28,6 +28,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "history-worker.js",
       "renderer/**/*",
       "assets/**/*",
       "build/icon.png",

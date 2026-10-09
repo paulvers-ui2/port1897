@@ -19,6 +19,7 @@ const crypto = require('node:crypto');
 const http = require('node:http');
 const { execFile } = require('node:child_process');
 const { fileURLToPath } = require('node:url');
+const { Worker } = require('node:worker_threads');
 const nodeNet = require('node:net');
 const os = require('node:os');
 const dnsPromises = require('node:dns').promises;
@@ -1161,9 +1162,20 @@ function stats(range) {
   };
 }
 
+// history-worker.js, on its own thread: the flows of one app in the event
+// files.
+function scanHistory(files, want) {
+  return new Promise((resolve, reject) => {
+    const w = new Worker(path.join(__dirname, 'history-worker.js'), { workerData: { files, want } });
+    w.once('message', resolve);
+    w.once('error', reject);
+    w.once('exit', (code) => reject(new Error(`history scan stopped (${code})`))); // after a message: no effect
+  });
+}
+
 // Most contacted domains and IPs of one app, from recent events (memory and
-// the last two days of event files), for App info.
-function appStats(appName) {
+// the last two days of event files, read on a worker thread), for App info.
+async function appStats(appName) {
   const want = String(appName || '').toLowerCase();
   const domains = Object.create(null);
   const ips = Object.create(null);
@@ -1181,22 +1193,11 @@ function appStats(appName) {
       if (e.blocked) t.blocked++;
     }
   };
-  for (let d = 1; d >= 0; d--) {
-    const day = new Date(Date.now() - d * 24 * HOUR).toISOString().slice(0, 10);
-    try {
-      const text = fs.readFileSync(path.join(histDir(), `events-${day}.jsonl`), 'utf8');
-      if (text.length > 64 * 1024 * 1024) continue;
-      for (const line of text.split(/\r?\n/)) {
-        if (!line || !line.toLowerCase().includes(want)) continue;
-        try {
-          take(JSON.parse(line));
-        } catch {
-          // a torn line
-        }
-      }
-    } catch {
-      // no file that day
-    }
+  const files = [1, 0].map((d) => path.join(histDir(), `events-${new Date(Date.now() - d * 24 * HOUR).toISOString().slice(0, 10)}.jsonl`));
+  try {
+    for (const e of await scanHistory(files, want)) take(e);
+  } catch (e) {
+    appLog('history scan failed:', e);
   }
   for (const e of hist.buf) take(e);
   const top = (obj) => Object.entries(obj).map(([name, v]) => ({ name, ...v })).sort((a, b) => b.n + b.blocked - (a.n + a.blocked)).slice(0, 30);
@@ -1346,12 +1347,22 @@ async function statusLoop() {
 let logOffset = 0;
 
 function engineLogText(filter) {
+  // the last 4 MB is plenty for 400 lines; a verbose log grows to many MB,
+  // and reading all of it held the app up at every refresh
   let text = '';
+  let fd;
   try {
-    const all = fs.readFileSync(logFile(), 'utf8');
-    text = all.slice(Math.min(logOffset, all.length));
+    fd = fs.openSync(logFile(), 'r');
+    const size = fs.fstatSync(fd).size;
+    const start = Math.max(Math.min(logOffset, size), size - (4 << 20));
+    const buf = Buffer.alloc(size - start);
+    fs.readSync(fd, buf, 0, buf.length, start);
+    text = buf.toString('utf8');
+    if (start > logOffset) text = text.slice(text.indexOf('\n') + 1); // its first line is cut
   } catch {
     // no log yet
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
   }
   let lines = text.split(/\r?\n/);
   if (filter === 'usque') {
@@ -2108,6 +2119,7 @@ function selfTest() {
         check();
       })`);
       if (title !== 'AuroraVPN') return fail(`the page did not come up (${JSON.stringify(title)})`);
+      await scanHistory([], 'self-test'); // the worker loads from the packaged app
       appLog('self-test ok');
       app.exit(0);
     } catch (e) {
