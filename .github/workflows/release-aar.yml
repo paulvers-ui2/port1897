@@ -16,8 +16,6 @@ on:
         type: string
 
 env:
-  NDK_VERSION: "28.2.13676358"
-  PLATFORM_VERSION: "android-36"
   GOTOOLCHAIN: local
 
 jobs:
@@ -38,37 +36,21 @@ jobs:
           go-version-file: go.mod # its toolchain line: the patched Go every build uses
           cache: false # release build
 
-      - name: Set up JDK (for Android/gomobile toolchain)
-        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
-        with:
-          distribution: "temurin"
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
-
-      - name: Install Android NDK
-        run: |
-          sdkmanager --install "platforms;${{ env.PLATFORM_VERSION }}" "ndk;${{ env.NDK_VERSION }}"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-
+      # The runner already has the Android SDK, the latest NDK and a JDK: the
+      # AAR is built the way go.yml builds it (setup-android@v3 broke when the
+      # SDK dropped its old "tools" package).
       - name: Build AAR
         run: |
-          make clean
-          make intra
-
-      - name: Verify build output
-        run: |
-          ls -la build/intra/
-          test -f build/intra/tun2socks.aar
+          chmod +x make-aar
+          ./make-aar nogo release
+          test -f firestack.aar
 
       - name: Upload build artifact (CI record)
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: firestack-aar
           path: |
-            build/intra/tun2socks.aar
+            firestack.aar
             build/intra/tun2socks-sources.jar
           if-no-files-found: error
 
@@ -79,7 +61,7 @@ jobs:
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           mkdir -p release
-          cp build/intra/tun2socks.aar "release/firestack-android-$TAG.aar"
+          cp firestack.aar "release/firestack-android-$TAG.aar"
           if [ -f build/intra/tun2socks-sources.jar ]; then
             cp build/intra/tun2socks-sources.jar "release/firestack-android-$TAG-sources.jar"
           fi
