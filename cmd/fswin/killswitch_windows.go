@@ -28,7 +28,8 @@ type killSwitch struct {
 	mu   sync.Mutex
 	on   bool
 	opts wfp.Options
-	full bool // all IPv4 traffic goes through the tunnel
+	full bool  // all IPv4 traffic goes through the tunnel
+	err  error // the last change's failure, for the status; nil after a success
 }
 
 func newKillSwitch(opts wfp.Options, full bool) *killSwitch {
@@ -43,6 +44,11 @@ func (k *killSwitch) set(on, allowLAN bool) error {
 	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
+	k.err = k.setLocked(on, allowLAN)
+	return k.err
+}
+
+func (k *killSwitch) setLocked(on, allowLAN bool) error {
 	if !on {
 		if !k.on {
 			return nil
@@ -59,10 +65,24 @@ func (k *killSwitch) set(on, allowLAN bool) error {
 	o := k.opts
 	o.AllowLAN = allowLAN
 	if err := wfp.Enable(o); err != nil { // replaces the rules if already on
+		k.on = false // Enable removed the old rules before it failed
 		return err
 	}
 	k.on, k.opts = true, o
 	return nil
+}
+
+// lastError is why the kill switch last failed to change, or "".
+func (k *killSwitch) lastError() string {
+	if k == nil {
+		return ""
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.err == nil {
+		return ""
+	}
+	return k.err.Error()
 }
 
 func (k *killSwitch) isOn() bool {

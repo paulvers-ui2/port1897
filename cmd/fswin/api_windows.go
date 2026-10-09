@@ -39,6 +39,8 @@ type apiStatus struct {
 	NRPT      bool     `json:"nrpt"`
 	AllowLAN  bool     `json:"allowLan"`
 	Kill      bool     `json:"killSwitch"`
+	// why the kill switch is not on, when turning it on failed
+	KillError string   `json:"killSwitchError,omitempty"`
 	Paused    int64    `json:"pausedUntil"` // unix millis; 0 when not paused
 	Dial      string   `json:"dial"`        // anti-censorship dial strategy
 	Conflicts []string `json:"conflicts"`   // other VPNs that break ours
@@ -75,6 +77,31 @@ type apiServer struct {
 	host  string // expected Host header, ip:port
 	info  func() apiStatus
 	stop  func()
+}
+
+// apiPreflight checks, before fswin touches the system, that the control
+// API can start: a free loopback address (an engine still running holds it)
+// and a readable token.
+func apiPreflight(addr, tokenFile string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return err
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return errors.New("-api must be a loopback address like 127.0.0.1:47897")
+	}
+	tok, err := os.ReadFile(tokenFile)
+	if err != nil {
+		return fmt.Errorf("-token-file: %w", err)
+	}
+	if len(strings.TrimSpace(string(tok))) < 16 {
+		return errors.New("-token-file: token must be at least 16 characters")
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("%w (is another engine still running?)", err)
+	}
+	return ln.Close()
 }
 
 // serveAPI starts the control API on addr (loopback only).
@@ -250,6 +277,7 @@ func statusOf(b *bridge, o options, started time.Time, exitID, dnsLabel string) 
 		NRPT:      o.nrpt,
 		AllowLAN:  o.allowLAN,
 		Kill:      b.kill.isOn(),
+		KillError: b.kill.lastError(),
 		DNS: dnsStat{
 			Server:  dnsLabel,
 			Type:    o.dnsType,

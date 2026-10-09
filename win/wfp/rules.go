@@ -148,22 +148,28 @@ func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight ui
 	}
 
 	//
-	// Second condition is the SECURITY_DESCRIPTOR of the current process.
-	// This prevents other processes hosted in the same exe from matching this filter.
+	// Second condition, for a Windows service, is the SECURITY_DESCRIPTOR of
+	// its service SID: it keeps other services hosted in the same exe from
+	// matching this filter. fswin runs as an elevated program, which has no
+	// service SID (ERROR_NO_SUCH_GROUP), so the exe path alone identifies it.
 	//
+	numConditions := 1
+	var sdBlob wtFwpByteBlob
 	sd, err := getCurrentProcessSecurityDescriptor()
-	if err != nil {
+	switch {
+	case err == nil:
+		sdBlob = wtFwpByteBlob{sd.Length(), (*byte)(unsafe.Pointer(sd))}
+		conditions[1] = wtFwpmFilterCondition0{
+			fieldKey:  cFWPM_CONDITION_ALE_USER_ID,
+			matchType: cFWP_MATCH_EQUAL,
+			conditionValue: wtFwpConditionValue0{
+				_type: cFWP_SECURITY_DESCRIPTOR_TYPE,
+				value: uintptr(unsafe.Pointer(&sdBlob)),
+			},
+		}
+		numConditions = 2
+	case !errors.Is(err, windows.ERROR_NO_SUCH_GROUP):
 		return wrapErr(err)
-	}
-
-	sdBlob := wtFwpByteBlob{sd.Length(), (*byte)(unsafe.Pointer(sd))}
-	conditions[1] = wtFwpmFilterCondition0{
-		fieldKey:  cFWPM_CONDITION_ALE_USER_ID,
-		matchType: cFWP_MATCH_EQUAL,
-		conditionValue: wtFwpConditionValue0{
-			_type: cFWP_SECURITY_DESCRIPTOR_TYPE,
-			value: uintptr(unsafe.Pointer(&sdBlob)),
-		},
 	}
 
 	//
@@ -174,7 +180,7 @@ func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight ui
 		subLayerKey:         baseObjects.filters,
 		weight:              filterWeight(weight),
 		flags:               cFWPM_FILTER_FLAG_CLEAR_ACTION_RIGHT,
-		numFilterConditions: uint32(len(conditions)),
+		numFilterConditions: uint32(numConditions),
 		filterCondition:     (*wtFwpmFilterCondition0)(unsafe.Pointer(&conditions)),
 		action: wtFwpmAction0{
 			_type: cFWP_ACTION_PERMIT,

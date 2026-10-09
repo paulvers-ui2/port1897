@@ -160,11 +160,16 @@ function renderHome() {
   $('pause-btn').title = paused ? 'Paused: open' : 'Pause';
 
   const kill = killSwitchOn();
+  // protection runs without the kill switch when Windows refused it
+  const killErr = (on && cfg.killSwitch && s.killSwitchError) || '';
   const killBtn = $('kill-btn');
-  killBtn.classList.toggle('on', kill);
+  killBtn.classList.toggle('on', kill && !killErr);
+  killBtn.classList.toggle('failed', !!killErr);
   killBtn.setAttribute('aria-pressed', String(kill));
-  setText('kill-label', kill ? 'Kill switch on' : 'Kill switch off');
-  killBtn.title = kill ? 'Only port1897 reaches the internet. Click to turn off.' : 'Block the internet outside port1897. Click to turn on.';
+  setText('kill-label', killErr ? 'Kill switch failed' : kill ? 'Kill switch on' : 'Kill switch off');
+  killBtn.title = killErr
+    ? `The kill switch could not be turned on: ${killErr}. Click to try again.`
+    : kill ? 'Only port1897 reaches the internet. Click to turn off.' : 'Block the internet outside port1897. Click to turn on.';
 
   const prot = $('protection');
   prot.classList.toggle('on', on && !paused);
@@ -182,9 +187,12 @@ function renderHome() {
 
   // another VPN (Proton VPN, say) claiming all DNS or traffic breaks ours
   const conflicts = (on && s.conflicts) || [];
+  const warnings = [];
+  if (conflicts.length) warnings.push(`Another VPN is connected and DNS will fail. Disconnect it, then restart protection. (${conflicts.join('; ')})`);
+  if (killErr) warnings.push(`The kill switch is not on, so apps can still reach the internet outside port1897 if the tunnel stops. Windows said: ${killErr}`);
   const warn = $('conflict-warn');
-  warn.hidden = !conflicts.length;
-  warn.textContent = conflicts.length ? `Another VPN is connected and DNS will fail. Disconnect it, then restart protection. (${conflicts.join('; ')})` : '';
+  warn.hidden = !warnings.length;
+  warn.textContent = warnings.join('\n\n');
 }
 
 async function toggleEngine(wantOn) {

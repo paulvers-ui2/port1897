@@ -205,6 +205,7 @@ button { cursor: pointer; }
 }
 .kill-btn:hover { border-color: currentColor; }
 .kill-btn.on { border-color: var(--bad); color: var(--bad); }
+.kill-btn.failed { border-style: dashed; border-color: #ffb74d; color: #ffb74d; }
 .kill-ico { display: inline-flex; width: 18px; height: 18px; }
 .kill-ico svg { width: 18px; height: 18px; }
 .start-btn button { border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer; }
