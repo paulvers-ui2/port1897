@@ -548,14 +548,6 @@ PAGES.wireguard = () => {
   const list = h('div', {}, note('Loading…'));
   App.port.wg.list().then((items) => {
     list.replaceChildren(
-      card(
-        row({
-          ico: 'ic_wireguard_icon',
-          title: 'Cloudflare WARP (free)',
-          sub: 'WireGuard to Cloudflare. Registers an anonymous account on first use.',
-          right: toggle(s.exit === 'warp', (on) => save({ exit: on ? 'warp' : 'none' })),
-        })
-      ),
       items.length
         ? card(
             items.map((w) =>
