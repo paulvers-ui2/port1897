@@ -28,7 +28,7 @@ func forEachAdapter(family uint32, f func(aa *windows.IpAdapterAddresses) bool) 
 	size := uint32(15 << 10)
 	for range 4 {
 		buf := make([]uint64, (size+7)/8)
-		first := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0]))
+		first := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0])) //nolint:gosec // G103: reviewed: aligned buffer, kept alive below
 		err := windows.GetAdaptersAddresses(family, windows.GAA_FLAG_SKIP_ANYCAST, 0, first, &size)
 		if errors.Is(err, windows.ERROR_BUFFER_OVERFLOW) {
 			continue

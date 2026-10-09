@@ -13,6 +13,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"unsafe"
@@ -207,8 +209,14 @@ func TestUserTokenChildrenRunWithAnElevatedDefaultDACL(t *testing.T) {
 
 func integrityRID(t *testing.T, tok windows.Token) uint32 {
 	t.Helper()
-	sid := tokenInfo[windows.Tokenmandatorylabel](t, tok, windows.TokenIntegrityLevel).Label.Sid
-	return sid.SubAuthority(uint32(sid.SubAuthorityCount()) - 1)
+	// S-1-16-<level>, read from the string: SID.SubAuthority returns a
+	// pointer from a syscall, which Go's pointer checks (race builds) refuse
+	s := tokenInfo[windows.Tokenmandatorylabel](t, tok, windows.TokenIntegrityLevel).Label.Sid.String()
+	rid, err := strconv.ParseUint(s[strings.LastIndexByte(s, '-')+1:], 10, 32)
+	if err != nil {
+		t.Fatalf("integrity SID %q: %v", s, err)
+	}
+	return uint32(rid)
 }
 
 // tokenInfo reads one class of information about tok, as a T.

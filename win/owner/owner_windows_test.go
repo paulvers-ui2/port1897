@@ -9,6 +9,7 @@
 package owner
 
 import (
+	"errors"
 	"net"
 	"net/netip"
 	"os"
@@ -67,7 +68,7 @@ func TestUDP4(t *testing.T) {
 			t.Fatalf("%v: pid %d, %v; want %d", local, pid, err, os.Getpid())
 		}
 	}
-	if _, err := UDP4(netip.MustParseAddrPort("127.0.0.1:1")); err != ErrNotFound {
+	if _, err := UDP4(netip.MustParseAddrPort("127.0.0.1:1")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("port 1: %v, want ErrNotFound", err)
 	}
 }

@@ -57,8 +57,8 @@ type snapshot struct {
 
 var tcpSnap, udpSnap atomic.Pointer[snapshot]
 
-// rows returns a copy of the table no older than snapTTL, or a fresh one.
-func rows(snap *atomic.Pointer[snapshot], proc *windows.LazyProc, class uintptr, fresh bool) ([]byte, error) {
+// tableCopy returns a copy of the table no older than snapTTL, or a fresh one.
+func tableCopy(snap *atomic.Pointer[snapshot], proc *windows.LazyProc, class uintptr, fresh bool) ([]byte, error) {
 	if s := snap.Load(); !fresh && s != nil && time.Since(s.at) < snapTTL {
 		return s.buf, nil
 	}
@@ -76,14 +76,14 @@ func TCP4(local, remote netip.AddrPort) (uint32, error) {
 		return 0, errUnsupported
 	}
 	// a recent copy answers only for this very connection
-	buf, err := rows(&tcpSnap, procGetExtendedTcpTable, tcpTableOwnerPidAll, false)
+	buf, err := tableCopy(&tcpSnap, procGetExtendedTcpTable, tcpTableOwnerPidAll, false)
 	if err != nil {
 		return 0, err
 	}
 	if pid, exact := tcpLookup(buf, local, remote); exact && pid != 0 {
 		return pid, nil
 	}
-	if buf, err = rows(&tcpSnap, procGetExtendedTcpTable, tcpTableOwnerPidAll, true); err != nil {
+	if buf, err = tableCopy(&tcpSnap, procGetExtendedTcpTable, tcpTableOwnerPidAll, true); err != nil {
 		return 0, err
 	}
 	if pid, exact := tcpLookup(buf, local, remote); exact || pid != 0 {
@@ -99,7 +99,7 @@ func tcpLookup(buf []byte, local, remote netip.AddrPort) (pid uint32, exact bool
 	rows := buf[4:]
 	var portOnly uint32
 	for i := 0; i < n && (i+1)*tcpRowSize <= len(rows); i++ {
-		r := rows[i*tcpRowSize : (i+1)*tcpRowSize]
+		r := [tcpRowSize]byte(rows[i*tcpRowSize:])
 		if addrPort(r[4:8], r[8:12]) != local {
 			if port(r[8:12]) == local.Port() && portOnly == 0 {
 				portOnly = binary.LittleEndian.Uint32(r[20:24])
@@ -122,14 +122,14 @@ func UDP4(local netip.AddrPort) (uint32, error) {
 	// UDP sockets mostly bind the wildcard address, so a recent copy answers
 	// for local's port: another program would have to reuse that port within
 	// snapTTL to be mistaken for the first
-	buf, err := rows(&udpSnap, procGetExtendedUdpTable, udpTableOwnerPid, false)
+	buf, err := tableCopy(&udpSnap, procGetExtendedUdpTable, udpTableOwnerPid, false)
 	if err != nil {
 		return 0, err
 	}
 	if pid := udpLookup(buf, local); pid != 0 {
 		return pid, nil
 	}
-	if buf, err = rows(&udpSnap, procGetExtendedUdpTable, udpTableOwnerPid, true); err != nil {
+	if buf, err = tableCopy(&udpSnap, procGetExtendedUdpTable, udpTableOwnerPid, true); err != nil {
 		return 0, err
 	}
 	if pid := udpLookup(buf, local); pid != 0 {
@@ -145,7 +145,7 @@ func udpLookup(buf []byte, local netip.AddrPort) uint32 {
 	rows := buf[4:]
 	var wildcard uint32
 	for i := 0; i < n && (i+1)*udpRowSize <= len(rows); i++ {
-		r := rows[i*udpRowSize : (i+1)*udpRowSize]
+		r := [udpRowSize]byte(rows[i*udpRowSize:])
 		ap := addrPort(r[0:4], r[4:8])
 		if ap.Port() != local.Port() {
 			continue
