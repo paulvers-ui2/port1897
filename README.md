@@ -45,8 +45,7 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
 - **App window** (`ui/`): an Electron app styled after the Android home screen, with
   a tray icon. Download the installer or the portable exe from the
   [latest release](https://github.com/paulvers-ui2/port1897/releases/latest);
-  every change merged into `main` is published there as a new version, which the
-  app's update check finds.
+  every change merged into `main` is published there as a new version.
 
 Not yet: a background service, IPv6, country and network-provider stats.
 See the [roadmap](#roadmap).

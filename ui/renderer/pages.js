@@ -915,35 +915,6 @@ PAGES.settings = () => {
   level.addEventListener('change', () => save({ logLevel: Number(level.value) }));
   return screen(
     'Settings',
-    sectionLabel('General'),
-    card(
-      h(
-        'div',
-        { class: 'row' },
-        icon('ic_backup_restore', 'row-ico'),
-        h(
-          'span',
-          { class: 'row-text' },
-          h('span', { class: 'row-title', text: 'Backup & Restore' }),
-          h('span', { class: 'row-sub', text: 'Manually back up or restore app data and settings. Backups include WireGuard and WARP keys: keep them private.' }),
-          h('div', { class: 'actions' }, btn('Backup', async () => {
-            const r = await App.port.backup();
-            if (r.ok) toast('Backup saved');
-            else if (r.error) toast(r.error);
-          }), btn('Restore', async () => {
-            if (!(await confirmDialog('Restore', 'Replace the current settings, WireGuard configs and WARP identities with the backup?', 'Restore'))) return;
-            const r = await App.port.restore();
-            if (r.ok) {
-              await App.reload();
-              toast('Restored');
-            } else if (r.error) toast(r.error);
-          }))
-        )
-      )
-    ),
-    card(
-      row({ ico: 'ic_refresh_white', title: 'Check for app updates', sub: 'Automatically check for app updates once a week, on github.com.', right: h('div', { class: 'actions' }, btn('Check now', checkUpdateNow), toggle(s.checkUpdates, (v) => save({ checkUpdates: v }, true), 'Check for app updates')) })
-    ),
     sectionLabel('Logs'),
     card(
       switchRow({ ico: 'ic_logs', title: 'Enable on-device logging', sub: 'Store DNS and firewall logs and stats on this PC (7 days), for the Stats and Logs screens.', value: s.history, onchange: (v) => save({ history: v }, true) }),
