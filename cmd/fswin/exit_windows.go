@@ -24,7 +24,6 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -84,7 +83,7 @@ func wgQuickToUAPI(conf string) (string, error) {
 				// wg-quick's MTU is the size of a packet inside the tunnel;
 				// firestack's is the size on the link, and it keeps
 				// wgOverhead of that for WireGuard (mtu_windows.go)
-				if m, err := strconv.Atoi(v); err == nil && m > 0 {
+				if m, err := parseMTU(v); err == nil && m > 0 {
 					fmt.Fprintf(&iface, "mtu=%d\n", m+wgOverhead)
 				} else {
 					fmt.Fprintf(&iface, "mtu=%s\n", v)

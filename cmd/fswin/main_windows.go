@@ -124,7 +124,7 @@ func main() {
 	var o options
 	var golog int
 	flag.StringVar(&o.name, "name", "AuroraVPN", "Wintun adapter name")
-	flag.IntVar(&o.mtu, "mtu", 0, "adapter MTU; 0: automatic, from the network and the exit (mtu_windows.go)")
+	flag.IntVar(&o.mtu, "mtu", 0, "adapter MTU, 1280 to 1500; 0: automatic, from the network and the exit (mtu_windows.go)")
 	flag.StringVar(&o.doh, "doh", "https://cloudflare-dns.com/dns-query", "DoH server URL")
 	flag.StringVar(&o.dohips, "doh-ips", "1.1.1.1,1.0.0.1", "comma-separated IPs of the DoH server")
 	flag.BoolVar(&o.setdns, "set-dns", true, "point the adapter's DNS at the tunnel and give it the lowest metric")

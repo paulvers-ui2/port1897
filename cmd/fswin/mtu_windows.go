@@ -77,6 +77,13 @@ func linkMTU(skip uint32) (int, string) {
 	return clampMTU(int(m)), fmt.Sprintf("%s %d", name, m)
 }
 
+// parseMTU reads an MTU: 16 bits at most, as in an IP header, so it fits
+// whatever it is converted to (the adapter's MTU is a uint32).
+func parseMTU(v string) (int, error) {
+	m, err := strconv.ParseUint(strings.TrimSpace(v), 10, 16)
+	return int(m), err
+}
+
 func clampMTU(m int) int {
 	return min(max(m, minMTU), maxMTU)
 }
@@ -106,7 +113,7 @@ func planMTU(link int, linkWhy, exitID, cfg string, us *usqueSetup, adapter int)
 		p.Exit = flagInt(us, warpMTU, "--exit-mtu")
 		why += fmt.Sprintf(", WARP chain exit %d", p.Exit)
 	}
-	p.Adapter = adapter
+	p.Adapter = clampMTU(adapter) // by hand: still 1280 to 1500
 	if p.Auto {
 		p.Adapter = clampMTU(min(p.Exit, link))
 	}
@@ -120,7 +127,7 @@ func planMTU(link int, linkWhy, exitID, cfg string, us *usqueSetup, adapter int)
 func uapiMTU(cfg string) int {
 	for line := range strings.Lines(cfg) {
 		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "mtu="); ok {
-			if m, err := strconv.Atoi(v); err == nil && m > 0 {
+			if m, err := parseMTU(v); err == nil && m > 0 {
 				return m
 			}
 		}
@@ -143,7 +150,7 @@ func flagInt(us *usqueSetup, dflt int, names ...string) int {
 			} else if after, found := strings.CutPrefix(a, n+"="); found {
 				v, ok = after, true
 			}
-			if m, err := strconv.Atoi(v); ok && err == nil && m > 0 {
+			if m, err := parseMTU(v); ok && err == nil && m > 0 {
 				return m
 			}
 		}
