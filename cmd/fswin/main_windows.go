@@ -114,6 +114,10 @@ type options struct {
 	dialTimeout  int    // seconds; 0 for the default
 	keepAlive    bool   // shorter TCP keep alive
 	eim          bool   // UDP endpoint-independent mapping and filtering
+
+	service    string // install, uninstall or run AuroraVPN Service (service_windows.go)
+	serviceApp string // with -service install: the app allowed to use it
+	stopHandle uint64 // set by the service: an event that stops the engine
 }
 
 func main() {
@@ -170,6 +174,9 @@ func main() {
 	flag.IntVar(&o.dialTimeout, "dial-timeout", 0, "idle timeout for TCP and UDP sockets, in seconds; 0 for firestack's default")
 	flag.BoolVar(&o.keepAlive, "tcp-keepalive", false, "shorter TCP keep alive: quickly close TCP sockets with no recent activity")
 	flag.BoolVar(&o.eim, "eim", false, "endpoint-independent mapping and filtering for UDP (fixed port for all destinations; helps games and calls)")
+	flag.StringVar(&o.service, "service", "", "install, uninstall or run AuroraVPN Service, which starts the engine for the app without a UAC prompt")
+	flag.StringVar(&o.serviceApp, "app", "", "with -service install: the path of AuroraVPN.exe, the only program the service answers")
+	flag.Uint64Var(&o.stopHandle, "stop-handle", 0, "set by AuroraVPN Service: an inherited event that, once set, stops the engine")
 	showVersion := flag.Bool("version", false, "print the build and exit")
 	flag.Parse()
 	if *showVersion {
@@ -177,6 +184,14 @@ func main() {
 		return
 	}
 	o.golog = int32(golog)
+
+	if o.service != "" {
+		if err := serviceMain(o.service, o.serviceApp); err != nil {
+			fmt.Fprintln(os.Stderr, "fswin: -service:", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// the app's files are opened with the user's rights (asuser_windows.go)
 	tok, err := newUserToken()
@@ -200,6 +215,18 @@ func main() {
 }
 
 func run(o options) error {
+	// AuroraVPN Service asks the engine it started to stop with an event
+	serviceStop := make(chan struct{})
+	if o.stopHandle != 0 {
+		go func() {
+			if ev, err := windows.WaitForSingleObject(windows.Handle(o.stopHandle), windows.INFINITE); err == nil && ev == windows.WAIT_OBJECT_0 {
+				close(serviceStop)
+			}
+		}()
+	}
+	if !validAdapterName(o.name) {
+		return fmt.Errorf("-name %q: up to 64 letters, digits, spaces, dots, dashes or underscores", o.name)
+	}
 	if o.cleanup {
 		errDNS := dnspolicy.Remove()
 		errKill := wfp.Disable()
@@ -473,6 +500,9 @@ func run(o options) error {
 		case <-apiStop:
 			fmt.Println("fswin: stopping (requested by the app)")
 			return nil
+		case <-serviceStop:
+			fmt.Println("fswin: stopping (requested by AuroraVPN Service)")
+			return nil
 		case <-tick.C:
 			if st, err := t.Stat(); err == nil && st != nil {
 				b.logf("tun   %s", st.TUNSt.EpStats)
@@ -507,9 +537,19 @@ func fullTunnel(name string) error {
 	})
 }
 
+// systemTool is a program in System32, never one found through PATH, which
+// the user's environment sets.
+func systemTool(name string) string {
+	if dir, err := windows.GetSystemDirectory(); err == nil {
+		return filepath.Join(dir, name)
+	}
+	return name
+}
+
 func netsh(cmds [][]string) error {
 	for _, args := range cmds {
-		out, err := exec.Command("netsh", args...).CombinedOutput()
+		// netsh from System32, with plain arguments
+		out, err := exec.Command(systemTool("netsh.exe"), args...).CombinedOutput() //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 		if err != nil {
 			return fmt.Errorf("netsh %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		}

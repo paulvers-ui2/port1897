@@ -778,6 +778,52 @@ function launchElevated(exe, args) {
   });
 }
 
+// ---------- AuroraVPN Service ----------
+
+// The service (fswin -service, installed with the app) starts the engine for
+// an administrator without a UAC prompt; its pipe answers only the installed
+// AuroraVPN.exe. Without it (the portable app, a build run from source, an
+// older install) or when it refuses (a standard user), the engine starts
+// through a UAC prompt as before. Resolves with the service's reply, or null
+// when there is no service.
+const SERVICE_PIPE = String.raw`\\.\pipe\AuroraVPN`;
+
+function serviceCallOnce(req, timeout) {
+  return new Promise((resolve) => {
+    let buf = '';
+    let settled = false;
+    const sock = nodeNet.connect(SERVICE_PIPE);
+    const done = (v) => {
+      if (settled) return;
+      settled = true;
+      sock.destroy();
+      resolve(v);
+    };
+    sock.setTimeout(timeout, () => done({ ok: false, error: 'AuroraVPN Service did not answer.' }));
+    sock.on('error', (e) => done(e.code === 'ENOENT' ? null : { ok: false, busy: e.code === 'EBUSY', error: `AuroraVPN Service: ${e.message}` }));
+    sock.on('connect', () => sock.write(JSON.stringify(req) + '\n'));
+    sock.on('data', (d) => {
+      buf += d;
+      if (buf.length > 1 << 16) done({ ok: false, error: 'AuroraVPN Service: reply too long' });
+    });
+    sock.on('end', () => {
+      try {
+        done(JSON.parse(buf));
+      } catch {
+        done({ ok: false, error: 'AuroraVPN Service gave no reply.' });
+      }
+    });
+  });
+}
+
+async function serviceCall(req, timeout = 70000) {
+  for (let i = 0; ; i++) {
+    const r = await serviceCallOnce(req, timeout);
+    if (!(r && r.busy) || i >= 3) return r;
+    await new Promise((ok) => setTimeout(ok, 300)); // every pipe instance busy: a moment
+  }
+}
+
 // alive reports whether process pid still runs. An elevated process cannot
 // be signalled from here (EPERM), which still means it exists.
 function alive(pid) {
@@ -841,10 +887,18 @@ async function startEngineOnce() {
     }
   }
   let pid = 0;
-  try {
-    pid = await launchElevated(exe, engineArgs(s));
-  } catch (e) {
-    return { ok: false, error: e.message };
+  const args = engineArgs(s);
+  const svc = await serviceCall({ cmd: 'start', args });
+  if (svc && svc.ok) {
+    pid = svc.pid || 0;
+    appLog(`engine ${pid} started by AuroraVPN Service`);
+  } else {
+    if (svc) appLog('AuroraVPN Service did not start the engine; asking through UAC:', svc.error);
+    try {
+      pid = await launchElevated(exe, args);
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
   }
   // WARP registration and the usque chain can take a while on first use; an
   // engine that exits instead is reported at once, with its own reason
@@ -1484,6 +1538,8 @@ ipcMain.handle('engine:stop', () => stopEngine());
 // Removes a kill switch (and DNS rule) left behind if the engine crashed.
 ipcMain.handle('engine:cleanup', async () => {
   if (await engineStatus()) return { ok: false, error: 'Stop protection first.' };
+  const svc = await serviceCall({ cmd: 'cleanup' });
+  if (svc && svc.ok) return { ok: true };
   try {
     await launchElevated(enginePath(), ['-cleanup']);
     return { ok: true };

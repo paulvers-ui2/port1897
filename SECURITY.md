@@ -32,10 +32,31 @@ them.
 
 ## How the app is protected
 
-AuroraVPN for Windows has two parts: the app window (Electron), which runs
-with the user's rights, and the engine (`fswin.exe`, firestack), which needs
-admin rights to create the tunnel adapter, routes, DNS rules and the kill
-switch, and is started through a UAC prompt.
+AuroraVPN for Windows has three parts:
+- the app window (Electron), which runs with the user's rights;
+- the engine (`fswin.exe`, firestack), which needs admin rights to create the
+  tunnel adapter, routes, DNS rules and the kill switch;
+- AuroraVPN Service (`fswin.exe -service run`, LocalSystem), installed with
+  the app, which starts the engine without a UAC prompt each time.
+
+**AuroraVPN Service**
+- **Install:** the installer is per-machine (Program Files) and sets the
+  service up once, from a folder only SYSTEM and administrators may change.
+  The service locks that folder down itself, in case it was installed
+  elsewhere.
+- **Who it answers:** its named pipe (`\\.\pipe\AuroraVPN`) refuses
+  remote clients and anyone but SYSTEM, administrators and interactive users.
+  It answers only the installed `AuroraVPN.exe`, checked by the client
+  process's image path, and only for administrators. Standard users are
+  refused, as UAC would refuse them.
+- **What it starts:** the engine from its own folder, with the user's own
+  elevated token (the one a UAC prompt hands out), in the user's session and
+  with the user's environment. That is the engine of a UAC prompt, so
+  everything below still holds. Flags that would pick a program to run are
+  refused. The engine calls `netsh` and PowerShell from System32, never
+  through `PATH`. Every request is answered on its own thread.
+- **Without it** (the portable app, or a standard user), the engine starts
+  through a UAC prompt, as before.
 
 **The engine**
 - **Control API:** loopback only. Every request needs the per-install
@@ -71,11 +92,14 @@ switch, and is started through a UAC prompt.
   (`go.sum`) and usque (a pinned commit) are pinned with hashes.
 
 **Known limits**
-- **Install location:** the installer installs for the current user, into a
-  folder that user can write. Malware already running as the user could
-  replace the engine there before the next UAC prompt. A per-machine engine
-  installed as a Windows service, with a locked-down named pipe instead of
-  the loopback API, would close this. It is the planned next step.
+- **Control by the user's programs:** with the service, programs running as
+  an administrator account, even unelevated, can turn protection on or off
+  and change its settings without a prompt. That is how other VPN services
+  work. They still cannot run their own code with admin rights through it.
+- **The portable app** runs from a folder the user can write, and starts
+  the engine through a UAC prompt from there.
+- **Before sign-in:** the engine runs in the user's session, so protection
+  starts when the user signs in, not at boot.
 - **Code signing:** the files are not code-signed.
 
 **Continuous checks**
