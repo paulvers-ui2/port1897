@@ -1,12 +1,12 @@
 {
   "name": "port1897",
-  "productName": "port1897",
+  "productName": "AuroraVPN",
   "version": "0.1.0",
   "description": "Firewall, encrypted DNS and free VPN for Windows, built on firestack",
   "main": "main.js",
   "license": "MPL-2.0",
   "private": true,
-  "author": "port1897 contributors",
+  "author": "AuroraVPN contributors",
   "homepage": "https://github.com/paulvers-ui2/port1897",
   "scripts": {
     "start": "electron .",
@@ -21,7 +21,7 @@
   },
   "build": {
     "appId": "io.github.port1897",
-    "productName": "port1897",
+    "productName": "AuroraVPN",
     "directories": {
       "output": "dist"
     },

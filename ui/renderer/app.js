@@ -169,7 +169,7 @@ function renderHome() {
   setText('kill-label', killErr ? 'Kill switch failed' : kill ? 'Kill switch on' : 'Kill switch off');
   killBtn.title = killErr
     ? `The kill switch could not be turned on: ${killErr}. Click to try again.`
-    : kill ? 'Only port1897 reaches the internet. Click to turn off.' : 'Block the internet outside port1897. Click to turn on.';
+    : kill ? 'Only AuroraVPN reaches the internet. Click to turn off.' : 'Block the internet outside AuroraVPN. Click to turn on.';
 
   const prot = $('protection');
   prot.classList.toggle('on', on && !paused);
@@ -189,7 +189,7 @@ function renderHome() {
   const conflicts = (on && s.conflicts) || [];
   const warnings = [];
   if (conflicts.length) warnings.push(`Another VPN is connected and DNS will fail. Disconnect it, then restart protection. (${conflicts.join('; ')})`);
-  if (killErr) warnings.push(`The kill switch is not on, so apps can still reach the internet outside port1897 if the tunnel stops. Windows said: ${killErr}`);
+  if (killErr) warnings.push(`The kill switch is not on, so apps can still reach the internet outside AuroraVPN if the tunnel stops. Windows said: ${killErr}`);
   const warn = $('conflict-warn');
   warn.hidden = !warnings.length;
   warn.textContent = warnings.join('\n\n');
@@ -237,6 +237,8 @@ async function poll() {
 
 // ---------- wiring ----------
 
+const KOFI_URL = 'https://ko-fi.com/creatoreprints';
+
 async function main() {
   document.querySelectorAll('[data-icon]').forEach((e) => {
     e.innerHTML = ICONS[e.dataset.icon] || ''; // static icon markup only
@@ -247,6 +249,8 @@ async function main() {
   $('pause-btn').addEventListener('click', () => pauseProtection());
   $('mode-btn').addEventListener('click', () => chooseMode());
   $('kill-btn').addEventListener('click', () => setKillSwitch(!killSwitchOn()));
+  // the heart, as on Android, is the way to support the project
+  $('heart-btn').addEventListener('click', () => App.port.openUrl(KOFI_URL));
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !document.querySelector('.modal-back')) App.back();
   });

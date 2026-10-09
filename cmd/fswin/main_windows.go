@@ -119,7 +119,7 @@ type options struct {
 func main() {
 	var o options
 	var golog int
-	flag.StringVar(&o.name, "name", "port1897", "Wintun adapter name")
+	flag.StringVar(&o.name, "name", "AuroraVPN", "Wintun adapter name")
 	flag.IntVar(&o.mtu, "mtu", 1500, "adapter MTU")
 	flag.StringVar(&o.doh, "doh", "https://cloudflare-dns.com/dns-query", "DoH server URL")
 	flag.StringVar(&o.dohips, "doh-ips", "1.1.1.1,1.0.0.1", "comma-separated IPs of the DoH server")
@@ -227,7 +227,7 @@ func run(o options) error {
 		fmt.Println("fswin: -block needs -full: without it only DNS goes through the tunnel, and DNS is answered for every app")
 	}
 
-	tun.WintunTunnelType = "port1897"
+	tun.WintunTunnelType = "AuroraVPN"
 	dev, err := tun.CreateTUN(o.name, o.mtu)
 	if err != nil {
 		return fmt.Errorf("create wintun adapter (run as admin, wintun.dll next to the exe?): %w", err)

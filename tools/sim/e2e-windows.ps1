@@ -127,12 +127,12 @@ try {
   Check $s 'status counts no failed lookups' ($st.dns.failed -eq 0) "queries $($st.dns.queries), failed $($st.dns.failed)"
   Check $s 'engine log names the adapter firestack uses' (LogHas $f "own traffic leaves via interface #\d+ \S") ''
   Check $s "firestack's own log lines reach engine.log, with timestamps" (LogHas $f '^\d\d:\d\d:\d\d\.\d{6} ') ''
-  $env:SIM_LIVE = '1'; $env:SIM_TUN = 'port1897'
+  $env:SIM_LIVE = '1'; $env:SIM_TUN = 'AuroraVPN'
   $live = go test -count=1 -run '^TestDescribeLive$' -v ./win/ifbind 2>&1
   $live | Set-Content (Join-Path $Out 'describe-live.txt')
   Check $s 'other-VPN detection: fswin adapter is a VPN, the default-route adapter is not' ($LASTEXITCODE -eq 0) (($live | Select-String 'Describe|default route|FAIL|Error' | Select-Object -First 12) -join ' | ')
   Stop-Fswin $f
-  Check $s 'fswin removed its adapter on stop' (-not (Get-NetAdapter -Name 'port1897' -ErrorAction SilentlyContinue)) ''
+  Check $s 'fswin removed its adapter on stop' (-not (Get-NetAdapter -Name 'AuroraVPN' -ErrorAction SilentlyContinue)) ''
 
   # ---------- DoH server unreachable (the Proton VPN incident) ----------
   $s = 'doh-unreachable'
@@ -180,12 +180,12 @@ try {
     Note $s 'a normal Windows lookup with both rules' ($sys -join ',')
   } catch { Note $s 'a normal Windows lookup with both rules' "error: $($_.Exception.Message)" }
   Stop-Fswin $f
-  $left = @(Get-DnsClientNrptRule | Where-Object { $_.Comment -eq 'port1897' -or $_.DisplayName -eq 'port1897' })
+  $left = @(Get-DnsClientNrptRule | Where-Object { $_.Comment -in 'AuroraVPN', 'port1897' -or $_.DisplayName -in 'AuroraVPN', 'port1897' })
   Check $s "fswin removed its own NRPT rule on stop" ($left.Count -eq 0) "$($left.Count) left"
   Remove-SimRules
 
   # ---------- a plain DNS upstream that misbehaves ----------
-  $hostIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.PrefixOrigin -in 'Dhcp', 'Manual' -and $_.IPAddress -notlike '169.254.*' -and $_.InterfaceAlias -ne 'port1897' } | Select-Object -First 1).IPAddress
+  $hostIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.PrefixOrigin -in 'Dhcp', 'Manual' -and $_.IPAddress -notlike '169.254.*' -and $_.InterfaceAlias -ne 'AuroraVPN' } | Select-Object -First 1).IPAddress
   # not 5353 (mDNS) or 5355 (LLMNR): Windows' DNS client holds those
   $cases = @(
     @{ s = 'servfail'; addr = '127.0.0.1:25353'; mode = 'servfail'; want = 'answered SERVFAIL' },

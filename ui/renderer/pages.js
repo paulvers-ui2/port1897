@@ -69,7 +69,7 @@ async function setKillSwitch(on) {
   if (on) {
     const ok = await confirmDialog(
       'Turn on the kill switch?',
-      'Only port1897 can reach the internet. If protection stops or the app crashes, the internet stays blocked until you start protection again or use Network → Release kill switch.',
+      'Only AuroraVPN can reach the internet. If protection stops or the app crashes, the internet stays blocked until you start protection again or use Network → Release kill switch.',
       'Turn on'
     );
     if (!ok) return App.render();
@@ -80,7 +80,7 @@ async function setKillSwitch(on) {
   if (!r.ok) toast('Kill switch: ' + r.error);
   else if (r.applied === 'next start') toast(on ? 'Kill switch on from the next start of protection.' : 'Kill switch off.');
   else if (r.applied === 'restarted') toast('Kill switch on: protection restarted with all traffic in the tunnel.');
-  else toast(on ? 'Kill switch on: only port1897 reaches the internet.' : 'Kill switch off.');
+  else toast(on ? 'Kill switch on: only AuroraVPN reaches the internet.' : 'Kill switch off.');
   App.render();
 }
 
@@ -95,7 +95,7 @@ function switchRow(o) {
 }
 
 function brandHeader(sub) {
-  return h('div', { class: 'brand-left' }, h('h1', { class: 'brand-title', text: 'port1897' }), h('p', { class: 'brand-sub', text: sub }));
+  return h('div', { class: 'brand-left' }, h('h1', { class: 'brand-title', text: 'AuroraVPN' }), h('p', { class: 'brand-sub', text: sub }));
 }
 
 // ---------- Configure (screenshot: "A highly customizable DNS and Firewall") ----------
@@ -944,7 +944,7 @@ PAGES.settings = () => {
     sectionLabel('Customize'),
     card(
       row({ ico: 'ic_appearance', title: 'Appearance', sub: 'Current theme: ' + (THEMES.find((t) => t[0] === s.theme) || THEMES[0])[1], right: chevron(), onclick: chooseTheme }),
-      switchRow({ ico: 'ic_tun_nw_policy', title: 'Automation', sub: 'Let scripts and the Task Scheduler control protection: port1897.exe --start, --stop, --pause=15 or --resume.', value: s.automation, onchange: (v) => save({ automation: v }, true) }),
+      switchRow({ ico: 'ic_tun_nw_policy', title: 'Automation', sub: 'Let scripts and the Task Scheduler control protection: AuroraVPN.exe --start, --stop, --pause=15 or --resume.', value: s.automation, onchange: (v) => save({ automation: v }, true) }),
       switchRow({ ico: 'ic_auto_start', title: 'Auto-start on power-up', sub: 'On sign-in, start the app in the tray, and start protection if it was running before shut down (asks for admin permission).', value: s.autostart, onchange: (v) => App.port.setAutostart(v).then(() => save({ autostart: v }, true)) })
     )
   );

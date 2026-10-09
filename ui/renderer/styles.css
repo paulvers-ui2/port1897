@@ -77,7 +77,8 @@ button { cursor: pointer; }
   text-transform: lowercase;
   opacity: 0.5;
 }
-.brand-heart { width: 24px; height: 24px; opacity: 0.5; padding: 0; }
+.brand-heart { width: 24px; height: 24px; opacity: 0.5; padding: 0; border: 0; background: none; cursor: pointer; }
+.brand-heart:hover, .brand-heart:focus-visible { opacity: 0.9; }
 .brand-heart svg { width: 24px; height: 24px; }
 
 /* ---- the 2x2 cards with the "+" in the middle ---- */

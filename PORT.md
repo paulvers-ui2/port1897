@@ -1,4 +1,4 @@
-# port1897: firestack for Windows
+# AuroraVPN for Windows: firestack
 
 This repository is a fork of [paulvers-ui/firestack](https://github.com/paulvers-ui/firestack)
 (itself a fork of [celzero/firestack](https://github.com/celzero/firestack)), branched at
@@ -53,7 +53,7 @@ firewall rules) is Phase 2 work.
 | DNS types ODoH (with relay) and DNS proxy, DNSCrypt relays, RethinkDNS blocklists on-device (download + md5 check) and on the server (stamp in the URL) | done | `cmd/fswin/dns_windows.go`, `ui/renderer/blocklists.js` |
 | Per-app routes (Android's WireGuard advanced mode and proxy app lists): apps go through their own WireGuard config or SOCKS5/HTTP proxy | done | `cmd/fswin/routes_windows.go`, App info → Route through |
 | Ping test, welcome slides, weekly update check (GitHub releases), log filters; tagged builds publish a GitHub release | done | `ui/renderer/tools.js`, `.github/workflows/app.yml` |
-| Packet capture (`-pcap`); automation (`port1897.exe --start/--stop/--pause/--resume`) | done | `cmd/fswin`, `ui/main.js` |
+| Packet capture (`-pcap`); automation (`AuroraVPN.exe --start/--stop/--pause/--resume`) | done | `cmd/fswin`, `ui/main.js` |
 | Live tunnel status (state, last handshake, bytes) for the exit and per-app routes | done | `GET /api/proxies`, Proxy screen |
 | Anti-censorship dial strategy (split TCP / TLS ClientHello); desync is not implemented on Windows | done (flags) | `fswin -dial-strategy` |
 | Windows service + named-pipe API for the UI | later | |
