@@ -137,7 +137,7 @@ PAGES.firewall = () => {
     'Firewall',
     card(
       row({ ico: 'ic_dns_firewall', title: 'Mode', sub: MODES.find((m) => m[0] === s.mode)[1] + (s.mode === 'dns' ? ' · the firewall is off' : ''), right: chevron(), onclick: chooseMode }),
-      switchRow({ ico: 'ic_firewall_shield', title: 'Kill switch', sub: 'Block the internet outside port1897, at once. If the app crashes, the internet stays blocked until you start it again.', value: killSwitchOn(), onchange: (v) => setKillSwitch(v) }),
+      switchRow({ ico: 'ic_firewall_shield', title: 'Kill switch', sub: 'Block the internet outside AuroraVPN, at once. If the app crashes, the internet stays blocked until you start it again.', value: killSwitchOn(), onchange: (v) => setKillSwitch(v) }),
       switchRow({ ico: 'universal_firewall', title: 'Allow outgoing only', sub: 'Every program may connect out and is added to your allowed apps the moment it does; incoming connections are blocked.', value: !!s.universal.outgoingOnly, onchange: (v) => App.setRules({ universal: { ...App.settings.universal, outgoingOnly: v } }).then(() => App.render()) })
     ),
     sectionLabel('Universal'),

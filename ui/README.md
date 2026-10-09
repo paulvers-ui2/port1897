@@ -1,4 +1,4 @@
-# port1897 app window
+# AuroraVPN app window
 
 The Windows app: an Electron window styled after the Rethink Android app's home
 screen. It starts the engine (`fswin.exe`, built from `../cmd/fswin`) through a

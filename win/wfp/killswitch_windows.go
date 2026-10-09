@@ -235,7 +235,7 @@ func callByKey(p *windows.LazyProc, session uintptr, key *windows.GUID) uint32 {
 }
 
 func openSession(flags wtFwpmSessionFlagsValue) (uintptr, error) {
-	dd, err := createWtFwpmDisplayData0("port1897", "port1897 kill switch session")
+	dd, err := createWtFwpmDisplayData0("AuroraVPN", "AuroraVPN kill switch session")
 	if err != nil {
 		return 0, err
 	}
@@ -255,7 +255,7 @@ func openSession(flags wtFwpmSessionFlagsValue) (uintptr, error) {
 func addBaseObjects(session uintptr, persistent bool) (*baseObjects, error) {
 	bo := &baseObjects{provider: providerKey, filters: sublayerKey}
 
-	dd, err := createWtFwpmDisplayData0("port1897", "port1897 kill switch")
+	dd, err := createWtFwpmDisplayData0("AuroraVPN", "AuroraVPN kill switch")
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +267,7 @@ func addBaseObjects(session uintptr, persistent bool) (*baseObjects, error) {
 		return nil, fmt.Errorf("add provider: %w", err)
 	}
 
-	dd, err = createWtFwpmDisplayData0("port1897 filters", "Permit the tunnel and the engine, block the rest")
+	dd, err = createWtFwpmDisplayData0("AuroraVPN filters", "Permit the tunnel and the engine, block the rest")
 	if err != nil {
 		return nil, err
 	}

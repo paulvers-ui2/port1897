@@ -112,12 +112,12 @@ jobs:
       # one artifact per file: download only the one you need (~120 MB each)
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: port1897-setup-windows-x64
+          name: auroravpn-setup-windows-x64
           path: ui/dist/*-Setup-*.exe
           compression-level: 0
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: port1897-portable-windows-x64
+          name: auroravpn-portable-windows-x64
           path: ui/dist/*-portable.exe
           compression-level: 0
 
@@ -134,7 +134,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          pattern: port1897-*-windows-x64
+          pattern: auroravpn-*-windows-x64
           merge-multiple: true
           path: dist
       - name: Checksums
@@ -148,7 +148,7 @@ jobs:
           gh release create "$TAG" dist/*
           --repo "$GITHUB_REPOSITORY"
           --target "$GITHUB_SHA"
-          --title "port1897 $TAG"
+          --title "AuroraVPN $TAG"
           --generate-notes
           --latest
       # a release made with the workflow token starts no workflows, so the

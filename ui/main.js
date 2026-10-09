@@ -1095,7 +1095,7 @@ async function weeklyUpdateCheck() {
   const r = await checkUpdate();
   if (!r.ok) return;
   writeSettings({ ...readSettings(), lastUpdateCheck: Date.now() });
-  if (r.newer && s.notify) notify(`port1897 ${r.latest} is available: Settings → Check for app updates.`);
+  if (r.newer && s.notify) notify(`AuroraVPN ${r.latest} is available: Settings → Check for app updates.`);
 }
 
 // ---------- ping test (Android: PingTestActivity) ----------
@@ -1150,7 +1150,7 @@ async function pingTest(q) {
 
 function notify(body) {
   appLog('notice:', body);
-  if (Notification.isSupported()) new Notification({ title: 'port1897', body, icon: path.join(__dirname, 'build', 'icon.png') }).show();
+  if (Notification.isSupported()) new Notification({ title: 'AuroraVPN', body, icon: path.join(__dirname, 'build', 'icon.png') }).show();
 }
 
 let autoDisabledFor = 0;
@@ -1211,7 +1211,7 @@ function createWindow(show = true) {
     minHeight: 600,
     show,
     backgroundColor: '#0E1B21',
-    title: 'port1897',
+    title: 'AuroraVPN',
     icon: path.join(__dirname, 'build', 'icon.png'),
     autoHideMenuBar: true,
     webPreferences: {
@@ -1271,7 +1271,7 @@ function updateTray(st, force) {
     updateTray(lastStatus, true);
   };
   tray.setImage(trayIcon(on));
-  tray.setToolTip(on ? `port1897: protected${st.exit ? ' via ' + st.exit : ''}` : 'port1897: not protected');
+  tray.setToolTip(on ? `AuroraVPN: protected${st.exit ? ' via ' + st.exit : ''}` : 'AuroraVPN: not protected');
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: on ? 'Protected' + (st.exit ? ` (${st.exit})` : '') : 'Not protected', enabled: false },
@@ -1288,13 +1288,13 @@ function updateTray(st, force) {
           updateTray(await engineStatus());
           if (!r.ok) {
             showWindow();
-            dialog.showErrorBox('port1897', r.error + (r.log ? '\n\n' + r.log : ''));
+            dialog.showErrorBox('AuroraVPN', r.error + (r.log ? '\n\n' + r.log : ''));
           }
         },
       },
       on && !paused ? { label: 'Pause for 15 minutes', click: () => pause(15) } : null,
       on && paused ? { label: 'Resume (paused)', click: () => pause(0) } : null,
-      { label: 'Open port1897', click: showWindow },
+      { label: 'Open AuroraVPN', click: showWindow },
       { type: 'separator' },
       { label: 'Quit (turns protection off)', click: () => app.quit() },
     ].filter(Boolean))
@@ -1541,7 +1541,7 @@ ipcMain.handle('clip:copy', (_e, text) => clipboard.writeText(String(text)));
 
 ipcMain.handle('backup:save', async () => {
   const day = new Date().toISOString().slice(0, 10);
-  const r = await dialog.showSaveDialog(win, { title: 'Back up port1897', defaultPath: `port1897-backup-${day}.json`, filters: [{ name: 'Backup', extensions: ['json'] }] });
+  const r = await dialog.showSaveDialog(win, { title: 'Back up AuroraVPN', defaultPath: `AuroraVPN-backup-${day}.json`, filters: [{ name: 'Backup', extensions: ['json'] }] });
   if (r.canceled) return { ok: false };
   const read = (f) => {
     try {
@@ -1551,7 +1551,7 @@ ipcMain.handle('backup:save', async () => {
     }
   };
   const out = {
-    app: 'port1897',
+    app: 'AuroraVPN',
     version: 1,
     created: new Date().toISOString(),
     settings: readSettings(),
@@ -1562,15 +1562,16 @@ ipcMain.handle('backup:save', async () => {
   fs.writeFileSync(r.filePath, JSON.stringify(out, null, 2), { mode: 0o600 });
   return { ok: true };
 });
+const BACKUP_APPS = ['AuroraVPN', 'port1897']; // port1897: the app's name before 0.3
 ipcMain.handle('backup:restore', async () => {
-  const r = await dialog.showOpenDialog(win, { title: 'Restore port1897', filters: [{ name: 'Backup', extensions: ['json'] }], properties: ['openFile'] });
+  const r = await dialog.showOpenDialog(win, { title: 'Restore AuroraVPN', filters: [{ name: 'Backup', extensions: ['json'] }], properties: ['openFile'] });
   if (r.canceled) return { ok: false };
   let b;
   try {
     b = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
-    if (b.app !== 'port1897' || typeof b.settings !== 'object') throw new Error();
+    if (!BACKUP_APPS.includes(b.app) || typeof b.settings !== 'object') throw new Error();
   } catch {
-    return { ok: false, error: 'That is not a port1897 backup.' };
+    return { ok: false, error: 'That is not an AuroraVPN backup.' };
   }
   if (await engineStatus()) return { ok: false, error: 'Stop protection first.' };
   fs.rmSync(wgDir(), { recursive: true, force: true });
@@ -1643,17 +1644,17 @@ async function systemReport() {
     ['Lookup of cloudflare.com by Windows', 'Resolve-DnsName cloudflare.com -Type A -QuickTimeout -ErrorAction Continue | Out-String -Width 220'],
     ['Windows Firewall profiles', 'Get-NetFirewallProfile | Format-Table -AutoSize Name,Enabled,DefaultInboundAction,DefaultOutboundAction | Out-String -Width 220'],
     [
-      'Crashes of port1897, the engine, usque or Wintun (Application log, 7 days)',
-      "Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error','Application Hang','Windows Error Reporting'; StartTime=(Get-Date).AddDays(-7)} -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'fswin|port1897|usque|wintun' } | Select-Object -First 20 | Format-List TimeCreated,ProviderName,Id,Message | Out-String -Width 220",
+      'Crashes of AuroraVPN, the engine, usque or Wintun (Application log, 7 days)',
+      "Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error','Application Hang','Windows Error Reporting'; StartTime=(Get-Date).AddDays(-7)} -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'fswin|auroravpn|port1897|usque|wintun' } | Select-Object -First 20 | Format-List TimeCreated,ProviderName,Id,Message | Out-String -Width 220",
     ],
     [
       'Wintun and network driver events (System log, 7 days)',
-      "Get-WinEvent -FilterHashtable @{LogName='System'; Level=1,2,3; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 2000 -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match 'wintun|Tcpip|Dnscache|NDIS|BFE' -or $_.Message -match 'wintun|port1897' } | Select-Object -First 30 | Format-List TimeCreated,ProviderName,Id,LevelDisplayName,Message | Out-String -Width 220",
+      "Get-WinEvent -FilterHashtable @{LogName='System'; Level=1,2,3; StartTime=(Get-Date).AddDays(-7)} -MaxEvents 2000 -ErrorAction SilentlyContinue | Where-Object { $_.ProviderName -match 'wintun|Tcpip|Dnscache|NDIS|BFE' -or $_.Message -match 'wintun|auroravpn|port1897' } | Select-Object -First 30 | Format-List TimeCreated,ProviderName,Id,LevelDisplayName,Message | Out-String -Width 220",
     ],
   ];
   const v = process.versions;
   const out = [
-    `port1897 ${app.getVersion()} debug report, ${new Date().toISOString()}`,
+    `AuroraVPN ${app.getVersion()} debug report, ${new Date().toISOString()}`,
     `Electron ${v.electron}, Chromium ${v.chrome}, Node ${v.node}; Windows ${os.release()} ${os.arch()}; engine ${fs.existsSync(enginePath()) ? enginePath() : 'missing'}`,
     '',
   ];
@@ -1704,7 +1705,7 @@ ipcMain.handle('debug:zip', async () => {
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
   const r = await dialog.showSaveDialog(win, {
     title: 'Save debug logs',
-    defaultPath: path.join(app.getPath('desktop'), `port1897-debug-${stamp}.zip`),
+    defaultPath: path.join(app.getPath('desktop'), `AuroraVPN-debug-${stamp}.zip`),
     filters: [{ name: 'Zip', extensions: ['zip'] }],
   });
   if (r.canceled) return { ok: false };
@@ -1729,7 +1730,7 @@ ipcMain.handle('debug:zip', async () => {
     });
   try {
     // only [A-Za-z0-9-] in the generated part, so PowerShell sees no wildcards
-    tmp = fs.mkdtempSync(path.join(app.getPath('temp'), 'port1897-debug-'));
+    tmp = fs.mkdtempSync(path.join(app.getPath('temp'), 'auroravpn-debug-'));
     putFile('engine.log', logFile());
     putFile('engine.prev.log', prevLogFile());
     putFile('app.log', appLogFile());
@@ -1758,7 +1759,7 @@ ipcMain.handle('debug:zip', async () => {
     put(
       'README.txt',
       [
-        'port1897 debug logs',
+        'AuroraVPN debug logs',
         '',
         'Private keys, tokens and passwords are replaced with "(hidden)".',
         'engine.log, engine.prev.log and history/ list the apps, domains and addresses this PC used; remove them before sharing if you prefer.',
@@ -1789,14 +1790,16 @@ ipcMain.handle('app:setAutostart', (_e, on) => {
   app.setLoginItemSettings({ openAtLogin: !!on, args: ['--autostart'] });
 });
 ipcMain.handle('open:url', (_e, url) => {
-  // only the project's GitHub pages: source, issues, the release download page
+  // only the project's GitHub pages (source, issues, the release download
+  // page) and its Ko-fi page, behind the heart
   let u;
   try {
     u = new URL(String(url));
   } catch {
     return;
   }
-  if (u.protocol === 'https:' && u.hostname === 'github.com') shell.openExternal(u.href); /* eng-disable OPEN_EXTERNAL_JS_CHECK */
+  const ok = u.protocol === 'https:' && (u.hostname === 'github.com' || (u.hostname === 'ko-fi.com' && u.pathname === '/creatoreprints'));
+  if (ok) shell.openExternal(u.href); /* eng-disable OPEN_EXTERNAL_JS_CHECK */
 });
 ipcMain.handle('open:log', () => shell.openPath(logFile()));
 ipcMain.handle('open:pcapFolder', () => {
@@ -1806,14 +1809,14 @@ ipcMain.handle('open:pcapFolder', () => {
 
 // ---------- automation (Android: "Configure apps that can start or stop") ----------
 
-// port1897.exe --start | --stop | --pause[=minutes] | --resume, from
+// AuroraVPN.exe --start | --stop | --pause[=minutes] | --resume, from
 // scripts or the Task Scheduler, when Settings → Automation is on.
 async function automate(argv) {
   const cmd = argv.find((a) => /^--(start|stop|resume|pause(=\d+)?)$/.test(a));
   if (!cmd) return false;
   const s = readSettings();
   if (!s.automation) {
-    notify(`Ignored ${cmd}: turn on Settings → Automation to let other programs control port1897.`);
+    notify(`Ignored ${cmd}: turn on Settings → Automation to let other programs control AuroraVPN.`);
     return true;
   }
   let r = { ok: true };
@@ -1832,6 +1835,36 @@ async function automate(argv) {
 
 // ---------- startup and quit ----------
 
+// The app was called port1897 before 0.3. Its folder (settings, WARP and
+// WireGuard identities, rules, history) moves to the new name once, before
+// anything uses it. What cannot move, such as a file an old copy still has
+// open, is copied, and the old folder keeps what is left.
+function moveOldData() {
+  const now = app.getPath('userData');
+  const old = path.join(app.getPath('appData'), 'port1897');
+  if (path.relative(old, now) === '' || fs.existsSync(path.join(now, 'settings.json')) || !fs.existsSync(path.join(old, 'settings.json'))) return;
+  fs.mkdirSync(now, { recursive: true });
+  for (const name of fs.readdirSync(old)) {
+    const from = path.join(old, name);
+    const to = path.join(now, name);
+    try {
+      fs.renameSync(from, to);
+    } catch {
+      try {
+        fs.cpSync(from, to, { recursive: true, force: false });
+      } catch {
+        // in use and unreadable: left behind
+      }
+    }
+  }
+  appLog(`moved the settings of port1897 from ${old}`);
+}
+try {
+  moveOldData();
+} catch (e) {
+  appLog('could not move the settings of port1897:', e);
+}
+
 // one copy only; a second launch brings the first one forward
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -1841,13 +1874,19 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on('child-process-gone', (_e, d) => appLog('child process gone:', d.type, d.reason, 'exit code', d.exitCode));
   app.whenReady().then(async () => {
-    appLog(`port1897 ${app.getVersion()} started (Electron ${process.versions.electron}, Windows ${os.release()})`);
+    appLog(`AuroraVPN ${app.getVersion()} started (Electron ${process.versions.electron}, Windows ${os.release()})`);
     Menu.setApplicationMenu(null);
     // the window needs no web permissions (notifications come from the main
     // process, the clipboard goes through IPC): refuse every request and check
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
     loadBuckets();
+    // the start-at-login entry names the program's path, which moved with the
+    // rename (port1897's entry goes, the new one points at this copy)
+    if (readSettings().autostart) {
+      app.setLoginItemSettings({ openAtLogin: false, name: 'electron.app.port1897' });
+      app.setLoginItemSettings({ openAtLogin: true, args: ['--autostart'] });
+    }
     const automated = process.argv.some((a) => /^--(start|stop|resume|pause(=\d+)?)$/.test(a));
     const autostart = process.argv.includes('--autostart') || automated;
     createWindow(!autostart);

@@ -1,4 +1,4 @@
-# port1897: firestack for Windows
+# AuroraVPN for Windows: firestack
 
 An open-source effort to bring the engine behind the Android firewall
 [Rethink DNS + Firewall](https://github.com/celzero/rethink-app) to Windows:

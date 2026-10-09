@@ -41,7 +41,7 @@ PAGES.ping = () => {
 // ---------- welcome slides (Android: WelcomeActivity), first start only ----------
 
 const WELCOME = [
-  ['Welcome', 'port1897 is the easiest way to monitor network activity, bypass Internet censorship, and firewall apps on your PC.', 'ic_heart_accent'],
+  ['Welcome', 'AuroraVPN is the easiest way to monitor network activity, bypass Internet censorship, and firewall apps on your PC.', 'ic_heart_accent'],
   ['Secure Internet with WireGuard', 'Encrypt your Internet traffic with WireGuard, or free Cloudflare WARP. Choose different routes for different apps.', 'ic_wireguard_icon'],
   ['Protect your PC with Firewall', 'Control app internet use; restrict connections based on app or network activity.', 'firewall_home_screen'],
   ['Block Ads & Malware with DNS', 'Choose from 190+ lists to stop ads, trackers, and malware.', 'dns_home_screen'],
@@ -85,5 +85,5 @@ async function checkUpdateNow() {
   if (!r.ok) return toast('Update check failed: ' + r.error);
   if (!r.latest) return toast(`No releases published yet (this is ${r.current})`);
   if (!r.newer) return toast(`You have the latest version (${r.current})`);
-  if (await confirmDialog('Update available', `port1897 ${r.latest} is available (you have ${r.current}). Open the download page?`, 'Open')) App.port.openUrl(r.url);
+  if (await confirmDialog('Update available', `AuroraVPN ${r.latest} is available (you have ${r.current}). Open the download page?`, 'Open')) App.port.openUrl(r.url);
 }

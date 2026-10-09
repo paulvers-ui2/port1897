@@ -15,32 +15,36 @@ import (
 	"strings"
 )
 
-// tag marks our NRPT rules so stale ones (after a crash) can be found.
-const tag = "port1897"
+// ours matches our NRPT rules, so stale ones (after a crash) can be found:
+// they carry tag, or "port1897", the app's name before 0.3.
+const (
+	tag  = "AuroraVPN"
+	ours = "$_.Comment -in 'AuroraVPN','port1897'"
+)
 
 // Add replaces any of our rules with one sending all names (".") to server,
 // then flushes the DNS cache. If the process dies without Remove, the rule
 // stays and DNS fails until Remove (or Add) runs again.
 func Add(server netip.Addr) error {
 	return ps(fmt.Sprintf(
-		`Get-DnsClientNrptRule | Where-Object Comment -eq '%s' | Remove-DnsClientNrptRule -Force; `+
+		`Get-DnsClientNrptRule | Where-Object { %s } | Remove-DnsClientNrptRule -Force; `+
 			`Add-DnsClientNrptRule -Namespace '.' -NameServers '%s' -Comment '%s' | Out-Null; `+
-			`Clear-DnsClientCache`, tag, server, tag))
+			`Clear-DnsClientCache`, ours, server, tag))
 }
 
 // Remove deletes our rules and flushes the DNS cache.
 func Remove() error {
 	return ps(fmt.Sprintf(
-		`Get-DnsClientNrptRule | Where-Object Comment -eq '%s' | Remove-DnsClientNrptRule -Force; `+
-			`Clear-DnsClientCache`, tag))
+		`Get-DnsClientNrptRule | Where-Object { %s } | Remove-DnsClientNrptRule -Force; `+
+			`Clear-DnsClientCache`, ours))
 }
 
 // Others lists catch-all (".") rules that are not ours, such as another
 // VPN's; they compete with ours for every query.
 func Others() ([]string, error) {
 	out, err := psOut(fmt.Sprintf(
-		`Get-DnsClientNrptRule | Where-Object { $_.Namespace -contains '.' -and $_.Comment -ne '%s' } | `+
-			`ForEach-Object { "$($_.DisplayName) ($($_.Comment))" }`, tag))
+		`Get-DnsClientNrptRule | Where-Object { $_.Namespace -contains '.' -and -not (%s) } | `+
+			`ForEach-Object { "$($_.DisplayName) ($($_.Comment))" }`, ours))
 	if err != nil {
 		return nil, err
 	}

@@ -84,7 +84,7 @@ const day = new Date().toISOString().slice(0, 10);
 write(`history/events-${day}.jsonl`, '{"id":1,"kind":"dns","domain":"example.com"}\n');
 
 const before = snapshot(userData);
-const tempBefore = new Set(fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('port1897-debug-')));
+const tempBefore = new Set(fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('auroravpn-debug-')));
 
 // ---------- stub Electron and load the real main.js ----------
 
@@ -160,14 +160,14 @@ const check = (what, ok, detail = '') => {
     check('README warns that logs list domains', /engine\.log, engine\.prev\.log and history\//.test(read('README.txt')));
     check('app.log keeps the error, password hidden', /engine did not start/.test(read('app.log')) && /amy:\(hidden\)@/.test(read('app.log')));
     check('crash-dumps.txt names the dump but leaves its contents out', /abc123\.dmp/.test(read('crash-dumps.txt')) && !all.some(([, t]) => t.includes('SECRET-in-dump')));
-    check('system.txt has versions, Windows Firewall and crash sections', /Electron \S+, Chromium \S+, Node \d/.test(read('system.txt')) && /===== Windows Firewall profiles =====/.test(read('system.txt')) && /===== Crashes of port1897/.test(read('system.txt')));
+    check('system.txt has versions, Windows Firewall and crash sections', /Electron \S+, Chromium \S+, Node \d/.test(read('system.txt')) && /===== Windows Firewall profiles =====/.test(read('system.txt')) && /===== Crashes of AuroraVPN/.test(read('system.txt')));
     check('system.txt has the network report', /===== Adapters =====/.test(read('system.txt')) && /===== NRPT rules/.test(read('system.txt')));
     check('status.json says the engine is not running', /"running": false/.test(read('status.json')));
 
     const after = snapshot(userData);
     const changed = Object.keys(before).filter((f) => f !== 'api-token' && before[f] !== after[f]);
     check('the data folder is left untouched', changed.length === 0, changed.join(', '));
-    const leftovers = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('port1897-debug-') && !tempBefore.has(d));
+    const leftovers = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('auroravpn-debug-') && !tempBefore.has(d));
     check('no temp folder or temp zip is left behind', leftovers.length === 0, leftovers.join(', '));
 
     // a second save over the same file replaces it
