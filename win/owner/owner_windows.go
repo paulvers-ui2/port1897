@@ -13,6 +13,7 @@ import (
 	"errors"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -42,15 +43,58 @@ var (
 	errUnsupported = errors.New("owner: only IPv4 is supported")
 )
 
+// snapTTL bounds the age of a table copy that answers a lookup. Programs
+// open connections in bursts (a browser opens several at once), and each
+// connection used to copy the whole table from Windows; now a burst finds its
+// sockets in one copy. A socket newer than the copy is not in it: that miss
+// asks Windows again, so a copy never hides a new socket.
+const snapTTL = 250 * time.Millisecond
+
+type snapshot struct {
+	buf []byte
+	at  time.Time
+}
+
+var tcpSnap, udpSnap atomic.Pointer[snapshot]
+
+// rows returns a copy of the table no older than snapTTL, or a fresh one.
+func rows(snap *atomic.Pointer[snapshot], proc *windows.LazyProc, class uintptr, fresh bool) ([]byte, error) {
+	if s := snap.Load(); !fresh && s != nil && time.Since(s.at) < snapTTL {
+		return s.buf, nil
+	}
+	buf, err := table(proc, class)
+	if err != nil {
+		return nil, err
+	}
+	snap.Store(&snapshot{buf: buf, at: time.Now()})
+	return buf, nil
+}
+
 // TCP4 returns the pid owning the IPv4 TCP socket local -> remote.
 func TCP4(local, remote netip.AddrPort) (uint32, error) {
 	if !local.Addr().Is4() || !remote.Addr().Is4() {
 		return 0, errUnsupported
 	}
-	buf, err := table(procGetExtendedTcpTable, tcpTableOwnerPidAll)
+	// a recent copy answers only for this very connection
+	buf, err := rows(&tcpSnap, procGetExtendedTcpTable, tcpTableOwnerPidAll, false)
 	if err != nil {
 		return 0, err
 	}
+	if pid, exact := tcpLookup(buf, local, remote); exact && pid != 0 {
+		return pid, nil
+	}
+	if buf, err = rows(&tcpSnap, procGetExtendedTcpTable, tcpTableOwnerPidAll, true); err != nil {
+		return 0, err
+	}
+	if pid, exact := tcpLookup(buf, local, remote); exact || pid != 0 {
+		return pid, nil
+	}
+	return 0, ErrNotFound
+}
+
+// tcpLookup finds local -> remote in a TCP table: its pid and true; else the
+// pid of a socket on local's port and false (0 if none).
+func tcpLookup(buf []byte, local, remote netip.AddrPort) (pid uint32, exact bool) {
 	n := int(binary.LittleEndian.Uint32(buf))
 	rows := buf[4:]
 	var portOnly uint32
@@ -63,13 +107,10 @@ func TCP4(local, remote netip.AddrPort) (uint32, error) {
 			continue
 		}
 		if addrPort(r[12:16], r[16:20]) == remote {
-			return binary.LittleEndian.Uint32(r[20:24]), nil
+			return binary.LittleEndian.Uint32(r[20:24]), true
 		}
 	}
-	if portOnly != 0 {
-		return portOnly, nil
-	}
-	return 0, ErrNotFound
+	return portOnly, false
 }
 
 // UDP4 returns the pid owning the IPv4 UDP socket bound to local (or to the
@@ -78,10 +119,28 @@ func UDP4(local netip.AddrPort) (uint32, error) {
 	if !local.Addr().Is4() {
 		return 0, errUnsupported
 	}
-	buf, err := table(procGetExtendedUdpTable, udpTableOwnerPid)
+	// UDP sockets mostly bind the wildcard address, so a recent copy answers
+	// for local's port: another program would have to reuse that port within
+	// snapTTL to be mistaken for the first
+	buf, err := rows(&udpSnap, procGetExtendedUdpTable, udpTableOwnerPid, false)
 	if err != nil {
 		return 0, err
 	}
+	if pid := udpLookup(buf, local); pid != 0 {
+		return pid, nil
+	}
+	if buf, err = rows(&udpSnap, procGetExtendedUdpTable, udpTableOwnerPid, true); err != nil {
+		return 0, err
+	}
+	if pid := udpLookup(buf, local); pid != 0 {
+		return pid, nil
+	}
+	return 0, ErrNotFound
+}
+
+// udpLookup finds the socket bound to local in a UDP table, or else the one
+// bound to the wildcard address on local's port: its pid, or 0.
+func udpLookup(buf []byte, local netip.AddrPort) uint32 {
 	n := int(binary.LittleEndian.Uint32(buf))
 	rows := buf[4:]
 	var wildcard uint32
@@ -93,16 +152,13 @@ func UDP4(local netip.AddrPort) (uint32, error) {
 		}
 		pid := binary.LittleEndian.Uint32(r[8:12])
 		if ap.Addr() == local.Addr() {
-			return pid, nil
+			return pid
 		}
 		if ap.Addr().IsUnspecified() && wildcard == 0 {
 			wildcard = pid
 		}
 	}
-	if wildcard != 0 {
-		return wildcard, nil
-	}
-	return 0, ErrNotFound
+	return wildcard
 }
 
 // table calls GetExtendedTcpTable or GetExtendedUdpTable for AF_INET.
@@ -114,7 +170,9 @@ func table(proc *windows.LazyProc, class uintptr) ([]byte, error) {
 			0 /*unsorted*/, windows.AF_INET, class, 0)
 		switch syscall.Errno(r) {
 		case 0:
-			if len(buf) < 4 {
+			// a table is its row count, then the rows; trust no size
+			// outside the buffer
+			if size < 4 || int(size) > len(buf) {
 				return nil, ErrNotFound
 			}
 			return buf[:size], nil

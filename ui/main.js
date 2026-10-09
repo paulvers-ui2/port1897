@@ -13,6 +13,9 @@
 'use strict';
 
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, Notification, clipboard, net, powerMonitor, session } = require('electron');
+
+// every renderer in Chromium's sandbox, not only the windows that ask for it
+app.enableSandbox();
 const path = require('node:path');
 const fs = require('node:fs');
 const crypto = require('node:crypto');
@@ -1443,6 +1446,7 @@ function createWindow(show = true) {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
   win.webContents.on('will-attach-webview', (e) => e.preventDefault());
+  win.webContents.on('will-redirect', (e) => e.preventDefault());
   // the window's warnings, errors and crashes go to the app log
   win.webContents.on('console-message', (e, lvl, msg, line, src) => {
     const level = e.level || ['debug', 'info', 'warning', 'error'][lvl];
@@ -2102,6 +2106,7 @@ if (!app.requestSingleInstanceLock()) {
     // process, the clipboard goes through IPC): refuse every request and check
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
+    session.defaultSession.setDevicePermissionHandler(() => false); // USB, HID, serial
     if (process.argv.includes('--self-test')) return selfTest();
     loadBuckets();
     // the start-at-login entry names the program's path, which moved with the

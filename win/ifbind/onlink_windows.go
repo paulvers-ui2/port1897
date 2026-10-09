@@ -11,7 +11,6 @@ package ifbind
 import (
 	"net/netip"
 	"time"
-	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -69,26 +68,9 @@ const (
 )
 
 func onlinkPrefixes(skip uint32) (out []netip.Prefix) {
-	size := uint32(15 << 10)
-	var buf []byte
-	for range 4 {
-		buf = make([]byte, size)
-		aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0]))
-		err := windows.GetAdaptersAddresses(windows.AF_UNSPEC, windows.GAA_FLAG_SKIP_ANYCAST, 0, aa, &size)
-		if err == nil {
-			break
-		}
-		if err != windows.ERROR_BUFFER_OVERFLOW {
-			return nil
-		}
-		buf = nil
-	}
-	if buf == nil {
-		return nil
-	}
-	for aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0])); aa != nil; aa = aa.Next {
+	_ = forEachAdapter(windows.AF_UNSPEC, func(aa *windows.IpAdapterAddresses) bool {
 		if aa.OperStatus != windows.IfOperStatusUp || aa.IfIndex == skip || aa.Ipv6IfIndex == skip {
-			continue
+			return true
 		}
 		for u := aa.FirstUnicastAddress; u != nil; u = u.Next {
 			ip, ok := netip.AddrFromSlice(u.Address.IP())
@@ -102,6 +84,7 @@ func onlinkPrefixes(skip uint32) (out []netip.Prefix) {
 			}
 			out = append(out, netip.PrefixFrom(ip, bits).Masked())
 		}
-	}
+		return true
+	})
 	return out
 }

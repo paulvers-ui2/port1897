@@ -40,6 +40,21 @@ jobs:
       - name: Unit tests
         shell: bash
         run: go test -count=1 -ldflags=-checklinkname=0 ./cmd/fswin/ ./win/... 2>&1 | tee unit-tests.txt
+      # the same tests under Go's race detector: a data race is how Go code
+      # corrupts memory without unsafe (it needs cgo; the runner has gcc)
+      - name: Unit tests with the race detector
+        shell: bash
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -count=1 -ldflags=-checklinkname=0 ./cmd/fswin/ ./win/... 2>&1 | tee race-tests.txt
+      # random input for what the engine parses (fuzz_windows_test.go); a
+      # crash fails the job, and its input is in the artifact (testdata/fuzz)
+      - name: Fuzz
+        shell: bash
+        run: |
+          for f in FuzzRules FuzzCountry; do
+            go test -run='^$' -fuzz="^$f\$" -fuzztime=60s -ldflags=-checklinkname=0 ./cmd/fswin/ 2>&1 | tail -n 15 | tee -a fuzz.txt
+          done
       - name: Simulate
         shell: pwsh
         run: ./tools/sim/e2e-windows.ps1 -Dist dist -Out sim-out
@@ -56,6 +71,9 @@ jobs:
           path: |
             sim-out/
             unit-tests.txt
+            race-tests.txt
+            fuzz.txt
+            cmd/fswin/testdata/fuzz/
           if-no-files-found: ignore
 
   debug-zip:
