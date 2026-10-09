@@ -8,9 +8,45 @@ on:
 permissions:
   contents: read
 
+# Every merge to main publishes the next patch release (v0.2.0 -> v0.2.1),
+# unless the merge commit message has [skip release]. Push a tag like v0.3.0
+# for a minor or major version. Runs on main and on tags go one at a time,
+# so two quick merges get two versions; pull request runs replace older ones.
+concurrency:
+  group: app-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.v.outputs.tag }} # the release this run publishes; empty for none
+    steps:
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          tag=''
+          if [[ "$REF" == refs/tags/v* ]]; then
+            tag="$REF_NAME"
+          elif [[ "$EVENT" == push && "$REF" == refs/heads/main && "$MSG" != *"[skip release]"* ]]; then
+            # the next patch after the newest vX.Y.Z tag
+            last=$(gh api "repos/$GITHUB_REPOSITORY/tags" --paginate -q '.[].name' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -1)
+            last=${last:-v0.0.0}
+            IFS=. read -r major minor patch <<< "${last#v}"
+            tag="v$major.$minor.$((patch + 1))"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release: ${tag:-none from this run}"
+
   app:
     name: Windows app (x64)
+    needs: version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -19,7 +55,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod # its toolchain line: the patched Go every build uses
-          cache: ${{ !startsWith(github.ref, 'refs/tags/') }} # tag builds are the published release: clean cache
+          cache: ${{ needs.version.outputs.tag == '' }} # a build that is published never uses a restored cache
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
@@ -30,9 +66,12 @@ jobs:
           GOARCH: amd64
           CGO_ENABLED: "0"
           WINTUN_SHA256: 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
+          TAG: ${{ needs.version.outputs.tag }}
         run: |
           mkdir -p ui/engine
-          go build -trimpath -ldflags="-checklinkname=0 -s -w -X main.version=${GITHUB_SHA:0:8}" -o ui/engine/fswin.exe ./cmd/fswin
+          ver="${GITHUB_SHA:0:8}"
+          if [ -n "$TAG" ]; then ver="$TAG+$ver"; fi
+          go build -trimpath -ldflags="-checklinkname=0 -s -w -X main.version=$ver" -o ui/engine/fswin.exe ./cmd/fswin
           curl -sSfL -o wintun.zip https://www.wintun.net/builds/wintun-0.14.1.zip
           echo "$WINTUN_SHA256  wintun.zip" | sha256sum -c -
           unzip -q wintun.zip
@@ -55,11 +94,13 @@ jobs:
       - name: Check scripts
         shell: bash
         run: for f in ui/main.js ui/preload.js ui/renderer/*.js; do node --check "$f"; done
-      - name: Version from the tag
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Version of the release
+        if: needs.version.outputs.tag != ''
         shell: bash
         working-directory: ui
-        run: npm pkg set version="${GITHUB_REF_NAME#v}"
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: npm pkg set version="${TAG#v}"
       - name: Build installer and portable exe
         shell: bash
         working-directory: ui
@@ -80,11 +121,12 @@ jobs:
           path: ui/dist/*-portable.exe
           compression-level: 0
 
-  # Pushing a tag like v0.2.0 publishes the build as a GitHub release.
+  # Publishes the build as the latest GitHub release: on every merge to main,
+  # and for a pushed vX.Y.Z tag. The app's update check reads it.
   release:
     name: GitHub release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: app
+    if: needs.version.outputs.tag != ''
+    needs: [version, app]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -99,9 +141,12 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        # creates the tag on this commit when it is new (a merge to main)
         run: >
-          gh release create "$GITHUB_REF_NAME" dist/*
+          gh release create "$TAG" dist/*
           --repo "$GITHUB_REPOSITORY"
-          --title "port1897 $GITHUB_REF_NAME"
+          --target "$GITHUB_SHA"
+          --title "port1897 $TAG"
           --generate-notes
-          --prerelease
+          --latest
