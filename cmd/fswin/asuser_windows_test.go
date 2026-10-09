@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"unsafe"
 
@@ -145,6 +146,61 @@ func TestUserTokenStartsUnelevatedChildren(t *testing.T) {
 	for _, g := range groups.AllGroups() {
 		if g.Sid.Equals(admins) && g.Attributes&windows.SE_GROUP_USE_FOR_DENY_ONLY == 0 {
 			t.Error("the child can use the Administrators group")
+		}
+	}
+}
+
+// An elevated engine's token lets only Administrators and SYSTEM into what it
+// makes, and restrict copies that. Its children could not open themselves
+// and died as they started, with no output: usque in AuroraVPN 0.2.7 to
+// 0.2.10 ("usque exited before its proxy came up"). The user token's
+// children, ping and a Go program like usque, must run to the end. No admin
+// needed: the test gives the token an elevated default DACL itself.
+func TestUserTokenChildrenRunWithAnElevatedDefaultDACL(t *testing.T) {
+	var self windows.Token
+	access := uint32(windows.TOKEN_QUERY | windows.TOKEN_DUPLICATE | windows.TOKEN_ASSIGN_PRIMARY | windows.TOKEN_ADJUST_DEFAULT)
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), access, &self); err != nil {
+		t.Fatal(err)
+	}
+	defer self.Close()
+	r, err := restrict(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sd, err := windows.SecurityDescriptorFromString("D:(A;;GA;;;BA)(A;;GA;;;SY)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := tokenDefaultDACL{dacl: dacl}
+	if err := windows.SetTokenInformation(r, windows.TokenDefaultDacl, (*byte)(unsafe.Pointer(&def)), uint32(unsafe.Sizeof(def))); err != nil { //nolint:gosec // G103: the call takes the struct as bytes
+		_ = r.Close()
+		t.Fatal(err)
+	}
+	u, err := userTokenFrom(self, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u.close()
+
+	me, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, argv := range [][]string{
+		{filepath.Join(os.Getenv("SystemRoot"), "System32", "PING.EXE"), "-n", "1", "127.0.0.1"},
+		{me, "-test.run=^$"}, // this test program runs no test and says PASS
+	} {
+		cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // G204: ping and this test program
+		// as startUsque runs usque
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+		u.unelevated(cmd)
+		out, err := cmd.CombinedOutput()
+		if err != nil || len(out) == 0 {
+			t.Errorf("%s with the user token: %v, output %q", filepath.Base(argv[0]), err, out)
 		}
 	}
 }

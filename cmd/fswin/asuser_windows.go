@@ -52,16 +52,32 @@ func newUserToken() (*userToken, error) {
 	}
 	defer self.Close()
 
+	restricted, err := restrict(self)
+	if err != nil {
+		return nil, err
+	}
+	return userTokenFrom(self, restricted)
+}
+
+// restrict is self with the Administrators group for deny only and no
+// privilege but SeChangeNotify.
+func restrict(self windows.Token) (windows.Token, error) {
 	admins, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
 	if err != nil {
-		return nil, fmt.Errorf("user token: %w", err)
+		return 0, fmt.Errorf("user token: %w", err)
 	}
 	deny := windows.SIDAndAttributes{Sid: admins}
 	var restricted windows.Token
 	r, _, e := procCreateRestrictedToken.Call(uintptr(self), disableMaxPrivilege, 1, uintptr(unsafe.Pointer(&deny)), 0, 0, 0, 0, uintptr(unsafe.Pointer(&restricted))) //nolint:gosec // G103: the Win32 call takes pointers
 	if r == 0 {
-		return nil, fmt.Errorf("user token: restrict: %w", e)
+		return 0, fmt.Errorf("user token: restrict: %w", e)
 	}
+	return restricted, nil
+}
+
+// userTokenFrom finishes restricted, a restrict of self, as the user token,
+// and owns it from then on.
+func userTokenFrom(self, restricted windows.Token) (*userToken, error) {
 	u := &userToken{primary: restricted}
 	if err := u.lower(self); err != nil {
 		u.close()
@@ -78,9 +94,18 @@ func newUserToken() (*userToken, error) {
 // tokenOwner is TOKEN_OWNER.
 type tokenOwner struct{ owner *windows.SID }
 
+// tokenDefaultDACL is TOKEN_DEFAULT_DACL.
+type tokenDefaultDACL struct{ dacl *windows.ACL }
+
 // lower makes the restricted token look like an unelevated program's: medium
-// integrity, and owned by the user, not by the Administrators group it can
-// no longer use.
+// integrity, owned by the user, not by the Administrators group it can no
+// longer use, and with the user in its default DACL.
+//
+// The default DACL guards what the token makes, first the process and
+// threads of a child it starts. An elevated token's lets in only
+// Administrators and SYSTEM; with that group for deny only, usque could not
+// open itself, and Windows ended it as it started (0xC0000142), before it
+// printed a word. An unelevated program's lets in its user too.
 //
 //nolint:gosec // G103: SetTokenInformation takes a struct as bytes and a size
 func (u *userToken) lower(self windows.Token) error {
@@ -101,6 +126,19 @@ func (u *userToken) lower(self windows.Token) error {
 	owner := tokenOwner{owner: me.User.Sid}
 	if err := windows.SetTokenInformation(u.primary, windows.TokenOwner, (*byte)(unsafe.Pointer(&owner)), uint32(unsafe.Sizeof(owner))); err != nil {
 		return fmt.Errorf("user token: owner: %w", err)
+	}
+
+	sd, err := windows.SecurityDescriptorFromString("D:(A;;GA;;;" + me.User.Sid.String() + ")(A;;GA;;;BA)(A;;GA;;;SY)")
+	if err != nil {
+		return fmt.Errorf("user token: default DACL: %w", err)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return fmt.Errorf("user token: default DACL: %w", err)
+	}
+	def := tokenDefaultDACL{dacl: dacl}
+	if err := windows.SetTokenInformation(u.primary, windows.TokenDefaultDacl, (*byte)(unsafe.Pointer(&def)), uint32(unsafe.Sizeof(def))); err != nil {
+		return fmt.Errorf("user token: default DACL: %w", err)
 	}
 	return nil
 }
