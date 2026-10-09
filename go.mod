@@ -2,6 +2,8 @@ module github.com/celzero/firestack
 
 go 1.26.0
 
+toolchain go1.26.9
+
 require (
 	github.com/celzero/gotrie v0.0.0-20250314130138-a2756ab2f6bd
 	github.com/jedisct1/go-dnsstamps v0.0.0-20200621175006-302248eecc94
@@ -23,7 +25,7 @@ require (
 	github.com/txthinking/socks5 v0.0.0-20230325130024-4230056ae301
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20231121144256-b99613f794b6
 	golang.org/x/mobile v0.0.0-20260120165949-40bd9ace6ce4
-	golang.org/x/net v0.59.0
+	golang.org/x/net v0.60.0
 	golang.zx2c4.com/wireguard v0.0.0-20250521234502-f333402bd9cb
 	gvisor.dev/gvisor v0.0.0-20260220231412-fe30adbe8e25
 )
