@@ -12,7 +12,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 
@@ -41,7 +40,7 @@ type route struct {
 // loadRoutes adds the routes in path as proxies and returns their names by
 // id. Routes that fail are skipped and reported in err.
 func loadRoutes(t intra.Tunnel, path string) (map[string]string, error) {
-	b, err := os.ReadFile(path)
+	b, err := readUserFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +62,7 @@ func loadRoutes(t intra.Tunnel, path string) (map[string]string, error) {
 				errs = append(errs, fmt.Errorf("route %s: WireGuard ids start with %s", r.ID, routeWGPrefix))
 				continue
 			}
-			conf, rerr := os.ReadFile(r.File)
+			conf, rerr := readUserFile(r.File)
 			if rerr != nil {
 				errs = append(errs, fmt.Errorf("route %s: %w", r.ID, rerr))
 				continue

@@ -59,6 +59,7 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
+          package-manager-cache: false # the lockfile pins every package; no restored cache
       - name: Engine and Wintun
         shell: bash
         env:
@@ -107,8 +108,18 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run dist
+      # the packaged app must start: its Electron fuses, the asar, the window,
+      # its scripts and IPC (main.js --self-test)
+      - name: Start the packaged app
+        shell: pwsh
+        timeout-minutes: 3
+        run: |
+          $exe = Join-Path $PWD 'ui/dist/win-unpacked/AuroraVPN.exe'
+          $p = Start-Process -FilePath $exe -ArgumentList '--self-test' -PassThru -Wait
+          Get-Content (Join-Path $env:APPDATA 'AuroraVPN/app.log') -ErrorAction SilentlyContinue | Select-Object -Last 20
+          if ($p.ExitCode -ne 0) { throw "the packaged app failed its self-test (exit code $($p.ExitCode))" }
       # one artifact per file: download only the one you need (~120 MB each)
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
@@ -131,6 +142,8 @@ jobs:
     permissions:
       contents: write
       actions: write # start release-aar.yml for this release
+      id-token: write # sign the build provenance (Sigstore)
+      attestations: write # keep it with the repository
     steps:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -139,6 +152,12 @@ jobs:
           path: dist
       - name: Checksums
         run: cd dist && sha256sum *.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+      # anyone can check that a download was built here, from this commit:
+      # gh attestation verify AuroraVPN-Setup-<version>.exe -R paulvers-ui2/port1897
+      - name: Build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.exe
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}

@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -154,7 +155,7 @@ const (
 // loadOrRegisterWarp reads the WARP account in path, or registers a new free
 // one and saves it there. The file holds the WireGuard private key.
 func loadOrRegisterWarp(path string) (*warpAccount, error) {
-	if b, err := os.ReadFile(path); err == nil {
+	if b, err := readUserFile(path); err == nil {
 		var a warpAccount
 		if err := json.Unmarshal(b, &a); err != nil {
 			return nil, fmt.Errorf("warp: read %s: %w", path, err)
@@ -169,7 +170,7 @@ func loadOrRegisterWarp(path string) (*warpAccount, error) {
 		return nil, err
 	}
 	b, _ := json.MarshalIndent(a, "", "  ")
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+	if err := asUser.do(func() error { return os.WriteFile(filepath.Clean(path), b, 0o600) }); err != nil {
 		return nil, fmt.Errorf("warp: save %s: %w", path, err)
 	}
 	return a, nil

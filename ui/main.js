@@ -18,6 +18,7 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const http = require('node:http');
 const { execFile } = require('node:child_process');
+const { fileURLToPath } = require('node:url');
 const nodeNet = require('node:net');
 const os = require('node:os');
 const dnsPromises = require('node:dns').promises;
@@ -142,18 +143,126 @@ function appLog(...parts) {
 // logged, without changing what happens next (Electron's error dialog)
 process.on('uncaughtExceptionMonitor', (e, origin) => appLog(`${origin}:`, e));
 
+// Every IPC call must come from the app's own page, in its top frame. The
+// window never loads anything else, so a call from anywhere else is refused.
+const APP_PAGE = path.join(__dirname, 'renderer', 'index.html').toLowerCase();
+function fromAppPage(e) {
+  const f = e && e.senderFrame;
+  if (!f || f.parent !== null || !f.url.startsWith('file:')) return false;
+  try {
+    const u = new URL(f.url);
+    u.hash = '';
+    u.search = '';
+    return fileURLToPath(u).toLowerCase() === APP_PAGE;
+  } catch {
+    return false;
+  }
+}
+
 // every failing IPC handler is logged, then fails in the window as before
 {
   const handle = ipcMain.handle.bind(ipcMain);
   ipcMain.handle = (channel, fn) =>
-    handle(channel, async (...args) => {
+    handle(channel, async (e, ...args) => {
+      if (!fromAppPage(e)) {
+        appLog(`ipc ${channel} refused: from ${e && e.senderFrame ? e.senderFrame.url : 'no frame'}`);
+        throw new Error('refused');
+      }
       try {
-        return await fn(...args);
-      } catch (e) {
-        appLog(`ipc ${channel} failed:`, e);
-        throw e;
+        return await fn(e, ...args);
+      } catch (err) {
+        appLog(`ipc ${channel} failed:`, err);
+        throw err;
       }
     });
+}
+
+// Names that become object keys (apps, domains) never reach Object.prototype.
+const safeKey = (k) => typeof k === 'string' && k.length > 0 && k.length <= 512 && k !== '__proto__' && k !== 'constructor' && k !== 'prototype';
+// a map from untrusted names: no prototype to pollute
+const dict = (from) => Object.assign(Object.create(null), from);
+
+// ---------- settings from the window ----------
+
+// The window may change only settings that exist, each to a value of its
+// default's kind: one line of bounded text, a finite number, true or false,
+// or plain data with safe names. Anything else is dropped, and logged, so a
+// window gone bad can't plant settings the engine then runs with.
+const MAX_TEXT = 8192;
+const HTTPS_ONLY = new Set(['doh', 'fallbackDoh', 'odoh', 'odohRelay']);
+
+// cleanData copies plain data as JSON would keep it: undefined members go,
+// as JSON.stringify drops them when the settings are written.
+function cleanData(v, depth) {
+  if (depth > 8) throw new Error('nested too deep');
+  if (v === undefined || v === null || typeof v === 'boolean') return v;
+  if (typeof v === 'number') {
+    if (!Number.isFinite(v)) throw new Error('not a finite number');
+    return v;
+  }
+  if (typeof v === 'string') {
+    if (v.length > MAX_TEXT) throw new Error('text too long');
+    return v;
+  }
+  if (Array.isArray(v)) {
+    if (v.length > 20000) throw new Error('list too long');
+    return v.map((x) => cleanData(x, depth + 1) ?? null);
+  }
+  if (typeof v === 'object') {
+    const keys = Object.keys(v);
+    if (keys.length > 20000) throw new Error('too many entries');
+    const out = {};
+    for (const k of keys) {
+      if (!safeKey(k)) throw new Error(`bad name ${JSON.stringify(k).slice(0, 40)}`);
+      const x = cleanData(v[k], depth + 1);
+      if (x !== undefined) out[k] = x;
+    }
+    return out;
+  }
+  throw new Error('not plain data');
+}
+
+function cleanSetting(k, v) {
+  const def = DEFAULTS[k];
+  if (typeof def === 'boolean') {
+    if (typeof v !== 'boolean') throw new Error('want true or false');
+    return v;
+  }
+  if (typeof def === 'number') {
+    const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
+    if (typeof n !== 'number' || !Number.isFinite(n)) throw new Error('want a number');
+    return n;
+  }
+  if (typeof def === 'string') {
+    if (typeof v !== 'string' || v.length > MAX_TEXT || /[\u0000-\u001f\u007f]/.test(v)) throw new Error('want one line of text');
+    if (HTTPS_ONLY.has(k) && v && !/^https:\/\//i.test(v)) throw new Error('want an https:// address');
+    return v;
+  }
+  if (Array.isArray(def)) {
+    if (!Array.isArray(v)) throw new Error('want a list');
+    return cleanData(v, 0);
+  }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('want an object');
+  return cleanData(v, 0);
+}
+
+// cleanPatch keeps the settings in patch (only those in keys, if given)
+// that pass cleanSetting.
+function cleanPatch(patch, keys) {
+  const out = {};
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return out;
+  for (const k of Object.keys(patch)) {
+    if (!Object.hasOwn(DEFAULTS, k) || (keys && !keys.includes(k))) {
+      appLog(`settings: dropped ${JSON.stringify(k).slice(0, 60)}: not a setting here`);
+      continue;
+    }
+    try {
+      out[k] = cleanSetting(k, patch[k]);
+    } catch (e) {
+      appLog(`settings: dropped ${k}: ${e.message}`);
+    }
+  }
+  return out;
 }
 
 function enginePath() {
@@ -272,8 +381,8 @@ function routesOf(s) {
 
 // The rule set fswin applies (cmd/fswin/rules_windows.go).
 function ruleSet(s) {
-  const apps = {};
-  for (const [k, a] of Object.entries(s.rules.apps)) apps[k] = a.route ? { ...a, route: routeID(a.route) } : a;
+  const apps = Object.create(null);
+  for (const [k, a] of Object.entries(s.rules.apps)) if (safeKey(k)) apps[k] = a.route ? { ...a, route: routeID(a.route) } : a;
   return {
     apps,
     ips: s.rules.ips,
@@ -319,14 +428,15 @@ function learnApps(evs) {
       known = new Set(s.knownApps);
     }
     const name = e.app.toLowerCase();
-    if (e.rule === OUTGOING_ALLOWED && !s.rules.apps[name]) allowed.add(name);
+    if (!safeKey(name)) continue;
+    if (e.rule === OUTGOING_ALLOWED && !Object.hasOwn(s.rules.apps, name)) allowed.add(name);
     if (known.has(name)) continue;
     known.add(name);
     fresh.push({ name, blocked: e.rule === 'universal: new app' });
   }
   if (!fresh.length && !allowed.size) return;
   s.knownApps = [...known].sort();
-  const blocked = fresh.filter((f) => f.blocked && !s.rules.apps[f.name]);
+  const blocked = fresh.filter((f) => f.blocked && !Object.hasOwn(s.rules.apps, f.name));
   for (const f of blocked) s.rules.apps[f.name] = { mode: 'block' };
   // whitelisted: the app keeps working whatever the universal rules say
   for (const name of allowed) s.rules.apps[name] = { mode: 'bypassUniversal' };
@@ -888,7 +998,7 @@ const hist = { buf: [], seq: 0, engineLast: 0, engineStarted: 0, buckets: new Ma
 function loadBuckets() {
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(histDir(), 'buckets.json'), 'utf8'));
-    for (const [k, v] of Object.entries(raw)) hist.buckets.set(Number(k), v);
+    for (const [k, v] of Object.entries(raw)) hist.buckets.set(Number(k), { ...v, apps: dict(v.apps), domains: dict(v.domains) });
   } catch {
     // no history yet
   }
@@ -898,7 +1008,7 @@ function bucket(at) {
   const k = Math.floor(at / HOUR) * HOUR;
   let b = hist.buckets.get(k);
   if (!b) {
-    b = { rx: 0, tx: 0, flows: 0, apps: {}, domains: {} };
+    b = { rx: 0, tx: 0, flows: 0, apps: Object.create(null), domains: Object.create(null) };
     hist.buckets.set(k, b);
   }
   return b;
@@ -956,8 +1066,8 @@ async function pumpEvents(st, s) {
 function stats(range) {
   const hours = range === '7d' ? 168 : range === '24h' ? 24 : 1;
   const cutoff = Date.now() - hours * HOUR;
-  const apps = {};
-  const domains = {};
+  const apps = Object.create(null);
+  const domains = Object.create(null);
   let rx = 0;
   let tx = 0;
   let flows = 0;
@@ -1001,8 +1111,8 @@ function stats(range) {
 // the last two days of event files), for App info.
 function appStats(appName) {
   const want = String(appName || '').toLowerCase();
-  const domains = {};
-  const ips = {};
+  const domains = Object.create(null);
+  const ips = Object.create(null);
   const seen = new Set();
   const take = (e) => {
     if (e.kind !== 'flow' || String(e.app || '').toLowerCase() !== want) return;
@@ -1219,11 +1329,15 @@ function createWindow(show = true) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webviewTag: false,
+      spellcheck: false,
+      devTools: !app.isPackaged,
     },
   });
   // nothing in the window may navigate away or open new windows
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
+  win.webContents.on('will-attach-webview', (e) => e.preventDefault());
   // the window's warnings, errors and crashes go to the app log
   win.webContents.on('console-message', (e, lvl, msg, line, src) => {
     const level = e.level || ['debug', 'info', 'warning', 'error'][lvl];
@@ -1312,14 +1426,15 @@ function createTray() {
 
 ipcMain.handle('settings:get', () => readSettings());
 ipcMain.handle('settings:set', async (_e, patch) => {
-  const merged = migrate({ ...readSettings(), ...patch });
+  const p = cleanPatch(patch);
+  const merged = migrate({ ...readSettings(), ...p });
   writeSettings(merged);
-  if (RULE_KEYS.some((k) => k in patch)) await pushRules(merged);
+  if (RULE_KEYS.some((k) => k in p)) await pushRules(merged);
   return merged;
 });
 // Rule changes apply at once, without a restart.
 ipcMain.handle('rules:set', async (_e, patch) => {
-  const s = migrate({ ...readSettings(), ...patch });
+  const s = migrate({ ...readSettings(), ...cleanPatch(patch, RULE_KEYS) });
   writeSettings(s);
   const r = await pushRules(s);
   return { settings: s, warnings: r.warnings };
@@ -1435,7 +1550,7 @@ ipcMain.handle('bl:delete', async () => {
 ipcMain.handle('engine:block', async (_e, appName, block) => {
   const name = String(appName).trim().toLowerCase();
   const s = readSettings();
-  if (!name) return s;
+  if (!safeKey(name)) return s;
   const a = { ...s.rules.apps[name] };
   if (block) a.mode = 'block';
   else if (a.mode === 'block') delete a.mode;
@@ -1589,7 +1704,7 @@ ipcMain.handle('backup:restore', async () => {
   put(usqueFile('warp2'), b.usque && b.usque.warp2);
   put(path.join(usqueDir(), 'wg0.conf'), b.usque && b.usque.wg0);
   put(path.join(dataDir(), 'warp.json'), b.warp);
-  const s = { ...DEFAULTS, ...b.settings, wasRunning: false };
+  const s = migrate({ ...DEFAULTS, ...cleanPatch(b.settings), wasRunning: false });
   if (s.exit === 'wg' && !wgFile(s.wgActive)) s.exit = 'none';
   writeSettings(s);
   return { ok: true };
@@ -1880,6 +1995,7 @@ if (!app.requestSingleInstanceLock()) {
     // process, the clipboard goes through IPC): refuse every request and check
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
     session.defaultSession.setPermissionCheckHandler(() => false);
+    if (process.argv.includes('--self-test')) return selfTest();
     loadBuckets();
     // the start-at-login entry names the program's path, which moved with the
     // rename (port1897's entry goes, the new one points at this copy)
@@ -1908,6 +2024,38 @@ if (!app.requestSingleInstanceLock()) {
     } else if (autostart && readSettings().wasRunning) {
       const r = await startEngine();
       if (!r.ok) notify('Could not resume protection: ' + r.error);
+    }
+  });
+}
+
+// --self-test, for CI: open the window hidden, wait until the page has its
+// settings (so its scripts ran and IPC passed the sender check), and quit
+// with 0, or 1 when it did not. It proves a packaged build starts, its
+// Electron fuses included.
+function selfTest() {
+  const fail = (why) => {
+    appLog('self-test failed:', why);
+    app.exit(1);
+  };
+  setTimeout(() => fail('timed out'), 60000);
+  createWindow(false);
+  win.webContents.once('did-fail-load', (_e, code, desc) => fail(`${code} ${desc}`));
+  win.webContents.once('did-finish-load', async () => {
+    try {
+      const title = await win.webContents.executeJavaScript(`new Promise((done) => {
+        const t0 = Date.now();
+        const check = () => {
+          if (typeof App === 'object' && App.settings && typeof App.settings.mode === 'string') return done(document.title);
+          if (Date.now() - t0 > 20000) return done('');
+          setTimeout(check, 200);
+        };
+        check();
+      })`);
+      if (title !== 'AuroraVPN') return fail(`the page did not come up (${JSON.stringify(title)})`);
+      appLog('self-test ok');
+      app.exit(0);
+    } catch (e) {
+      fail(e.message);
     }
   });
 }
