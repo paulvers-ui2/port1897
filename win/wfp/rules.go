@@ -158,13 +158,13 @@ func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight ui
 	sd, err := getCurrentProcessSecurityDescriptor()
 	switch {
 	case err == nil:
-		sdBlob = wtFwpByteBlob{sd.Length(), (*byte)(unsafe.Pointer(sd))}
+		sdBlob = wtFwpByteBlob{sd.Length(), (*byte)(unsafe.Pointer(sd))} //nolint:gosec // G103: WFP takes the descriptor as a byte blob
 		conditions[1] = wtFwpmFilterCondition0{
 			fieldKey:  cFWPM_CONDITION_ALE_USER_ID,
 			matchType: cFWP_MATCH_EQUAL,
 			conditionValue: wtFwpConditionValue0{
 				_type: cFWP_SECURITY_DESCRIPTOR_TYPE,
-				value: uintptr(unsafe.Pointer(&sdBlob)),
+				value: uintptr(unsafe.Pointer(&sdBlob)), //nolint:gosec // G103: WFP condition values are raw pointers
 			},
 		}
 		numConditions = 2
