@@ -867,6 +867,7 @@ function lastLogLines(n) {
 }
 
 let expectedStop = false;
+let enginePid = 0; // the engine this app started, 0 if not known
 
 async function startEngine() {
   const s = readSettings();
@@ -918,6 +919,7 @@ async function startEngineOnce() {
       return { ok: false, error: e.message };
     }
   }
+  enginePid = pid;
   // WARP registration and the usque chain can take a while on first use; an
   // engine that exits instead is reported at once, with its own reason
   for (let i = 0; i < 120; i++) {
@@ -951,9 +953,30 @@ async function stopEngineOnce(byUser) {
   if (byUser) writeSettings({ ...readSettings(), wasRunning: false });
   for (let i = 0; i < 20; i++) {
     await new Promise((r) => setTimeout(r, 250));
-    if (!(await engineStatus())) return { ok: true };
+    if (!(await engineStatus())) {
+      await engineExited();
+      return { ok: true };
+    }
   }
   return { ok: false, error: 'The engine is still running.' };
+}
+
+// engineExited waits for the engine we started to end. Its API goes away
+// first; it then removes its DNS rule and adapter, a few seconds more. A start
+// meanwhile found it still alive: the service answered with the old engine,
+// which then ended, and a switch of exit (none → WireGuard) never started.
+async function engineExited() {
+  const pid = enginePid;
+  if (!pid) return true;
+  for (let i = 0; i < 60; i++) {
+    if (!alive(pid)) {
+      enginePid = 0;
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  appLog(`engine ${pid} still ending after 15 s`);
+  return false;
 }
 
 // ---------- WARP identities and wg0 for usque ----------

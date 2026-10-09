@@ -119,6 +119,16 @@ $w.WriteLine('{"cmd":"ping"}')
   $r = Pipe @{ cmd = 'start'; args = $engineArgs }
   $st = Wait-Api 45
   Check 'a second engine comes up' ($r.ok -and $null -ne $st) ($r | ConvertTo-Json -Compress)
+
+  # a start as soon as the app's stop took the API down, while the old engine
+  # still removes its adapter (switching exits): a new engine, not the old one
+  $old = $r.pid
+  try { $null = Api '/api/stop' 'POST' } catch {}
+  for ($i = 0; $i -lt 100; $i++) { try { $null = Api '/api/status'; Start-Sleep -Milliseconds 100 } catch { break } }
+  $r = Pipe @{ cmd = 'start'; args = $engineArgs }
+  $st = Wait-Api 45
+  Check 'a start while the old engine ends starts a new one' ($r.ok -and $r.pid -and $r.pid -ne $old -and $null -ne $st) "old $old, new $($r | ConvertTo-Json -Compress)"
+  Check 'the old engine is gone' ($old -and (Wait-Exit $old 5)) ''
   try { $null = Api '/api/stop' 'POST' } catch {}
   Check 'the app''s stop still works' ($r.pid -and (Wait-Exit $r.pid 30)) ''
 

@@ -552,8 +552,17 @@ func (ps *pipeServer) startEngine(c *pipeClient, args []string) (uint32, error) 
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	if e := ps.running; e != nil {
-		if !e.exited(0) {
-			return e.pid, nil // the app checks the engine's API anyway
+		// The app starts only when the engine's API is gone, so one still
+		// alive is ending: its API goes first, then it removes its DNS rule
+		// and adapter. Answering with it meant no new engine (a switch from
+		// one exit to another never started). Wait for it, or end it.
+		if !e.exited(15 * time.Second) {
+			ps.logf("engine %d still running at a new start; ending it", e.pid)
+			_ = windows.SetEvent(e.stop)
+			if !e.exited(5 * time.Second) {
+				_ = windows.TerminateProcess(e.process, 1)
+				e.exited(5 * time.Second)
+			}
 		}
 		e.close()
 		ps.running = nil
