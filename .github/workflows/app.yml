@@ -130,6 +130,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: write # start release-aar.yml for this release
     steps:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -150,3 +151,10 @@ jobs:
           --title "port1897 $TAG"
           --generate-notes
           --latest
+      # a release made with the workflow token starts no workflows, so the
+      # Android library is built for it here; it lands on this same release
+      - name: Attach the Android library
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: gh workflow run release-aar.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f tag="$TAG"
