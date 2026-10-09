@@ -23,7 +23,7 @@ jobs:
   provenance:
     name: 🔏 Build attestation
     if: ${{ inputs.subjects != '' && inputs.subjects != '[]' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       id-token: write
       attestations: write
@@ -46,7 +46,7 @@ jobs:
   sbom:
     name: 📦 SBOM attestation
     if: ${{ inputs.sbom-info != '' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       id-token: write
       attestations: write
@@ -56,7 +56,7 @@ jobs:
         subject: ${{ fromJson(inputs.sbom-info).subjects }}
     steps:
       - name: ⬇️ Download SBOM
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           artifact-ids: ${{ fromJson(inputs.sbom-info).artifactId }}
           path: sbom

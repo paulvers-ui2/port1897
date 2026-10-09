@@ -13,7 +13,7 @@ jobs:
   # github.com/advanced-security/cbom-action
   build-matrix:
     name: 🚏 Repo analysis
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       repositories: ${{ steps.rm.outputs.repositories }}
     steps:
@@ -27,7 +27,7 @@ jobs:
 
   run-cbom-action:
     name: 📜 ${{ fromJson(matrix.repository).nameWithOwner }} - ${{ fromJson(matrix.repository).language }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-matrix
     continue-on-error: true
     strategy:
@@ -48,7 +48,7 @@ jobs:
 
   cbom-summary:
     name: 🌋 CBOM results
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: run-cbom-action
     steps:
       - name: 🔅 Summarize

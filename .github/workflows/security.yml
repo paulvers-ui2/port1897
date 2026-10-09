@@ -33,7 +33,7 @@ concurrency:
 jobs:
   codeql:
     name: CodeQL (${{ matrix.language }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -50,14 +50,13 @@ jobs:
           - language: actions
             build-mode: none
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - if: matrix.language == 'go'
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: "1.26.x" # newest patch: go.mod's 1.26.0 has known stdlib vulnerabilities
-          check-latest: true
+          go-version-file: go.mod # its toolchain line: the patched Go every build uses
       - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
         with:
           languages: ${{ matrix.language }}
@@ -78,7 +77,7 @@ jobs:
 
   golangci:
     name: golangci-lint (${{ matrix.goos }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
       contents: read
@@ -92,26 +91,35 @@ jobs:
       GOOS: ${{ matrix.goos }}
       CGO_ENABLED: "0"
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: "1.26.x" # newest patch: go.mod's 1.26.0 has known stdlib vulnerabilities
-          check-latest: true
+          go-version-file: go.mod # its toolchain line: the patched Go every build uses
       - name: Lint
         id: lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        # the backlog is reported, not fatal; pull requests fail on new issues
-        continue-on-error: ${{ github.event_name != 'pull_request' }}
+        # pull requests fail on new issues, shown as annotations; on main and
+        # the weekly run the whole backlog goes to code scanning and the job
+        # summary only, not hundreds of annotations
         with:
           version: v2.14.0
           only-new-issues: ${{ github.event_name == 'pull_request' }}
           args: >-
             --config=.github/golangci-security.yml
-            --output.text.path=stdout
+            --output.text.path=${{ github.event_name == 'pull_request' && 'stdout' || format('golangci-{0}.txt', matrix.goos) }}
             --output.sarif.path=golangci-${{ matrix.goos }}.sarif
+            --issues-exit-code=${{ github.event_name == 'pull_request' && '1' || '0' }}
+      - if: always() && github.event_name != 'pull_request'
+        env:
+          GOOS_NAME: ${{ matrix.goos }}
+        run: |
+          f="golangci-$GOOS_NAME.txt"
+          [ -f "$f" ] || exit 0
+          { echo "## golangci-lint ($GOOS_NAME): $(grep -cE '^[^ ].*:[0-9]+:[0-9]+: ' "$f") findings, in code scanning"
+            echo '```'; tail -60 "$f"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - if: always() && hashFiles(format('golangci-{0}.sarif', matrix.goos)) != ''
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
         with:
@@ -120,7 +128,7 @@ jobs:
 
   govulncheck:
     name: govulncheck (windows)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -129,19 +137,22 @@ jobs:
       GOOS: windows
       CGO_ENABLED: "0"
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: "1.26.x" # newest patch: go.mod's 1.26.0 has known stdlib vulnerabilities
-          check-latest: true
+          go-version-file: go.mod # its toolchain line: the patched Go every build uses
       # go.yml runs govulncheck for linux and android; the windows-only
       # files (cmd/fswin, win/, *_windows.go) are checked only here
       - name: Install govulncheck
         run: GOOS= go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
       - name: Report
-        run: govulncheck -format sarif ./... > govulncheck.sarif
+        run: |
+          govulncheck -format sarif ./... > govulncheck.raw.sarif
+          # govulncheck can list the same call stack twice in one result,
+          # which code scanning rejects as invalid SARIF
+          jq '(.runs[]?.results[]? | select(.stacks != null) | .stacks) |= unique' govulncheck.raw.sarif > govulncheck.sarif
       - if: always() && hashFiles('govulncheck.sarif') != ''
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
         with:
@@ -157,17 +168,19 @@ jobs:
 
   semgrep:
     name: Semgrep
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
           fetch-depth: 0
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false # no Python dependencies to cache
       - name: Scan
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
@@ -189,16 +202,16 @@ jobs:
 
   electron:
     name: Electronegativity (ui)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
       - name: Scan
@@ -214,16 +227,16 @@ jobs:
 
   osv:
     name: OSV-Scanner
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
       - name: Resolve the app's npm dependencies
@@ -250,13 +263,13 @@ jobs:
 
   gitleaks:
     name: Gitleaks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
           fetch-depth: 0
@@ -282,16 +295,18 @@ jobs:
 
   zizmor:
     name: zizmor (workflows)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: false # no Python dependencies to cache
       - name: Scan
         env:
           GH_TOKEN: ${{ github.token }} # for the online audits (impostor commits, known-vulnerable actions)
@@ -309,7 +324,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - name: Analyze

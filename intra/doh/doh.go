@@ -662,6 +662,8 @@ func (t *transport) do(pid string, req *http.Request) (ans []byte, rpid, blockli
 		qerr = dnsx.NewSendFailedQueryError(err)
 		return
 	}
+	// closed on every path, a failed read included
+	defer res.Body.Close()
 
 	blocklists, region = t.rdnsHeaders(&res.Header)
 	// todo: check if content-type is [doh|odoh] mime type
@@ -671,9 +673,8 @@ func (t *transport) do(pid string, req *http.Request) (ans []byte, rpid, blockli
 		qerr = dnsx.NewSendFailedQueryError(err)
 		return
 	}
-	core.Close(res.Body)
 	if settings.Debug {
-		log.V("doh: closed response of sz %d; used ech? %t", len(ans), withech)
+		log.V("doh: read response of sz %d; used ech? %t", len(ans), withech)
 	}
 
 	// update the hostname, which could have changed due to a redirect

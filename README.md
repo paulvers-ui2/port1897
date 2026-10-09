@@ -43,9 +43,10 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
 - **Kill switch** (`-killswitch`): Windows Filtering Platform rules block everything
   outside the tunnel, and keep blocking if the engine crashes.
 - **App window** (`ui/`): an Electron app styled after the Android home screen, with
-  a tray icon. Download **port1897-setup-windows-x64** (installer) or
-  **port1897-portable-windows-x64** from the
-  [App workflow](https://github.com/paulvers-ui2/port1897/actions/workflows/app.yml?query=branch%3Amain+is%3Asuccess).
+  a tray icon. Download the installer or the portable exe from the
+  [latest release](https://github.com/paulvers-ui2/port1897/releases/latest);
+  every change merged into `main` is published there as a new version, which the
+  app's update check finds.
 
 Not yet: a background service, IPv6, country and network-provider stats.
 See the [roadmap](#roadmap).

@@ -18,13 +18,12 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: "1.26.x" # newest patch: go.mod's 1.26.0 has known stdlib vulnerabilities
-          check-latest: true
+          go-version-file: go.mod # its toolchain line: the patched Go every build uses
       - name: Build fswin, fakedns and fetch Wintun
         shell: bash
         env:
@@ -44,7 +43,7 @@ jobs:
       - name: Simulate
         shell: pwsh
         run: ./tools/sim/e2e-windows.ps1 -Dist dist -Out sim-out
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always()
         with:
           name: sim-windows
@@ -58,10 +57,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
       - name: Simulate
@@ -70,16 +69,15 @@ jobs:
 
   dns-linux:
     name: DoH failures (Linux)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version: "1.26.x" # newest patch: go.mod's 1.26.0 has known stdlib vulnerabilities
-          check-latest: true
+          go-version-file: go.mod # its toolchain line: the patched Go every build uses
       - name: Simulate
         env:
           GOFLAGS: -tags=dnssim -ldflags=-checklinkname=0
@@ -98,7 +96,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           ! grep -qE '^(--- FAIL|FAIL|panic:)' dnssim.txt
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always()
         with:
           name: sim-dns-linux

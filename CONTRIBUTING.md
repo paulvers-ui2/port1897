@@ -65,6 +65,15 @@ See the roadmap in [README.md](README.md#roadmap) and the Phase 2 table in
 [PORT.md](PORT.md). Open an issue before starting something large so work is not
 duplicated.
 
+### Releases
+
+Every pull request merged into `main` publishes the next patch version (v0.2.1,
+v0.2.2, ...) as the latest GitHub release: the installer, the portable exe and
+SHA256SUMS.txt, with notes listing the merged pull requests. Put
+`[skip release]` in the merge commit message to merge without one. For a minor
+or major version, push a tag such as `v0.3.0`; later merges continue from it.
+The workflow is `.github/workflows/app.yml`.
+
 ## Security issues
 
 Do not open a public issue. Use GitHub's private

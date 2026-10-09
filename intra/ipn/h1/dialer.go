@@ -124,6 +124,7 @@ func (t *HttpTunnel) Dial(network string, address string) (net.Conn, error) {
 	// Retry request with auth, if available.
 	if resp.StatusCode == http.StatusProxyAuthRequired && t.auth != nil {
 		responseHdr, err := t.performAuthChallengeResponse(resp)
+		_ = resp.Body.Close() // reads the rest of the 407 off conn before the retry
 		if err != nil {
 			clos(conn)
 			return nil, err
@@ -136,6 +137,8 @@ func (t *HttpTunnel) Dial(network string, address string) (net.Conn, error) {
 		}
 	}
 
+	// a 2xx reply to CONNECT has no body; closing it leaves conn open
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		clos(conn)
 		return nil, fmt.Errorf("http1: tunnel: failed proxying %d: %s", resp.StatusCode, resp.Status)
