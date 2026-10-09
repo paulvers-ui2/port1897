@@ -91,6 +91,7 @@ const DEFAULTS = {
   pausedUntil: 0,
   // Anti-censorship and sockets (Network)
   dialStrategy: 'never', // never | auto | split-tcp | split-tls
+  mtu: 0, // the adapter's MTU; 0: automatic, from the network and the exit
   dialRetry: '',
   dialTimeout: 0,
   tcpKeepAlive: false,
@@ -690,6 +691,7 @@ function engineArgs(s) {
     '-fallback-doh', s.fallbackDoh,
     '-fallback-ips', s.fallbackIps,
   ];
+  if (s.mtu >= 1280 && s.mtu <= 1500) a.push('-mtu', String(s.mtu));
   // Firewall mode leaves DNS to the network adapter's servers, as on Android
   const type = s.mode === 'firewall' ? 'system' : s.dnsType === 'rdns' ? 'doh' : s.dnsType;
   a.push('-dns', type);

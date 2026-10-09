@@ -124,7 +124,7 @@ func main() {
 	var o options
 	var golog int
 	flag.StringVar(&o.name, "name", "AuroraVPN", "Wintun adapter name")
-	flag.IntVar(&o.mtu, "mtu", 1500, "adapter MTU")
+	flag.IntVar(&o.mtu, "mtu", 0, "adapter MTU; 0: automatic, from the network and the exit (mtu_windows.go)")
 	flag.StringVar(&o.doh, "doh", "https://cloudflare-dns.com/dns-query", "DoH server URL")
 	flag.StringVar(&o.dohips, "doh-ips", "1.1.1.1,1.0.0.1", "comma-separated IPs of the DoH server")
 	flag.BoolVar(&o.setdns, "set-dns", true, "point the adapter's DNS at the tunnel and give it the lowest metric")
@@ -252,6 +252,11 @@ func run(o options) error {
 	if err != nil {
 		return err
 	}
+	// before the adapter exists, the default route is still the network's
+	link, linkWhy := linkMTU(0)
+	plan := planMTU(link, linkWhy, exitID, exitCfg, us, o.mtu)
+	curMTU.Store(&plan)
+	fmt.Printf("fswin: MTU: %s\n", &plan)
 	var uq *usque // started once all traffic goes to the tunnel
 	defer func() { uq.stop() }()
 	if exitID != "" || o.kill {
@@ -263,7 +268,7 @@ func run(o options) error {
 	}
 
 	tun.WintunTunnelType = "AuroraVPN"
-	dev, err := tun.CreateTUN(o.name, o.mtu)
+	dev, err := tun.CreateTUN(o.name, plan.Adapter)
 	if err != nil {
 		return fmt.Errorf("create wintun adapter (run as admin, wintun.dll next to the exe?): %w", err)
 	}
@@ -362,11 +367,14 @@ func run(o options) error {
 		b.setExit(exitID)
 	}
 	// fakedns must be ip:port; a bare ip is rejected and DNS goes unrecognized.
-	t, err := intra.Connect(id, o.mtu, o.mtu, ifaddr4+"/24", fakedns4+":53", dtr, b)
+	t, err := intra.Connect(id, plan.Link, plan.Adapter, ifaddr4+"/24", fakedns4+":53", dtr, b)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
 	defer t.Disconnect()
+	mtuDone := make(chan struct{})
+	defer close(mtuDone) // before Disconnect
+	go watchLinkMTU(t, uint32(ifc.Index), mtuDone)
 	b.closer.Store(func(csv string) string { return t.CloseConns(csv) })
 	b.tun.Store(t)
 	if err := setDialer(o); err != nil {
