@@ -18,6 +18,7 @@ const os = require('node:os');
 const path = require('node:path');
 const Module = require('node:module');
 const { execFileSync } = require('node:child_process');
+const { pathToFileURL } = require('node:url');
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'p1897-zipsim-'));
 const userData = path.join(root, 'userData');
@@ -124,10 +125,14 @@ const check = (what, ok, detail = '') => {
   console.log(`[${ok ? 'PASS' : 'FAIL'}] ${what}${detail ? ' -- ' + detail : ''}`);
 };
 
+// an IPC call as the window makes it: from the app's own page (main.js
+// refuses calls from anywhere else)
+const fromApp = { senderFrame: { parent: null, url: pathToFileURL(path.join(__dirname, '..', '..', 'ui', 'renderer', 'index.html')).href } };
+
 (async () => {
   try {
     if (!handlers['debug:zip']) throw new Error('main.js registered no debug:zip handler');
-    const r = await handlers['debug:zip']();
+    const r = await handlers['debug:zip'](fromApp);
     check('the handler reports success', r && r.ok, JSON.stringify(r));
     check('the zip is where the save dialog pointed (a folder with a space)', savedTo && fs.existsSync(savedTo), savedTo);
 
@@ -171,8 +176,12 @@ const check = (what, ok, detail = '') => {
     check('no temp folder or temp zip is left behind', leftovers.length === 0, leftovers.join(', '));
 
     // a second save over the same file replaces it
-    const r2 = await handlers['debug:zip']();
+    const r2 = await handlers['debug:zip'](fromApp);
     check('saving again over the same file replaces it', r2 && r2.ok && r2.file === savedTo && fs.statSync(savedTo).size > 0, JSON.stringify(r2));
+
+    // last: the refusal is logged to app.log, in the data folder
+    const refused = await handlers['debug:zip']({ senderFrame: { parent: null, url: 'https://example.com/' } }).then(() => false, (e) => /refused/.test(e.message));
+    check('a call from another page is refused', refused);
   } catch (e) {
     check('ran to the end', false, e.stack);
   } finally {
