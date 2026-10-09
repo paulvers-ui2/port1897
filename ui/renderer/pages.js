@@ -381,7 +381,8 @@ async function removeCustomDns(type, e) {
 
 function warpStatusText(reg) {
   const s = App.settings;
-  if (App.status && s.exit === 'masque') return 'Connected · routing via Cloudflare WARP';
+  if (App.status && App.status.exit === EXIT_LABEL.masque) return 'Connected · routing via Cloudflare WARP';
+  if (App.status && s.exit === 'masque') return 'On · restart protection to connect';
   if (!reg.warp1.registered) return 'Not registered';
   return 'Registered · switch on to connect';
 }
@@ -660,11 +661,12 @@ PAGES.chain = () => {
   App.port.usque.status().then((reg) => {
     const ready = reg.warp1.registered && reg.warp2.registered && reg.wg0.present;
     const on = s.exit === 'chain';
-    const connected = on && !!App.status;
+    const running = !!App.status;
+    const connected = running && App.status.exit === EXIT_LABEL.chain; // what the engine runs, not the setting
     const m1 = flagVal(s.warp1Flags, ['-m', '--mtu'], 1280);
     const wgm = reg.wg0.present ? Math.min(flagVal(s.wgFlags, ['--wg-mtu'], 0) || wgMtu(reg.wg0.text) || m1 - 60, m1 - 60) : null;
     const m2 = flagVal(s.warp2Flags, ['--exit-mtu'], 1280);
-    const statusText = connected ? 'Connected' : ready ? 'Ready — not connected' : 'Setup incomplete';
+    const statusText = connected ? 'Connected' : !ready ? 'Setup incomplete' : running ? 'Protection is on without the chain' : 'Ready — not connected';
     const exitOut = h('p', { class: 'cmd', text: 'Not checked yet' });
 
     const hop = (title, sub, registered, which, sniKey, sniLabel, flagsKey, flagsExample) => {
@@ -749,7 +751,7 @@ PAGES.chain = () => {
           if (connected) return App.stopEngine();
           if (!ready) return toast('Finish steps 1–3 first');
           await App.save({ exit: 'chain' });
-          App.startEngine();
+          return running ? App.restart() : App.startEngine();
         }, { wide: true, cls: 'big', disabled: !ready && !connected }),
           h('div', { class: 'actions' }, btn('Check exit IP', async () => {
           if (!App.status) return (exitOut.textContent = 'Connect first');
