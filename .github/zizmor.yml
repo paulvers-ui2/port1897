@@ -2,6 +2,5 @@
 rules:
   superfluous-actions:
     ignore:
-      # upstream firestack release steps; softprops/action-gh-release is pinned to a commit
+      # upstream firestack release step; softprops/action-gh-release is pinned to a commit
       - go.yml
-      - release-aar.yml

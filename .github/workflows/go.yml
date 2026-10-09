@@ -3,9 +3,9 @@ name: AAARRR
 on:
   push:                        # every commit to any branch
   pull_request:                # every PR
-  release:
-    types: [published]
   workflow_dispatch:
+  # this fork publishes on its GitHub releases only (app.yml, release-aar.yml):
+  # no release trigger here, and upstream's Maven publishing is off (PUBLISH)
 
 permissions:
   contents: read
@@ -189,7 +189,7 @@ jobs:
         SBOM_ARTIFACT_ID: ${{ steps.sbom-upload.outputs.artifact-id }}
         SBOM_ARTIFACT_NAME: ${{ format('firestack-sbom-{0}', github.sha) }}
         GRYPE_SARIF: ${{ steps.gr.outputs.sarif }}
-        PUBLISH: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'release' }}
+        PUBLISH: 'false' # upstream published to GitHub Packages and Maven Central (com.celzero); not this fork
 
   attestation:
     name: 🪪 Artifact attestations

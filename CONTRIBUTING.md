@@ -69,10 +69,13 @@ duplicated.
 
 Every pull request merged into `main` publishes the next patch version (v0.2.1,
 v0.2.2, ...) as the latest GitHub release: the installer, the portable exe and
-SHA256SUMS.txt, with notes listing the merged pull requests. Put
+SHA256SUMS.txt, with notes listing the merged pull requests, and a few minutes
+later firestack's Android library (AAR) with its own checksums. Put
 `[skip release]` in the merge commit message to merge without one. For a minor
 or major version, push a tag such as `v0.3.0`; later merges continue from it.
-The workflow is `.github/workflows/app.yml`.
+Releases are published here only: nothing is pushed to other repositories or
+to Maven. The workflows are `.github/workflows/app.yml` and
+`.github/workflows/release-aar.yml`.
 
 ## Security issues
 
