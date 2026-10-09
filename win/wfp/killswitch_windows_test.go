@@ -10,6 +10,7 @@ package wfp
 
 import (
 	"errors"
+	"os"
 	"testing"
 
 	"golang.org/x/sys/windows"
@@ -30,6 +31,10 @@ func TestPermitSelfWithoutServiceSID(t *testing.T) {
 
 	session, err := openSession(cFWPM_SESSION_FLAG_DYNAMIC)
 	if err != nil {
+		// GitHub's runners are admin: a skip there would hide a regression
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatalf("no WFP session on the CI runner: %v", err)
+		}
 		t.Skipf("no WFP session (needs admin): %v", err)
 	}
 	defer fwpmEngineClose0(session)

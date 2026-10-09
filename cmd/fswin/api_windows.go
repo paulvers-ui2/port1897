@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -90,7 +91,7 @@ func apiPreflight(addr, tokenFile string) error {
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
 		return errors.New("-api must be a loopback address like 127.0.0.1:47897")
 	}
-	tok, err := os.ReadFile(tokenFile)
+	tok, err := os.ReadFile(filepath.Clean(tokenFile))
 	if err != nil {
 		return fmt.Errorf("-token-file: %w", err)
 	}
