@@ -285,6 +285,7 @@ function demoPort() {
     history: true, logLevel: 3, notify: true, statusAlerts: true, theme: 'darkplus', autostart: false,
   };
   let running = false;
+  let runExit = 'none'; // as the engine, the exit it started with, not the setting
   let id = 0;
   let flows = 0;
   let queries = 0;
@@ -299,7 +300,7 @@ function demoPort() {
   return {
     getSettings: async () => ({ ...s }),
     setSettings: async (p) => (s = { ...s, ...p }),
-    start: async () => ((running = true), { ok: true }),
+    start: async () => ((running = true), (runExit = s.exit), { ok: true }),
     stop: async () => ((running = false), { ok: true }),
     cleanup: async () => ({ ok: true }),
     killSwitch: async (on) => ((s.killSwitch = !!on), { ok: true, applied: running ? 'now' : 'next start' }),
@@ -309,7 +310,7 @@ function demoPort() {
       queries += 2;
       return {
         version: 'demo', startedAt: Date.now(), mode: s.full ? 'full' : 'dns', nrpt: s.nrpt, killSwitch: s.killSwitch,
-        exit: s.exit === 'none' ? '' : EXIT_LABEL[s.exit],
+        exit: runExit === 'none' ? '' : EXIT_LABEL[runExit],
         dns: { server: s.doh, type: s.dnsType, queries, failed: 0, lastMs: 18, avgMs: 21 },
         firewall: { flows, blocked: Math.floor(flows / 9), blockedApps: apps.filter(isBlocked), appsSeen: 6 },
         traffic: { rx: flows * 48000, tx: flows * 9000 },

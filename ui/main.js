@@ -645,6 +645,15 @@ async function engineStatus() {
   }
 }
 
+// The engine's status names its exit as fswin's exitName does; "" is direct.
+const ENGINE_EXIT = { none: '', masque: 'Cloudflare WARP (MASQUE)', chain: 'WARP chain', warp: 'Cloudflare WARP', wg: 'WireGuard', socks: 'proxy', http: 'proxy' };
+
+// runsExit tells whether a running engine's status st has the exit s asks for.
+function runsExit(st, s) {
+  const want = ENGINE_EXIT[s.exit || 'none'];
+  return want === undefined || st.exit === want;
+}
+
 const split = (s) => String(s || '').split(/\s+/).filter(Boolean);
 
 function masqueFlags(s) {
@@ -867,7 +876,15 @@ async function startEngine() {
 }
 
 async function startEngineOnce() {
-  if (await engineStatus()) return { ok: true };
+  // Start runs the engine with the settings. One already running with another
+  // exit (Connect chain while protection is on) restarts: reporting it as
+  // running left the chain screen saying "Connected" with no chain at all.
+  const running = await engineStatus();
+  if (running) {
+    if (runsExit(running, readSettings())) return { ok: true };
+    const stop = await stopEngineOnce(false);
+    if (!stop.ok) return stop;
+  }
   const exe = enginePath();
   if (!fs.existsSync(exe)) return { ok: false, error: `Engine not found at ${exe}` };
   const s = readSettings();
