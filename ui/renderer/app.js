@@ -267,6 +267,14 @@ main();
 
 // ---------- demo mode (no engine, e.g. opened in a browser) ----------
 
+// the demo engine's MTUs, as mtu_windows.go works them out on Wi-Fi
+function demoMtu(exit, set) {
+  const tunnel = { wg: ['WireGuard', 1420], warp: ['WireGuard', 1280], masque: ['WARP (MASQUE)', 1280], chain: ['WARP chain exit', 1280] }[exit];
+  const ex = tunnel ? tunnel[1] : 1500;
+  const adapter = set || Math.min(ex, 1500);
+  return { link: 1500, exit: ex, adapter, auto: !set, why: `Wi-Fi 1500${tunnel ? `, ${tunnel[0]} ${ex}` : ''}` };
+}
+
 function demoPort() {
   let s = {
     dnsType: 'doh', doh: 'https://cloudflare-dns.com/dns-query', dohIps: '1.1.1.1,1.0.0.1', dohName: 'Cloudflare',
@@ -279,7 +287,7 @@ function demoPort() {
     rules: { apps: { 'notepad.exe': { mode: 'block' } }, ips: [], domains: [{ domain: 'ads.example.com', action: 'block' }] },
     universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false },
     dnsTypesAuto: true, dnsTypes: [1, 28, 5, 65, 64, 45], knownApps: [], pausedUntil: 0,
-    dialStrategy: 'never', dialRetry: '', dialTimeout: 0, tcpKeepAlive: false, eim: false,
+    dialStrategy: 'never', dialRetry: '', dialTimeout: 0, tcpKeepAlive: false, eim: false, mtu: 0,
     odoh: '', odohRelay: '', odohName: '', dnsProxy: '', dnsProxyName: '', dnscryptRelays: [],
     blocklistsLocal: false, localFlags: [], localStamp: '', remoteFlags: [], remoteStamp: '',
     history: true, logLevel: 3, notify: true, statusAlerts: true, theme: 'darkplus', autostart: false,
@@ -311,6 +319,7 @@ function demoPort() {
       return {
         version: 'demo', startedAt: Date.now(), mode: s.full ? 'full' : 'dns', nrpt: s.nrpt, killSwitch: s.killSwitch,
         exit: runExit === 'none' ? '' : EXIT_LABEL[runExit],
+        mtu: demoMtu(runExit, s.mtu),
         dns: { server: s.doh, type: s.dnsType, queries, failed: 0, lastMs: 18, avgMs: 21 },
         firewall: { flows, blocked: Math.floor(flows / 9), blockedApps: apps.filter(isBlocked), appsSeen: 6 },
         traffic: { rx: flows * 48000, tx: flows * 9000 },

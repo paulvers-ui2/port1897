@@ -24,6 +24,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -80,7 +81,14 @@ func wgQuickToUAPI(conf string) (string, error) {
 				fmt.Fprintf(&iface, "dns=%s\n", v)
 				sawDNS = true
 			case "mtu":
-				fmt.Fprintf(&iface, "mtu=%s\n", v)
+				// wg-quick's MTU is the size of a packet inside the tunnel;
+				// firestack's is the size on the link, and it keeps
+				// wgOverhead of that for WireGuard (mtu_windows.go)
+				if m, err := strconv.Atoi(v); err == nil && m > 0 {
+					fmt.Fprintf(&iface, "mtu=%d\n", m+wgOverhead)
+				} else {
+					fmt.Fprintf(&iface, "mtu=%s\n", v)
+				}
 			case "listenport":
 				fmt.Fprintf(&iface, "listen_port=%s\n", v)
 			}
@@ -279,7 +287,7 @@ func (a *warpAccount) uapi() (string, error) {
 	fmt.Fprintf(&cfg, "private_key=%s\n", sk)
 	fmt.Fprintf(&cfg, "address=%s/32\n", a.Address4)
 	cfg.WriteString("dns=1.1.1.1\n")
-	cfg.WriteString("mtu=1280\n")
+	fmt.Fprintf(&cfg, "mtu=%d\n", warpMTU+wgOverhead) // 1280 inside the tunnel, as in Cloudflare's client
 	// WARP wants its 3-byte client id in the reserved header bytes. firestack
 	// lowercases values, which breaks a base64 client_id line, so pass the
 	// header words it would derive (h1..h4) as plain numbers instead.

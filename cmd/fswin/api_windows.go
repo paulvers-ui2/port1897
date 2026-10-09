@@ -43,6 +43,7 @@ type apiStatus struct {
 	Paused    int64    `json:"pausedUntil"` // unix millis; 0 when not paused
 	Dial      string   `json:"dial"`        // anti-censorship dial strategy
 	Conflicts []string `json:"conflicts"`   // other VPNs that break ours
+	MTU       *mtuPlan `json:"mtu,omitempty"` // mtu_windows.go
 }
 
 type dnsStat struct {
@@ -288,6 +289,7 @@ func statusOf(b *bridge, o options, started time.Time, exitID, dnsLabel string) 
 		AllowLAN:  o.allowLAN,
 		Kill:      b.kill.isOn(),
 		KillError: b.kill.lastError(),
+		MTU:       curMTU.Load(),
 		DNS: dnsStat{
 			Server:  dnsLabel,
 			Type:    o.dnsType,

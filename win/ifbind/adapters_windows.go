@@ -46,3 +46,20 @@ func forEachAdapter(family uint32, f func(aa *windows.IpAdapterAddresses) bool) 
 	}
 	return windows.ERROR_BUFFER_OVERFLOW
 }
+
+// LinkMTU returns the IP MTU of the IPv4 default interface other than skip,
+// and that interface's index; 0, 0 when there is none.
+func LinkMTU(skip uint32) (mtu, idx uint32) {
+	idx, err := defaultIndex(windows.AF_INET, skip)
+	if err != nil {
+		return 0, 0
+	}
+	_ = forEachAdapter(windows.AF_INET, func(aa *windows.IpAdapterAddresses) bool {
+		if aa.IfIndex != idx {
+			return true
+		}
+		mtu = aa.Mtu
+		return false
+	})
+	return mtu, idx
+}

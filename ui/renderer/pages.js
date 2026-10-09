@@ -808,6 +808,8 @@ PAGES.network = () => {
       row({ ico: 'ic_connectivity_checks', title: 'Ping test', sub: 'Check what this PC can reach: an IP, a DNS lookup and a website.', right: chevron(), onclick: () => App.go('ping') }),
       row({ ico: 'ic_ip_network', title: 'Choose IP version', sub: 'IPv4 (IPv6 support comes later; IPv6 is blocked while the kill switch is on)', right: chevron(), onclick: () => toast('IPv4 only for now') })
     ),
+    sectionLabel('MTU'),
+    card(row({ ico: 'ic_ip_network', title: 'MTU', sub: mtuText(), right: selectBox(MTU_CHOICES, String(s.mtu || 0), (v) => save({ mtu: Number(v) }), 'MTU') })),
     sectionLabel('Anti-censorship'),
     card(
       row({ ico: 'ic_firewall_shield', title: 'Dial strategy', sub: 'How connections leave this PC. Splitting the first packet or the TLS ClientHello (which carries the site name) gets past many DPI firewalls that block sites by name. Off on Android.', right: selectBox(DIAL_STRATEGIES, s.dialStrategy, (v) => save({ dialStrategy: v }), 'Dial strategy') }),
@@ -822,6 +824,24 @@ PAGES.network = () => {
     )
   );
 };
+
+const MTU_CHOICES = [
+  ['0', 'Automatic'],
+  ['1500', '1500'],
+  ['1492', '1492 (PPPoE)'],
+  ['1420', '1420'],
+  ['1400', '1400'],
+  ['1380', '1380'],
+  ['1280', '1280 (smallest)'],
+];
+
+// What the engine works out (mtu_windows.go): the network's MTU, the
+// exit's, and the adapter's, the smaller of the two.
+function mtuText() {
+  const m = App.status && App.status.mtu;
+  if (!m) return 'The largest packet the VPN adapter carries. Automatic fits it to your network and to the exit (WireGuard, WARP, the chain), so packets are not dropped or split. Applies when protection starts.';
+  return `Adapter ${m.adapter} (${m.auto ? 'automatic' : 'set by hand'}), from ${m.why}.`;
+}
 
 const DIAL_STRATEGIES = [
   ['never', 'Off (as-is)'],
