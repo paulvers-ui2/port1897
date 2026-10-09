@@ -45,7 +45,8 @@
       "enableCookieEncryption": true,
       "enableNodeOptionsEnvironmentVariable": false,
       "enableNodeCliInspectArguments": false,
-      "onlyLoadAppFromAsar": true
+      "onlyLoadAppFromAsar": true,
+      "enableEmbeddedAsarIntegrityValidation": true
     },
     "win": {
       "target": [
@@ -68,6 +69,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": true,
+      "packElevateHelper": false,
       "include": "build/installer.nsh",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },

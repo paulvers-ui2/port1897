@@ -120,6 +120,11 @@ jobs:
           $p = Start-Process -FilePath $exe -ArgumentList '--self-test' -PassThru -Wait
           Get-Content (Join-Path $env:APPDATA 'AuroraVPN/app.log') -ErrorAction SilentlyContinue | Select-Object -Last 20
           if ($p.ExitCode -ne 0) { throw "the packaged app failed its self-test (exit code $($p.ExitCode))" }
+      # Windows' exploit mitigations against memory corruption (ASLR, DEP) on
+      # in every exe and dll the app ships (tools/check-mitigations.ps1)
+      - name: Exploit mitigations
+        shell: pwsh
+        run: ./tools/check-mitigations.ps1 -Path (Get-ChildItem ui/dist/win-unpacked -Recurse -Include *.exe,*.dll).FullName
       # one artifact per file: download only the one you need (~120 MB each)
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:

@@ -131,34 +131,19 @@ func defaultIndex(family uint16, skip uint32) (uint32, error) {
 
 // ifaceMetrics maps the index of every up interface to its metric.
 func ifaceMetrics(family uint16) (map[uint32]uint32, error) {
-	size := uint32(15 << 10)
-	var buf []byte
-	for range 4 {
-		buf = make([]byte, size)
-		aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0]))
-		err := windows.GetAdaptersAddresses(uint32(family), windows.GAA_FLAG_SKIP_ANYCAST, 0, aa, &size)
-		if err == nil {
-			break
-		}
-		if err != windows.ERROR_BUFFER_OVERFLOW {
-			return nil, err
-		}
-		buf = nil
-	}
-	if buf == nil {
-		return nil, windows.ERROR_BUFFER_OVERFLOW
-	}
-
 	out := make(map[uint32]uint32)
-	for aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0])); aa != nil; aa = aa.Next {
-		if aa.OperStatus != windows.IfOperStatusUp {
-			continue
+	err := forEachAdapter(uint32(family), func(aa *windows.IpAdapterAddresses) bool {
+		if aa.OperStatus == windows.IfOperStatusUp {
+			if family == windows.AF_INET6 {
+				out[aa.Ipv6IfIndex] = aa.Ipv6Metric
+			} else {
+				out[aa.IfIndex] = aa.Ipv4Metric
+			}
 		}
-		if family == windows.AF_INET6 {
-			out[aa.Ipv6IfIndex] = aa.Ipv6Metric
-		} else {
-			out[aa.IfIndex] = aa.Ipv4Metric
-		}
+		return true
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -174,34 +159,18 @@ func (b *Binder) DNSServers() []netip.Addr {
 	if idx4 == 0 {
 		return nil
 	}
-	size := uint32(15 << 10)
-	var buf []byte
-	for range 4 {
-		buf = make([]byte, size)
-		aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0]))
-		err := windows.GetAdaptersAddresses(windows.AF_INET, windows.GAA_FLAG_SKIP_ANYCAST, 0, aa, &size)
-		if err == nil {
-			break
-		}
-		if err != windows.ERROR_BUFFER_OVERFLOW {
-			return nil
-		}
-		buf = nil
-	}
-	if buf == nil {
-		return nil
-	}
 	var out []netip.Addr
-	for aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0])); aa != nil; aa = aa.Next {
+	_ = forEachAdapter(windows.AF_INET, func(aa *windows.IpAdapterAddresses) bool {
 		if aa.IfIndex != idx4 {
-			continue
+			return true
 		}
 		for d := aa.FirstDnsServerAddress; d != nil; d = d.Next {
 			if ip, ok := netip.AddrFromSlice(d.Address.IP()); ok && ip.Unmap().Is4() {
 				out = append(out, ip.Unmap())
 			}
 		}
-	}
+		return false
+	})
 	return out
 }
 
@@ -216,26 +185,9 @@ const (
 // traffic sent through such an adapter depends on that VPN, which usually
 // also claims all routes and all DNS, as Proton VPN does.
 func Describe(idx uint32) (name, desc string, vpn bool) {
-	size := uint32(15 << 10)
-	var buf []byte
-	for range 4 {
-		buf = make([]byte, size)
-		aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0]))
-		err := windows.GetAdaptersAddresses(windows.AF_INET, windows.GAA_FLAG_SKIP_ANYCAST, 0, aa, &size)
-		if err == nil {
-			break
-		}
-		if err != windows.ERROR_BUFFER_OVERFLOW {
-			return "", "", false
-		}
-		buf = nil
-	}
-	if buf == nil {
-		return "", "", false
-	}
-	for aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0])); aa != nil; aa = aa.Next {
+	_ = forEachAdapter(windows.AF_INET, func(aa *windows.IpAdapterAddresses) bool {
 		if aa.IfIndex != idx {
-			continue
+			return true
 		}
 		name = windows.UTF16PtrToString(aa.FriendlyName)
 		desc = windows.UTF16PtrToString(aa.Description)
@@ -243,7 +195,7 @@ func Describe(idx uint32) (name, desc string, vpn bool) {
 		vpn = aa.IfType == ifTypePropVirtual || aa.IfType == ifTypeTunnel ||
 			strings.Contains(d, "vpn") || strings.Contains(d, "tunnel") ||
 			strings.Contains(d, "wireguard") || strings.Contains(d, "wintun") || strings.Contains(d, "tap-")
-		return name, desc, vpn
-	}
-	return "", "", false
+		return false
+	})
+	return name, desc, vpn
 }
