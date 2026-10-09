@@ -58,7 +58,7 @@ func prepareUsque(s usqueSetup) error {
 	if _, err := os.Stat(s.exe); err != nil {
 		return fmt.Errorf("usque: %w (usque.exe should sit next to fswin.exe)", err)
 	}
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+	if err := asUser.do(func() error { return os.MkdirAll(s.dir, 0o700) }); err != nil {
 		return err
 	}
 	if err := usqueRegister(s, filepath.Join(s.dir, "warp1.json")); err != nil {
@@ -95,6 +95,7 @@ func startUsque(s usqueSetup) (*usque, error) {
 	cmd := exec.Command(s.exe, args...) //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd.Dir = s.dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+	asUser.unelevated(cmd) // a SOCKS proxy and a QUIC client: no admin rights
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -135,7 +136,7 @@ func (u *usque) stop() {
 
 // usqueRegister creates a free WARP MASQUE identity in cfg unless it exists.
 func usqueRegister(s usqueSetup, cfg string) error {
-	if _, err := os.Stat(cfg); err == nil {
+	if statUserFile(cfg) == nil {
 		return nil
 	}
 	s.logf("usque: registering a free WARP identity in %s", cfg)
@@ -143,11 +144,12 @@ func usqueRegister(s usqueSetup, cfg string) error {
 	cmd := exec.Command(s.exe, "-c", cfg, "register", "--accept-tos") //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd.Dir = s.dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+	asUser.unelevated(cmd)
 	b, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("usque register: %w: %s", err, b)
 	}
-	if _, err := os.Stat(cfg); err != nil {
+	if err := statUserFile(cfg); err != nil {
 		return fmt.Errorf("usque register wrote no config: %s", b)
 	}
 	return nil

@@ -11,7 +11,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -117,7 +116,8 @@ func setupDNS(t intra.Tunnel, o options, binder *ifbind.Binder) (tid, label stri
 // setupBlocklists loads the on-device blocklists in o.blocklistDir with the
 // stamp of the lists to block, and the filetag that names the lists a
 // RethinkDNS server blocked by. Failures are reported, not fatal: DNS still
-// works without blocklists.
+// works without blocklists. The files are the app's: firestack reads them,
+// at once, with the user's rights.
 func setupBlocklists(t intra.Tunnel, o options) (lists bool, err error) {
 	if o.blocklistDir == "" && o.filetag == "" {
 		return false, nil
@@ -127,7 +127,7 @@ func setupBlocklists(t intra.Tunnel, o options) (lists bool, err error) {
 		return false, err
 	}
 	if o.filetag != "" {
-		if ferr := r.SetRdnsRemote(o.filetag); ferr != nil {
+		if ferr := asUser.do(func() error { return r.SetRdnsRemote(o.filetag) }); ferr != nil {
 			err = errors.Join(err, fmt.Errorf("%s %s: %w", blRemoteID, o.filetag, ferr))
 		}
 	}
@@ -137,11 +137,11 @@ func setupBlocklists(t intra.Tunnel, o options) (lists bool, err error) {
 	d := o.blocklistDir
 	files := []string{filepath.Join(d, blTrie), filepath.Join(d, blRank), filepath.Join(d, blConfig), filepath.Join(d, blFiletag)}
 	for _, f := range files {
-		if _, serr := os.Stat(f); serr != nil {
+		if serr := statUserFile(f); serr != nil {
 			return false, errors.Join(err, serr)
 		}
 	}
-	if lerr := r.SetRdnsLocal(files[0], files[1], files[2], files[3]); lerr != nil {
+	if lerr := asUser.do(func() error { return r.SetRdnsLocal(files[0], files[1], files[2], files[3]) }); lerr != nil {
 		return false, errors.Join(err, lerr)
 	}
 	local, lerr := r.GetRdnsLocal()

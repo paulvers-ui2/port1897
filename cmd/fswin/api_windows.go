@@ -15,8 +15,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -91,7 +89,7 @@ func apiPreflight(addr, tokenFile string) error {
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
 		return errors.New("-api must be a loopback address like 127.0.0.1:47897")
 	}
-	tok, err := os.ReadFile(filepath.Clean(tokenFile))
+	tok, err := readUserFile(tokenFile)
 	if err != nil {
 		return fmt.Errorf("-token-file: %w", err)
 	}
@@ -114,7 +112,7 @@ func serveAPI(addr, tokenFile string, b *bridge, info func() apiStatus, stop fun
 	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
 		return nil, errors.New("-api must be a loopback address like 127.0.0.1:47897")
 	}
-	tok, err := os.ReadFile(tokenFile)
+	tok, err := readUserFile(tokenFile)
 	if err != nil {
 		return nil, fmt.Errorf("-token-file: %w", err)
 	}
@@ -140,9 +138,14 @@ func serveAPI(addr, tokenFile string, b *bridge, info func() apiStatus, stop fun
 	mux.HandleFunc("POST /api/killswitch", a.killSwitch)
 	mux.HandleFunc("POST /api/stop", a.shutdown)
 
+	// a client that stalls, or sends huge headers, cannot tie the API up
 	srv := &http.Server{
 		Handler:           a.guard(mux),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       time.Minute,
+		MaxHeaderBytes:    16 << 10,
 	}
 	go func() { _ = srv.Serve(ln) }()
 	return srv, nil

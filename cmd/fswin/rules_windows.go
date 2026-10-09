@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -242,7 +241,7 @@ func compileIPRule(ir ipRule) (c cIPRule, err error) {
 }
 
 func loadRulesFile(path string) (*rules, error) {
-	b, err := os.ReadFile(path)
+	b, err := readUserFile(path)
 	if err != nil {
 		return nil, err
 	}

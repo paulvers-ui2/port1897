@@ -178,6 +178,14 @@ func main() {
 	}
 	o.golog = int32(golog)
 
+	// the app's files are opened with the user's rights (asuser_windows.go)
+	tok, err := newUserToken()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "fswin:", err)
+		os.Exit(1)
+	}
+	asUser = tok
+
 	if o.logFile != "" {
 		if err := redirectOutput(o.logFile); err != nil {
 			fmt.Fprintln(os.Stderr, "fswin: -logfile:", err)
@@ -339,8 +347,13 @@ func run(o options) error {
 	}
 	intra.Transparency(o.eim, o.eim)
 	if o.pcapFile != "" {
-		_ = os.Remove(o.pcapFile) // a capture starts with its own header
-		if err := t.SetPcap(o.pcapFile); err != nil {
+		// the app's file, opened with the user's rights; a capture starts
+		// with its own header
+		err := asUser.do(func() error {
+			_ = os.Remove(o.pcapFile)
+			return t.SetPcap(o.pcapFile)
+		})
+		if err != nil {
 			fmt.Println("fswin: -pcap:", err)
 		} else {
 			fmt.Println("fswin: capturing packets to", o.pcapFile)
@@ -576,7 +589,7 @@ func prepareExit(o options) (id, cfg string, us *usqueSetup, err error) {
 	here := filepath.Dir(exe)
 	switch {
 	case o.wg != "":
-		b, err := os.ReadFile(o.wg)
+		b, err := readUserFile(o.wg)
 		if err != nil {
 			return "", "", nil, err
 		}
@@ -619,7 +632,7 @@ func prepareExit(o options) (id, cfg string, us *usqueSetup, err error) {
 		id := exitMasque
 		if o.chain != "" {
 			id = exitChain
-			if _, err := os.Stat(o.chain); err != nil {
+			if err := statUserFile(o.chain); err != nil {
 				return "", "", nil, fmt.Errorf("-chain: %w", err)
 			}
 		}
@@ -652,9 +665,14 @@ func exitName(id string) string {
 }
 
 // redirectOutput sends stdout, stderr and the standard logger to path, for
-// when the app window starts fswin without a console.
+// when the app window starts fswin without a console. The log is the app's
+// file: it is opened with the user's rights.
 func redirectOutput(path string) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	var f *os.File
+	err := asUser.do(func() (err error) {
+		f, err = os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		return err
+	})
 	if err != nil {
 		return err
 	}
