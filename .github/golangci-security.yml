@@ -6,6 +6,9 @@ version: "2"
 
 run:
   timeout: 20m
+  # paths from the repository root, not from .github/ (where this file is):
+  # annotations and code scanning point at real files
+  relative-path-mode: gitroot
 
 linters:
   default: none

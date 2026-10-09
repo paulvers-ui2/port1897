@@ -220,6 +220,7 @@ func (d *transport) refreshTargetKeyWellKnown() (ocfg *odoh.ObliviousDoHConfig, 
 		err = errMissingOdohCfgResponse
 		return
 	}
+	defer resp.Body.Close()
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return
