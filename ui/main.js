@@ -7,7 +7,7 @@
 // Electron main process. The window has no Node access; it asks this process
 // (through preload.js) to start and stop the engine (fswin.exe), to call the
 // engine's loopback control API, and to manage files: WARP identities (usque),
-// WireGuard configs, stats history, backups. The engine needs admin rights,
+// WireGuard configs and stats history. The engine needs admin rights,
 // so it is started through a UAC prompt; this process and the window never are.
 
 'use strict';
@@ -106,8 +106,6 @@ const DEFAULTS = {
   wasRunning: false,
   pcap: false, // packet capture to capture.pcap
   automation: false, // Android: "Automation"; here, command-line --start / --stop / --pause
-  checkUpdates: true, // Android: "Check for app updates" once a week
-  lastUpdateCheck: 0,
   welcomed: false,
 };
 
@@ -1271,43 +1269,6 @@ function saveBuckets(s) {
   });
 }
 
-// ---------- app updates (Android: "Check for app updates", weekly) ----------
-
-const RELEASES = 'https://api.github.com/repos/paulvers-ui2/port1897/releases/latest';
-
-// newer reports whether version a is above b ("0.2.0" > "0.1.9").
-function newer(a, b) {
-  const pa = String(a).split(/[.-]/).map((x) => parseInt(x, 10) || 0);
-  const pb = String(b).split(/[.-]/).map((x) => parseInt(x, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0);
-  }
-  return false;
-}
-
-async function checkUpdate() {
-  const current = app.getVersion();
-  try {
-    const res = await net.fetch(RELEASES, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
-    if (res.status === 404) return { ok: true, current, latest: '', newer: false };
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const j = await res.json();
-    const latest = String(j.tag_name || '').replace(/^v/, '');
-    return { ok: true, current, latest, newer: newer(latest, current), url: String(j.html_url || '') };
-  } catch (e) {
-    return { ok: false, current, error: e.message };
-  }
-}
-
-async function weeklyUpdateCheck() {
-  const s = readSettings();
-  if (!s.checkUpdates || Date.now() - s.lastUpdateCheck < 7 * 24 * HOUR) return;
-  const r = await checkUpdate();
-  if (!r.ok) return;
-  writeSettings({ ...readSettings(), lastUpdateCheck: Date.now() });
-  if (r.newer && s.notify) notify(`AuroraVPN ${r.latest} is available: Settings → Check for app updates.`);
-}
-
 // ---------- ping test (Android: PingTestActivity) ----------
 
 function tcpPing(host, port, ms) {
@@ -1751,11 +1712,6 @@ ipcMain.handle('net:checkExit', async () => {
 });
 
 ipcMain.handle('net:ping', (_e, q) => pingTest(q || {}));
-ipcMain.handle('app:checkUpdate', async () => {
-  const r = await checkUpdate();
-  if (r.ok) writeSettings({ ...readSettings(), lastUpdateCheck: Date.now() });
-  return r;
-});
 ipcMain.handle('log:engine', (_e, filter) => engineLogText(String(filter || '')));
 ipcMain.handle('log:clear', () => {
   try {
@@ -1766,62 +1722,6 @@ ipcMain.handle('log:clear', () => {
   fs.rmSync(usqueLog(), { force: true });
 });
 ipcMain.handle('clip:copy', (_e, text) => clipboard.writeText(String(text)));
-
-ipcMain.handle('backup:save', async () => {
-  const day = new Date().toISOString().slice(0, 10);
-  const r = await dialog.showSaveDialog(win, { title: 'Back up AuroraVPN', defaultPath: `AuroraVPN-backup-${day}.json`, filters: [{ name: 'Backup', extensions: ['json'] }] });
-  if (r.canceled) return { ok: false };
-  const read = (f) => {
-    try {
-      return fs.readFileSync(f, 'utf8');
-    } catch {
-      return '';
-    }
-  };
-  const out = {
-    app: 'AuroraVPN',
-    version: 1,
-    created: new Date().toISOString(),
-    settings: readSettings(),
-    wireguard: wgIndex().filter((e) => wgFile(e.id)).map((e) => ({ id: e.id, name: e.name, text: read(wgFile(e.id)) })),
-    usque: { warp1: read(usqueFile('warp1')), warp2: read(usqueFile('warp2')), wg0: read(path.join(usqueDir(), 'wg0.conf')) },
-    warp: read(path.join(dataDir(), 'warp.json')),
-  };
-  fs.writeFileSync(r.filePath, JSON.stringify(out, null, 2), { mode: 0o600 });
-  return { ok: true };
-});
-const BACKUP_APPS = ['AuroraVPN', 'port1897']; // port1897: the app's name before 0.3
-ipcMain.handle('backup:restore', async () => {
-  const r = await dialog.showOpenDialog(win, { title: 'Restore AuroraVPN', filters: [{ name: 'Backup', extensions: ['json'] }], properties: ['openFile'] });
-  if (r.canceled) return { ok: false };
-  let b;
-  try {
-    b = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
-    if (!BACKUP_APPS.includes(b.app) || typeof b.settings !== 'object') throw new Error();
-  } catch {
-    return { ok: false, error: 'That is not an AuroraVPN backup.' };
-  }
-  if (await engineStatus()) return { ok: false, error: 'Stop protection first.' };
-  fs.rmSync(wgDir(), { recursive: true, force: true });
-  fs.mkdirSync(wgDir(), { recursive: true });
-  const idx = [];
-  for (const w of b.wireguard || []) {
-    if (!/^[a-f0-9]{16}$/.test(String(w.id)) || !validWg(w.text, true)) continue;
-    fs.writeFileSync(path.join(wgDir(), w.id + '.conf'), w.text, { mode: 0o600 });
-    idx.push({ id: w.id, name: String(w.name || 'WireGuard') });
-  }
-  fs.writeFileSync(path.join(wgDir(), 'index.json'), JSON.stringify(idx, null, 2));
-  fs.mkdirSync(usqueDir(), { recursive: true });
-  const put = (f, t) => (t ? fs.writeFileSync(f, t, { mode: 0o600 }) : null);
-  put(usqueFile('warp1'), b.usque && b.usque.warp1);
-  put(usqueFile('warp2'), b.usque && b.usque.warp2);
-  put(path.join(usqueDir(), 'wg0.conf'), b.usque && b.usque.wg0);
-  put(path.join(dataDir(), 'warp.json'), b.warp);
-  const s = migrate({ ...DEFAULTS, ...cleanPatch(b.settings), wasRunning: false });
-  if (s.exit === 'wg' && !wgFile(s.wgActive)) s.exit = 'none';
-  writeSettings(s);
-  return { ok: true };
-});
 
 // ---------- debug zip ----------
 
@@ -2131,8 +2031,6 @@ if (!app.requestSingleInstanceLock()) {
     powerMonitor.on('unlock-screen', () => onLock(false));
     setInterval(statusLoop, 1500);
     setInterval(() => saveBuckets(readSettings()), 60 * 1000);
-    setTimeout(weeklyUpdateCheck, 30 * 1000);
-    setInterval(weeklyUpdateCheck, 6 * HOUR);
     if (automated) {
       await automate(process.argv);
     } else if (autostart && readSettings().wasRunning) {

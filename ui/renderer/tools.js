@@ -76,14 +76,3 @@ function showWelcome() {
   draw();
   document.body.append(back);
 }
-
-// ---------- app updates ----------
-
-async function checkUpdateNow() {
-  toast('Checking…');
-  const r = await App.port.checkUpdate();
-  if (!r.ok) return toast('Update check failed: ' + r.error);
-  if (!r.latest) return toast(`No releases published yet (this is ${r.current})`);
-  if (!r.newer) return toast(`You have the latest version (${r.current})`);
-  if (await confirmDialog('Update available', `AuroraVPN ${r.latest} is available (you have ${r.current}). Open the download page?`, 'Open')) App.port.openUrl(r.url);
-}
