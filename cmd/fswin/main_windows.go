@@ -213,11 +213,12 @@ func run(o options) error {
 	}
 
 	// prepare the exit first: WARP registers over the normal network
-	exitID, exitCfg, uq, err := prepareExit(o)
+	exitID, exitCfg, us, err := prepareExit(o)
 	if err != nil {
 		return err
 	}
-	defer uq.stop()
+	var uq *usque // started once all traffic goes to the tunnel
+	defer func() { uq.stop() }()
 	if exitID != "" || o.kill {
 		o.full = true // a VPN exit and the kill switch need all traffic in the tunnel
 	}
@@ -257,6 +258,37 @@ func run(o options) error {
 		return errors.New("-full: no IPv4 default route outside the tunnel to send firestack's own traffic over")
 	}
 
+	// The kill switch (on now for -killswitch, or later from the app's
+	// button) goes on before fswin opens a connection of its own: turning it
+	// on re-checks every open connection, and Windows cut fswin's own, DNS
+	// among them, although the rules let fswin through.
+	var kill *killSwitch
+	if nt, ok := dev.(*tun.NativeTun); ok {
+		var allow []string
+		if us != nil {
+			allow = append(allow, us.exe)
+		}
+		kill = newKillSwitch(wfp.Options{TunLUID: nt.LUID(), Allow: allow, Persistent: true, AllowLAN: o.allowLAN}, o.full)
+	}
+	defer func() {
+		if kill.isOn() {
+			if err := wfp.Disable(); err != nil {
+				fmt.Fprintln(os.Stderr, "fswin: remove kill switch (run fswin -cleanup):", err)
+			}
+		}
+	}()
+	killMode := ""
+	if o.kill {
+		// without the kill switch protection still runs, rather than not at
+		// all; the status carries the error and the app shows it
+		if err := kill.set(true, o.allowLAN); err != nil {
+			fmt.Println("fswin: warning: -killswitch: not on:", err)
+			killMode = "; kill switch FAILED"
+		} else {
+			killMode = "; kill switch on"
+		}
+	}
+
 	fbURL, fbIPs := o.fallbackDoH, o.fallbackIPs
 	if fbURL == "" {
 		fbURL, fbIPs = o.doh, o.dohips
@@ -281,11 +313,18 @@ func run(o options) error {
 		initial = r
 	}
 	b := newBridge(binder, initial, o.block)
+	b.kill = kill
 	b.dnsDirect = o.dnsDirect
 	b.dnsCache = o.dnsCache
 	b.dnssec = o.dnssec
-	if uq != nil {
-		b.setBypass(uq.path) // its own connections to Cloudflare
+	if us != nil {
+		b.setBypass(us.exe) // its own connections to Cloudflare
+	}
+	// allowed flows and DNS go to the exit from the first packet: until it is
+	// added, firestack holds a new flow 3 s for it and fails a query, rather
+	// than letting either out direct
+	if exitID != "" {
+		b.setExit(exitID)
 	}
 	// fakedns must be ip:port; a bare ip is rejected and DNS goes unrecognized.
 	t, err := intra.Connect(id, o.mtu, o.mtu, ifaddr4+"/24", fakedns4+":53", dtr, b)
@@ -321,17 +360,6 @@ func run(o options) error {
 		dnsLabel += " + on-device blocklists"
 	}
 
-	if exitID != "" {
-		pxs, err := t.GetProxies()
-		if err != nil {
-			return fmt.Errorf("proxies: %w", err)
-		}
-		if _, err := pxs.AddProxy(x.StrOf(exitID), x.StrOf(exitCfg)); err != nil {
-			return fmt.Errorf("add exit %s: %w", exitID, err)
-		}
-		b.setExit(exitID)
-	}
-
 	if o.routesFile != "" {
 		r, err := loadRoutes(t, o.routesFile)
 		if err != nil {
@@ -340,6 +368,7 @@ func run(o options) error {
 		b.setRoutes(r)
 		if len(r) > 0 {
 			o.full = true // routes only see traffic in the tunnel
+			kill.setFull(true)
 		}
 	}
 
@@ -379,31 +408,23 @@ func run(o options) error {
 		}
 		mode = fmt.Sprintf("all IPv4; firestack's own traffic leaves via interface #%d", phys4)
 	}
-	// the kill switch: on now for -killswitch, or later from the app's button
-	if nt, ok := dev.(*tun.NativeTun); ok {
-		var allow []string
-		if uq != nil {
-			allow = append(allow, uq.path)
+	// the exit comes once all traffic goes to the tunnel (see startUsque)
+	if us != nil {
+		if uq, err = startUsque(*us); err != nil {
+			return err
 		}
-		b.kill = newKillSwitch(wfp.Options{TunLUID: nt.LUID(), Allow: allow, Persistent: true, AllowLAN: o.allowLAN}, o.full)
+		exitCfg = uq.url
 	}
-	defer func() {
-		if b.kill.isOn() {
-			if err := wfp.Disable(); err != nil {
-				fmt.Fprintln(os.Stderr, "fswin: remove kill switch (run fswin -cleanup):", err)
-			}
+	if exitID != "" {
+		pxs, err := t.GetProxies()
+		if err != nil {
+			return fmt.Errorf("proxies: %w", err)
 		}
-	}()
-	if o.kill {
-		// without the kill switch protection still runs, rather than not at
-		// all; the status carries the error and the app shows it
-		if err := b.kill.set(true, o.allowLAN); err != nil {
-			fmt.Println("fswin: warning: -killswitch: not on:", err)
-			mode += "; kill switch FAILED"
-		} else {
-			mode += "; kill switch on"
+		if _, err := pxs.AddProxy(x.StrOf(exitID), x.StrOf(exitCfg)); err != nil {
+			return fmt.Errorf("add exit %s: %w", exitID, err)
 		}
 	}
+	mode += killMode
 	if exitID != "" {
 		mode += "; exit: " + exitName(exitID)
 	}
@@ -535,9 +556,10 @@ func withPort(csv, port string) string {
 	return strings.Join(out, ",")
 }
 
-// prepareExit returns the proxy id and config for the chosen exit, if any,
-// and the usque process behind it for -masque and -chain.
-func prepareExit(o options) (id, cfg string, uq *usque, err error) {
+// prepareExit returns the proxy id and config for the chosen exit, if any.
+// For -masque and -chain it registers usque and returns its setup instead of
+// a config: the config is the proxy address of usque, which run starts later.
+func prepareExit(o options) (id, cfg string, us *usqueSetup, err error) {
 	n := 0
 	for _, set := range []bool{o.wg != "", o.warp, o.proxy != "", o.masque, o.chain != ""} {
 		if set {
@@ -601,11 +623,10 @@ func prepareExit(o options) (id, cfg string, uq *usque, err error) {
 				return "", "", nil, fmt.Errorf("-chain: %w", err)
 			}
 		}
-		uq, err := startUsque(s)
-		if err != nil {
+		if err := prepareUsque(s); err != nil {
 			return "", "", nil, err
 		}
-		return id, uq.url, uq, nil
+		return id, "", &s, nil
 	}
 	return "", "", nil, nil
 }

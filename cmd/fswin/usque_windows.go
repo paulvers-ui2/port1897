@@ -38,10 +38,9 @@ import (
 //	chain:  apps -> usque chain -> WARP2 -> wg0 -> WARP1 -> internet
 
 type usque struct {
-	cmd  *exec.Cmd
-	job  windows.Handle
-	path string // usque.exe, for the bypass rule
-	url  string // socks5://user:pass@127.0.0.1:port
+	cmd *exec.Cmd
+	job windows.Handle
+	url string // socks5://user:pass@127.0.0.1:port
 }
 
 // usqueSetup holds what startUsque needs.
@@ -53,30 +52,39 @@ type usqueSetup struct {
 	logf    func(string, ...any)
 }
 
-func startUsque(s usqueSetup) (*usque, error) {
+// prepareUsque checks usque.exe and registers the WARP identities it needs,
+// over the normal network, before fswin changes anything on the PC.
+func prepareUsque(s usqueSetup) error {
 	if _, err := os.Stat(s.exe); err != nil {
-		return nil, fmt.Errorf("usque: %w (usque.exe should sit next to fswin.exe)", err)
+		return fmt.Errorf("usque: %w (usque.exe should sit next to fswin.exe)", err)
 	}
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
-		return nil, err
+		return err
 	}
-	warp1 := filepath.Join(s.dir, "warp1.json")
-	if err := usqueRegister(s, warp1); err != nil {
-		return nil, err
+	if err := usqueRegister(s, filepath.Join(s.dir, "warp1.json")); err != nil {
+		return err
 	}
+	if s.chainWG != "" {
+		return usqueRegister(s, filepath.Join(s.dir, "warp2.json"))
+	}
+	return nil
+}
 
+// startUsque runs usque once prepareUsque has registered it, and only after
+// all traffic goes to the tunnel: usque's connection to Cloudflare has to
+// begin on the path it keeps, into the tunnel and out direct (see
+// bridge.bypass). Begun before the routes, it went straight out, moved into
+// the tunnel when they came, and went silent: no DNS and no traffic for 30 s,
+// until usque gave up on it and reconnected.
+func startUsque(s usqueSetup) (*usque, error) {
 	port, err := freePort()
 	if err != nil {
 		return nil, err
 	}
 	user, pass := randHex(8), randHex(16)
-	args := []string{"-c", warp1}
+	args := []string{"-c", filepath.Join(s.dir, "warp1.json")}
 	if s.chainWG != "" {
-		warp2 := filepath.Join(s.dir, "warp2.json")
-		if err := usqueRegister(s, warp2); err != nil {
-			return nil, err
-		}
-		args = append(args, "chain", "--wg", s.chainWG, "--exit-config", warp2)
+		args = append(args, "chain", "--wg", s.chainWG, "--exit-config", filepath.Join(s.dir, "warp2.json"))
 	} else {
 		args = append(args, "socks")
 	}
@@ -95,7 +103,7 @@ func startUsque(s usqueSetup) (*usque, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("usque: start: %w", err)
 	}
-	u := &usque{cmd: cmd, path: s.exe}
+	u := &usque{cmd: cmd}
 	go pipeLog(out, "usque", s.logf)
 
 	// usque dies with us, even if fswin crashes
