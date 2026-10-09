@@ -12,7 +12,6 @@ import (
 	"bufio"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -179,16 +178,16 @@ func randHex(n int) string {
 
 // waitListening waits until addr accepts connections or cmd exits.
 func waitListening(addr string, d time.Duration, cmd *exec.Cmd) error {
-	exited := make(chan struct{})
+	exited := make(chan *os.ProcessState, 1)
 	go func() {
-		_, _ = cmd.Process.Wait()
-		close(exited)
+		st, _ := cmd.Process.Wait()
+		exited <- st
 	}()
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		select {
-		case <-exited:
-			return errors.New("usque exited before its proxy came up; see the log")
+		case st := <-exited:
+			return fmt.Errorf("usque exited (exit code %s) before its proxy came up; see the log", exitCode(st))
 		default:
 		}
 		if c, err := net.DialTimeout("tcp", addr, 500*time.Millisecond); err == nil {
@@ -198,6 +197,19 @@ func waitListening(addr string, d time.Duration, cmd *exec.Cmd) error {
 		time.Sleep(300 * time.Millisecond)
 	}
 	return fmt.Errorf("usque: no proxy on %s after %s", addr, d)
+}
+
+// exitCode is written as Windows writes it: 1, or 0xC0000142 for a program
+// Windows could not start; a dead start leaves no output to go by.
+func exitCode(st *os.ProcessState) string {
+	if st == nil {
+		return "?"
+	}
+	c := uint32(st.ExitCode()) //nolint:gosec // G115: Windows exit codes are uint32
+	if c >= 0x80000000 {
+		return fmt.Sprintf("0x%08X", c)
+	}
+	return fmt.Sprint(c)
 }
 
 // killOnCloseJob puts pid in a job object that kills it when the last handle
