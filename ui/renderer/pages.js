@@ -236,8 +236,6 @@ PAGES.dns = () => {
       switchRow({ ico: 'ic_undelegated_domain', title: 'Use System DNS for undelegated domains', sub: 'Use System DNS for undelegated domains like .lan, .internal, etc.', value: s.undelegated, onchange: (v) => save({ undelegated: v }) }),
       row({ ico: 'ic_filter', title: 'Allowed DNS record types', sub: 'Select which DNS resource record types to allow. Now: ' + recordTypesSummary(), right: chevron(), onclick: chooseRecordTypes })
     ),
-    sectionLabel('Blocklists'),
-    blocklistsCard(),
     sectionLabel('Rules'),
     card(row({ ico: 'dns_home_screen', title: 'Domain rules', sub: countRules('domains', '') + ' for all apps. Blocked domains get no DNS answer.', right: chevron(), onclick: () => ((rulesTab = 'domains'), App.go('custom-rules', {})) }))
   );
