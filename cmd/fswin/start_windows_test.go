@@ -85,3 +85,16 @@ func TestKillSwitchReportsFailure(t *testing.T) {
 		t.Error("a nil kill switch reports an error")
 	}
 }
+
+// Per-app routes put all traffic in the tunnel after the kill switch was
+// made, which then has to know, or the app's button is refused. (Only the
+// flag is checked: turning the kill switch on would cut this PC off.)
+func TestKillSwitchSetFull(t *testing.T) {
+	k := newKillSwitch(wfp.Options{}, false)
+	k.setFull(true)
+	if !k.full {
+		t.Error("setFull(true): the kill switch still sees DNS only")
+	}
+	var none *killSwitch
+	none.setFull(true) // a PC without a Wintun kill switch: no panic
+}

@@ -73,6 +73,17 @@ func (k *killSwitch) setLocked(on, allowLAN bool) error {
 }
 
 // lastError is why the kill switch last failed to change, or "".
+// setFull records that all IPv4 traffic goes through the tunnel, as per-app
+// routes make it after the kill switch was set up.
+func (k *killSwitch) setFull(full bool) {
+	if k == nil {
+		return
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.full = full
+}
+
 func (k *killSwitch) lastError() string {
 	if k == nil {
 		return ""
