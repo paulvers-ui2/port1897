@@ -945,7 +945,7 @@ PAGES.settings = () => {
     card(
       row({ ico: 'ic_appearance', title: 'Appearance', sub: 'Current theme: ' + (THEMES.find((t) => t[0] === s.theme) || THEMES[0])[1], right: chevron(), onclick: chooseTheme }),
       switchRow({ ico: 'ic_tun_nw_policy', title: 'Automation', sub: 'Let scripts and the Task Scheduler control protection: AuroraVPN.exe --start, --stop, --pause=15 or --resume.', value: s.automation, onchange: (v) => save({ automation: v }, true) }),
-      switchRow({ ico: 'ic_auto_start', title: 'Auto-start on power-up', sub: 'On sign-in, start the app in the tray, and start protection if it was running before shut down (asks for admin permission).', value: s.autostart, onchange: (v) => App.port.setAutostart(v).then(() => save({ autostart: v }, true)) })
+      switchRow({ ico: 'ic_auto_start', title: 'Auto-start on power-up', sub: 'On sign-in, start the app in the tray, and start protection if it was running before shut down. The installed app does it through AuroraVPN Service, without an admin prompt.', value: s.autostart, onchange: (v) => App.port.setAutostart(v).then(() => save({ autostart: v }, true)) })
     )
   );
 };

@@ -43,6 +43,12 @@ jobs:
       - name: Simulate
         shell: pwsh
         run: ./tools/sim/e2e-windows.ps1 -Dist dist -Out sim-out
+      # install AuroraVPN Service, start and stop an engine through it, check
+      # what it refuses, uninstall (runs even when the simulation failed)
+      - name: AuroraVPN Service
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: ./tools/sim/service-windows.ps1 -Dist dist -Out sim-out
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always()
         with:

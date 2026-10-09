@@ -12,7 +12,10 @@ import (
 	"fmt"
 	"net/netip"
 	"os/exec"
+	"path/filepath"
 	"strings"
+
+	"golang.org/x/sys/windows"
 )
 
 // ours matches our NRPT rules, so stale ones (after a crash) can be found:
@@ -63,10 +66,19 @@ func ps(script string) error {
 }
 
 func psOut(script string) (string, error) {
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive",
+	out, err := exec.Command(powershell(), "-NoProfile", "-NonInteractive", //nolint:gosec // G204: Windows PowerShell from System32
 		"-Command", "$ErrorActionPreference = 'Stop'; "+script).CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("dnspolicy: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
+}
+
+// powershell is Windows PowerShell from System32, never one found through
+// PATH, which the user's environment sets.
+func powershell() string {
+	if dir, err := windows.GetSystemDirectory(); err == nil {
+		return filepath.Join(dir, "WindowsPowerShell", "v1.0", "powershell.exe")
+	}
+	return "powershell.exe"
 }
