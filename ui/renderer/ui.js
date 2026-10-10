@@ -177,6 +177,12 @@ function confirmDialog(title, text, ok) {
   return dialog({ title, body: h('p', { class: 'desc', text }), ok });
 }
 
+// Sets an element's text only when it changed: setting the same text again
+// still makes the browser lay the element out anew.
+function putText(el, text) {
+  if (el.textContent !== text) el.textContent = text;
+}
+
 let toastTimer = 0;
 function toast(text) {
   let t = document.getElementById('toast');
@@ -201,8 +207,22 @@ function fmtBytes(n) {
   return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
 }
 
+// One formatter for every time shown: toLocaleTimeString builds a new one on
+// each call, which made a 300-row log cost tens of milliseconds.
+const TIME_FMT = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
 function fmtTime(ms) {
-  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const d = new Date(ms);
+  return isNaN(d) ? 'Invalid Date' : TIME_FMT.format(d);
+}
+
+// f, run once typing pauses for ms
+function debounce(f, ms) {
+  let t = 0;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => f(...args), ms);
+  };
 }
 
 function hostOf(url) {

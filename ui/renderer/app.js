@@ -45,6 +45,8 @@ const App = {
     if (!home) {
       const build = PAGES[top.name];
       view.replaceChildren(build ? build(top.params || {}) : h('p', { text: 'Not found' }));
+    } else {
+      view.replaceChildren(); // the screen left behind holds hundreds of rows
     }
     const rootName = this.stack[0].name;
     document.querySelectorAll('.nav-item').forEach((n) => n.classList.toggle('active', n.dataset.nav === rootName));
@@ -93,7 +95,7 @@ const App = {
 
 function setText(id, text) {
   const el = $(id);
-  if (el) el.textContent = text;
+  if (el) putText(el, text);
 }
 
 function renderHome() {
@@ -174,15 +176,15 @@ function renderHome() {
   const prot = $('protection');
   prot.classList.toggle('on', on && !paused);
   if (paused) {
-    prot.textContent = `Paused · ${fmtLeft(cfg.pausedUntil - Date.now())} left`;
+    putText(prot, `Paused · ${fmtLeft(cfg.pausedUntil - Date.now())} left`);
   } else if (on) {
     const parts = ['encrypted DNS'];
     if (s.mode === 'full') parts.push('firewall');
     if (s.exit) parts.push(s.exit);
     if (s.killSwitch) parts.push('kill switch');
-    prot.textContent = 'Protected: ' + parts.join(' · ');
+    putText(prot, 'Protected: ' + parts.join(' · '));
   } else {
-    prot.textContent = 'Not protected';
+    putText(prot, 'Not protected');
   }
 
   // another VPN (Proton VPN, say) claiming all DNS or traffic breaks ours
@@ -192,7 +194,7 @@ function renderHome() {
   if (killErr) warnings.push(`The kill switch is not on, so apps can still reach the internet outside AuroraVPN if the tunnel stops. Windows said: ${killErr}`);
   const warn = $('conflict-warn');
   warn.hidden = !warnings.length;
-  warn.textContent = warnings.join('\n\n');
+  putText(warn, warnings.join('\n\n'));
 }
 
 async function toggleEngine(wantOn) {
@@ -251,9 +253,13 @@ async function pollOnce() {
     App.lastEventId = fresh[fresh.length - 1].id;
     App.events = App.events.concat(fresh.filter((e) => e.kind !== 'close')).slice(-1500);
   }
-  renderHome();
   const top = App.stack[App.stack.length - 1].name;
-  if (PAGE_TICK[top]) PAGE_TICK[top]();
+  // a hidden window (in the tray, minimized) draws nothing; it catches up
+  // with a look when it is shown again (main)
+  if (!document.hidden) {
+    if (top === 'home') renderHome(); // App.render draws it on the way back
+    if (PAGE_TICK[top]) PAGE_TICK[top]();
+  }
   if (was !== !!App.status && top !== 'home') App.render();
 }
 
@@ -275,6 +281,9 @@ async function main() {
   $('heart-btn').addEventListener('click', () => App.port.openUrl(KOFI_URL));
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !document.querySelector('.modal-back')) App.back();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) poll();
   });
 
   App.settings = await App.port.getSettings();
@@ -337,6 +346,7 @@ function demoPort() {
     history: true, logLevel: 3, notify: true, statusAlerts: true, theme: 'darkplus', autostart: false,
   };
   let running = false;
+  const born = Date.now(); // the stress connections opened before this
   let runExit = 'none'; // as the engine, the exit it started with, not the setting
   let id = 0;
   let flows = 0;
@@ -405,7 +415,7 @@ function demoPort() {
         ? Array.from({ length: 400 }, (_, i) => {
             const app = apps[i % apps.length];
             const [ip, cc] = ips[i % ips.length];
-            return { cid: String(i + 1), app, path: demoPath(app), proto: i % 3 ? 'tcp' : 'udp', dst: `${ip}:${443 + (i % 7)}`, domain: doms[i % doms.length], country: cc, via: 'Cloudflare WARP (MASQUE)', since: Date.now() - i * 7000 };
+            return { cid: String(i + 1), app, path: demoPath(app), proto: i % 3 ? 'tcp' : 'udp', dst: `${ip}:${443 + (i % 7)}`, domain: doms[i % doms.length], country: cc, via: 'Cloudflare WARP (MASQUE)', since: born - i * 7000 };
           })
         : running
         ? [

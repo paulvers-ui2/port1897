@@ -125,7 +125,7 @@ PAGES.configure = () =>
 let appsFilter = 'all';
 PAGES.apps = () => {
   const list = h('div', { class: 'group' }, note('Loading…'));
-  const search = field({ placeholder: 'Search apps', oninput: () => fill() });
+  const search = field({ placeholder: 'Search apps', oninput: debounce(() => fill(), 150) });
   let apps = [];
   let paths = Object.create(null); // app name -> full program path
   const filters = h(
@@ -993,7 +993,8 @@ let logFilter = 'flow';
 let logShow = 'all';
 PAGES.logs = () => {
   const list = h('div', { class: 'group' });
-  const search = field({ placeholder: 'Search app, domain or country', oninput: () => fillLog(list, search.input.value) });
+  const view = logView(list);
+  const search = field({ placeholder: 'Search app, domain or country', oninput: debounce(() => view.fill(search.input.value), 150) });
   const tabs = h(
     'div',
     { class: 'seg-wrap' },
@@ -1020,11 +1021,11 @@ PAGES.logs = () => {
     showIds.map(([id, name]) => h('button', { class: 'chip' + (logShow === id ? ' on' : ''), type: 'button', text: name, onclick: () => {
       logShow = id;
       shows.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c.textContent === name));
-      fillLog(list, search.input.value);
+      view.fill(search.input.value);
     } }))
   );
-  PAGE_TICK.logs = () => fillLog(list, search.input.value);
-  fillLog(list, '');
+  PAGE_TICK.logs = () => view.tick();
+  view.fill('');
   return screen('Logs', tabs, shows, h('div', { class: 'field-row' }, search), list, h('div', { class: 'actions' }, btn('Save debug zip', saveDebugZip)));
 };
 
@@ -1052,92 +1053,236 @@ function matches(q, fields, cc) {
   return !q || fields.concat(cc || '', countryName(cc)).some((v) => String(v || '').toLowerCase().includes(q));
 }
 
-function fillLog(list, q) {
-  if (logFilter === 'flow' && logShow === 'active') {
-    fillActive(list, q);
-    return;
+// The search text of a log line, worked out once per line.
+const LOG_HAY = new WeakMap();
+function logHay(e) {
+  let s = LOG_HAY.get(e);
+  if (s === undefined) {
+    s = [e.app, e.path, e.domain, e.dst, e.country, countryName(e.country)].map((v) => String(v || '').toLowerCase()).join('\u0000');
+    LOG_HAY.set(e, s);
   }
-  q = (q || '').trim().toLowerCase();
-  const rows = App.events
-    .filter((e) => e.kind === logFilter && (logShow === 'all' || (logShow === 'blocked') === !!e.blocked))
-    .filter((e) => matches(q, [e.app, e.path, e.domain, e.dst], e.country))
-    .slice(-300)
-    .reverse();
-  list.replaceChildren();
-  if (!rows.length) {
-    list.append(h('p', { class: 'empty', text: App.status ? 'Nothing yet. Use the internet and connections show up here.' : 'Start protection to see connections.' }));
-    return;
-  }
-  const open = (f) => ({ class: 'row clickable', tabindex: '0', onclick: f, onkeydown: (ev) => ev.key === 'Enter' && f() });
-  for (const e of rows) {
-    if (e.kind === 'flow') {
-      const o = open(() => connDetails(e));
-      o.class += e.blocked ? ' blocked' : '';
-      list.append(
-        h(
-          'div',
-          o,
-          avatar(e.app),
-          h(
-            'span',
-            { class: 'row-text' },
-            h('span', { class: 'row-title' }, flag(e.country), (e.domain || e.dst) + (e.blocked ? '  · blocked' : '')),
-            h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.app || '?'} · ${e.proto} ${e.dst}${e.country ? ' · ' + countryName(e.country) : ''}${e.via && e.via !== 'direct' && e.via !== 'blocked' ? ' · via ' + e.via : ''}${e.blocked && e.rule ? ' · ' + e.rule : ''}` }),
-            pathLine(e.path)
-          )
-        )
-      );
-    } else {
-      const marks = [e.secure ? 'DNSSEC ✓' : '', e.cached ? 'cached' : '', e.blocked ? 'blocked' + (e.rule ? ': ' + e.rule : '') : ''].filter(Boolean).join(' · ');
-      const o = open(() => dnsDetails(e));
-      o.class += e.blocked ? ' blocked' : '';
-      list.append(
-        h(
-          'div',
-          o,
-          siteIcon(e.domain),
-          h('span', { class: 'row-text' }, h('span', { class: 'row-title' }, flag(e.country), e.domain || ''), h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.qtype ? rrName(e.qtype) + ' · ' : ''}${e.answer || 'no answer'}${e.country ? ' · ' + countryName(e.country) : ''}${e.error ? ' (' + e.error + ')' : ''} · ${e.latencyMs} ms${marks ? ' · ' + marks : ''}` }), pathLine(e.path))
-        )
-      );
-    }
-  }
+  return s;
 }
 
-// The connections open right now (Android: Active Connections), newest
-// first, with the domain and country of each address. Fetched again on
-// every refresh while shown; a slower, older fetch never overwrites a newer.
-let activeSeq = 0;
-async function fillActive(list, q) {
-  const seq = ++activeSeq;
-  const conns = App.status ? await App.port.conns('') : [];
-  if (seq !== activeSeq || !list.isConnected || logShow !== 'active') return;
-  q = (q || '').trim().toLowerCase();
-  const rows = conns.filter((c) => matches(q, [c.app, c.path, c.domain, c.dst], c.country));
-  list.replaceChildren();
-  if (!rows.length) {
-    list.append(h('p', { class: 'empty', text: !App.status ? 'Start protection to see connections.' : conns.length ? 'No active connections match.' : 'No active connections' }));
-    return;
+// A log line's row never changes, so it is built once and kept with its
+// event, until "Show website icon" changes how DNS rows look.
+let logRows = new WeakMap();
+let logRowsFav = null;
+function logRow(e) {
+  const fav = !!App.settings.favicons;
+  if (fav !== logRowsFav) {
+    logRows = new WeakMap();
+    logRowsFav = fav;
   }
-  const now = Date.now();
-  list.append(h('p', { class: 'list-head', text: `${rows.length} active connection${rows.length === 1 ? '' : 's'}${rows.length > 300 ? ' (newest 300 shown)' : ''}` }));
-  for (const c of rows.slice(0, 300)) {
-    const where = c.country ? ' · ' + countryName(c.country) : '';
-    const via = c.via && c.via !== 'direct' ? ' · via ' + c.via : '';
-    list.append(
-      h(
-        'div',
-        { class: 'row clickable', tabindex: '0', onclick: () => activeDetails(c), onkeydown: (ev) => ev.key === 'Enter' && activeDetails(c) },
-        avatar(c.app),
-        h(
-          'span',
-          { class: 'row-text' },
-          h('span', { class: 'row-title' }, flag(c.country), c.domain || c.dst),
-          h('span', { class: 'row-sub', text: `${c.app || '?'} · ${c.proto} ${c.dst}${where} · open ${fmtAge(now - c.since)}${via}` }),
-          pathLine(c.path)
-        )
-      )
-    );
+  let r = logRows.get(e);
+  if (!r) {
+    r = e.kind === 'flow' ? flowRow(e) : dnsRow(e);
+    logRows.set(e, r);
   }
+  return r;
+}
+
+function openable(f) {
+  return { class: 'row clickable', tabindex: '0', onclick: f, onkeydown: (ev) => ev.key === 'Enter' && f() };
+}
+
+function flowRow(e) {
+  const o = openable(() => connDetails(e));
+  o.class += e.blocked ? ' blocked' : '';
+  return h(
+    'div',
+    o,
+    avatar(e.app),
+    h(
+      'span',
+      { class: 'row-text' },
+      h('span', { class: 'row-title' }, flag(e.country), (e.domain || e.dst) + (e.blocked ? '  · blocked' : '')),
+      h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.app || '?'} · ${e.proto} ${e.dst}${e.country ? ' · ' + countryName(e.country) : ''}${e.via && e.via !== 'direct' && e.via !== 'blocked' ? ' · via ' + e.via : ''}${e.blocked && e.rule ? ' · ' + e.rule : ''}` }),
+      pathLine(e.path)
+    )
+  );
+}
+
+function dnsRow(e) {
+  const marks = [e.secure ? 'DNSSEC ✓' : '', e.cached ? 'cached' : '', e.blocked ? 'blocked' + (e.rule ? ': ' + e.rule : '') : ''].filter(Boolean).join(' · ');
+  const o = openable(() => dnsDetails(e));
+  o.class += e.blocked ? ' blocked' : '';
+  return h(
+    'div',
+    o,
+    siteIcon(e.domain),
+    h('span', { class: 'row-text' }, h('span', { class: 'row-title' }, flag(e.country), e.domain || ''), h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.qtype ? rrName(e.qtype) + ' · ' : ''}${e.answer || 'no answer'}${e.country ? ' · ' + countryName(e.country) : ''}${e.error ? ' (' + e.error + ')' : ''} · ${e.latencyMs} ms${marks ? ' · ' + marks : ''}` }), pathLine(e.path))
+  );
+}
+
+// The Logs list: the newest LOG_ROWS lines that match the tab, the chips and
+// the search, newest first. fill() draws it anew (the first rows at once,
+// the rest just after, so a click answers fast); tick() only adds the new
+// lines at the top and drops what fell off the end, so the rows on screen
+// stay where they are.
+const LOG_ROWS = 300;
+const LOG_FIRST = 40;
+const LOG_CHUNK = 60;
+
+function logView(list) {
+  let q = '';
+  let shown = []; // { e, node } on screen, newest first
+  let pending = []; // older lines still to draw, newest first
+  let last = null; // the newest event looked at
+  let gen = 0; // a new fill stops the drawing of the one before
+  let emptyText = null;
+  const act = activeList(list);
+
+  const isActive = () => logFilter === 'flow' && logShow === 'active';
+  const keep = (e) => e.kind === logFilter && (logShow === 'all' || (logShow === 'blocked') === !!e.blocked) && (!q || logHay(e).includes(q));
+
+  const setEmpty = () => {
+    const text = App.status ? 'Nothing yet. Use the internet and connections show up here.' : 'Start protection to see connections.';
+    if (text === emptyText) return;
+    emptyText = text;
+    list.replaceChildren(h('p', { class: 'empty', text }));
+  };
+
+  const drawRest = (g) =>
+    setTimeout(() => {
+      if (g !== gen || !list.isConnected || !pending.length) return;
+      const more = pending.splice(0, LOG_CHUNK).map((e) => ({ e, node: logRow(e) }));
+      list.append(...more.map((r) => r.node));
+      shown = shown.concat(more);
+      if (pending.length) drawRest(g);
+    }, 0);
+
+  function fill(text) {
+    if (text !== undefined) q = text.trim().toLowerCase();
+    gen++;
+    shown = [];
+    pending = [];
+    last = null;
+    emptyText = null;
+    if (isActive()) return act.draw(q, true);
+    act.stop();
+    const all = App.events;
+    last = all.length ? all[all.length - 1] : null;
+    const rows = [];
+    for (let i = all.length - 1; i >= 0 && rows.length < LOG_ROWS; i--) if (keep(all[i])) rows.push(all[i]);
+    if (!rows.length) return setEmpty();
+    shown = rows.slice(0, LOG_FIRST).map((e) => ({ e, node: logRow(e) }));
+    pending = rows.slice(LOG_FIRST);
+    list.replaceChildren(...shown.map((r) => r.node));
+    if (pending.length) drawRest(gen);
+  }
+
+  function tick() {
+    if (isActive()) return act.draw(q, false);
+    const all = App.events;
+    if (!all.length) return shown.length ? fill() : setEmpty();
+    let i = all.length - 1;
+    while (i >= 0 && all[i] !== last) i--;
+    if (i < 0) return fill(); // the lines were reset, or more came than are kept
+    if (i === all.length - 1) return shown.length ? undefined : setEmpty();
+    const fresh = [];
+    for (let k = all.length - 1; k > i && fresh.length < LOG_ROWS; k--) if (keep(all[k])) fresh.push({ e: all[k], node: logRow(all[k]) });
+    last = all[all.length - 1];
+    // lines that left App.events go, the oldest first
+    const oldest = all[0].id;
+    while (pending.length && pending[pending.length - 1].id < oldest) pending.pop();
+    if (!pending.length) while (shown.length && shown[shown.length - 1].e.id < oldest) shown.pop().node.remove();
+    if (fresh.length) {
+      if (shown.length) list.prepend(...fresh.map((r) => r.node));
+      else list.replaceChildren(...fresh.map((r) => r.node));
+      shown = fresh.concat(shown);
+      emptyText = null;
+    }
+    let extra = shown.length + pending.length - LOG_ROWS;
+    if (extra > 0 && pending.length) {
+      const n = Math.min(extra, pending.length);
+      pending.length -= n;
+      extra -= n;
+    }
+    for (; extra > 0; extra--) shown.pop().node.remove();
+    if (!shown.length) setEmpty();
+  }
+
+  return { fill, tick };
+}
+
+// The connections open right now (Android: Active Connections), in the
+// engine's order, with the domain and country of each address. Fetched
+// again on each tick while shown, at most about once a second; a slower,
+// older fetch never overwrites a newer. Rows are kept by connection, and
+// only their "open" time changes.
+function activeList(list) {
+  let seq = 0;
+  let at = 0;
+  let rows = new Map(); // connection id -> { sig, c, node, sub }
+  let emptyText = null;
+  const head = h('p', { class: 'list-head' });
+
+  async function draw(q, force) {
+    if (!force && Date.now() - at < 900) return;
+    at = Date.now();
+    const my = ++seq;
+    const conns = App.status ? await App.port.conns('') : [];
+    if (my !== seq || !list.isConnected || logFilter !== 'flow' || logShow !== 'active') return;
+    const match = conns.filter((c) => matches(q, [c.app, c.path, c.domain, c.dst], c.country));
+    if (!match.length) {
+      rows = new Map();
+      const text = !App.status ? 'Start protection to see connections.' : conns.length ? 'No active connections match.' : 'No active connections';
+      if (text !== emptyText) {
+        emptyText = text;
+        list.replaceChildren(h('p', { class: 'empty', text }));
+      }
+      return;
+    }
+    emptyText = null;
+    const now = Date.now();
+    putText(head, `${match.length} active connection${match.length === 1 ? '' : 's'}${match.length > 300 ? ' (newest 300 shown)' : ''}`);
+    const want = [head];
+    const next = new Map();
+    for (const c of match.slice(0, 300)) {
+      let key = String(c.cid);
+      if (next.has(key)) key += '\u0000' + next.size; // never two rows on one node
+      const sig = [c.app, c.path, c.proto, c.dst, c.domain, c.country, c.via].join('\u0000');
+      let r = rows.get(key);
+      if (!r || r.sig !== sig) r = activeRow(sig, c);
+      r.c = c;
+      const where = c.country ? ' · ' + countryName(c.country) : '';
+      const via = c.via && c.via !== 'direct' ? ' · via ' + c.via : '';
+      putText(r.sub, `${c.app || '?'} · ${c.proto} ${c.dst}${where} · open ${fmtAge(now - c.since)}${via}`);
+      next.set(key, r);
+      want.push(r.node);
+    }
+    rows = next;
+    // drop what closed, then put the rest in order, moving only what is out of place
+    const wanted = new Set(want);
+    for (const n of [...list.children]) if (!wanted.has(n)) n.remove();
+    let cur = list.firstChild;
+    for (const n of want) {
+      if (n === cur) cur = cur.nextSibling;
+      else list.insertBefore(n, cur);
+    }
+  }
+
+  // leaving Active: forget the rows, and let a fetch on its way land nowhere
+  function stop() {
+    seq++;
+    at = 0;
+    rows = new Map();
+    emptyText = null;
+  }
+
+  return { draw, stop };
+}
+
+function activeRow(sig, c) {
+  const r = { sig, c, sub: h('span', { class: 'row-sub' }) };
+  r.node = h(
+    'div',
+    openable(() => activeDetails(r.c)),
+    avatar(c.app),
+    h('span', { class: 'row-text' }, h('span', { class: 'row-title' }, flag(c.country), c.domain || c.dst), r.sub, pathLine(c.path))
+  );
+  return r;
 }
 
 // ---------- Stats ----------
