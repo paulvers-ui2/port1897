@@ -54,8 +54,10 @@ jobs:
           GOOS: windows
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-          USQUE_REPO: https://github.com/paulvers-ui/usque.git
-          USQUE_REF: b6c79c7d3058e484d845f461447c91daa03df24e
+          # v0.0.4, as the Android app: a dead tunnel rebuilt within seconds
+          # (--stall-timeout, -r 1s), --connect-timeout, network watch
+          USQUE_REPO: https://github.com/paulvers-ui2/usque.git
+          USQUE_REF: 45e3979ce04c91839307c602538f635e59b10f39
         run: |
           git init -q usque-src
           git -C usque-src fetch -q --depth 1 "$USQUE_REPO" "$USQUE_REF"
