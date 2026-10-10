@@ -242,10 +242,11 @@ fn main() {
             paths::init(app.path().resource_dir().ok());
             let handle = app.handle().clone();
             applog!(
-                "AuroraVPN {} started (Tauri {}, WebView2 {})",
+                "AuroraVPN {} started (Tauri {}, WebView2 {}), engine in {}",
                 app.package_info().version,
                 tauri::VERSION,
-                tauri::webview_version().unwrap_or_else(|_| "?".into())
+                tauri::webview_version().unwrap_or_else(|_| "?".into()),
+                paths::engine_dir().display()
             );
             if args.iter().any(|a| a == "--self-test") {
                 self_test(&handle);
