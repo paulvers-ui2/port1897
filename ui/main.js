@@ -925,8 +925,11 @@ async function startEngineOnce() {
   enginePid = pid;
   // WARP registration and the usque chain can take a while on first use; an
   // engine that exits instead is reported at once, with its own reason
-  for (let i = 0; i < 120; i++) {
-    await new Promise((r) => setTimeout(r, 500));
+  // quick looks at first (the engine is usually up within a second or two),
+  // then every half second, for 60 s in all
+  const deadline = Date.now() + 60 * 1000;
+  for (let i = 0; Date.now() < deadline; i++) {
+    await new Promise((r) => setTimeout(r, i < 40 ? 150 : 500));
     if (await engineStatus()) {
       writeSettings({ ...readSettings(), wasRunning: true });
       return { ok: true };

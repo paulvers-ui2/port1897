@@ -53,8 +53,10 @@ AuroraVPN for Windows has three parts:
   elevated token (the one a UAC prompt hands out), in the user's session and
   with the user's environment. That is the engine of a UAC prompt, so
   everything below still holds. Flags that would pick a program to run are
-  refused. The engine calls `netsh` and PowerShell from System32, never
-  through `PATH`. Every request is answered on its own thread.
+  refused. The engine configures the adapter and the NRPT rule through
+  Windows APIs and the registry; its `netsh` fallback (for a Windows without
+  those APIs) comes from System32, never through `PATH`. Every request is
+  answered on its own thread.
 - **Without it** (the portable app, or a standard user), the engine starts
   through a UAC prompt, as before.
 

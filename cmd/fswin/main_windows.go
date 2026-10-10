@@ -45,6 +45,7 @@ import (
 	"github.com/celzero/firestack/intra/settings"
 	"github.com/celzero/firestack/win/dnspolicy"
 	"github.com/celzero/firestack/win/ifbind"
+	"github.com/celzero/firestack/win/ipconf"
 	"github.com/celzero/firestack/win/wfp"
 	"golang.org/x/sys/windows"
 	"golang.zx2c4.com/wireguard/tun"
@@ -215,6 +216,7 @@ func main() {
 }
 
 func run(o options) error {
+	began := time.Now() // for the "up in" line
 	// AuroraVPN Service asks the engine it started to stop with an event
 	serviceStop := make(chan struct{})
 	if o.stopHandle != 0 {
@@ -279,7 +281,11 @@ func run(o options) error {
 	// netstack owns dev from here and closes it (removing the adapter) on Disconnect.
 	id := netstack.RegisterTun(dev)
 
-	if err := configure(name, o.setdns); err != nil {
+	var luid uint64 // the adapter, for ipconf's calls
+	if nt, ok := dev.(*tun.NativeTun); ok {
+		luid = nt.LUID()
+	}
+	if err := configure(name, luid, o.setdns); err != nil {
 		_ = dev.Close()
 		return err
 	}
@@ -451,7 +457,7 @@ func run(o options) error {
 	mode := "DNS only"
 	if o.full {
 		// routes go once the tunnel can carry traffic; they vanish with the adapter
-		if err := fullTunnel(name); err != nil {
+		if err := fullTunnel(name, luid); err != nil {
 			return err
 		}
 		mode = fmt.Sprintf("all IPv4; firestack's own traffic leaves via interface #%d", phys4)
@@ -476,7 +482,7 @@ func run(o options) error {
 	if exitID != "" {
 		mode += "; exit: " + exitName(exitID)
 	}
-	fmt.Printf("fswin %s: up on %q (%s); DNS %s:53 -> %s. Ctrl+C to stop.\n", version, name, mode, fakedns4, dnsLabel)
+	fmt.Printf("fswin %s: up on %q in %d ms (%s); DNS %s:53 -> %s. Ctrl+C to stop.\n", version, name, time.Since(began).Milliseconds(), mode, fakedns4, dnsLabel)
 	if blocked := b.blockedList(); blocked != "" {
 		fmt.Printf("fswin: blocking %s\n", blocked)
 	}
@@ -521,9 +527,21 @@ func run(o options) error {
 
 // configure gives the adapter its IPv4 address and, if setdns, makes Windows
 // send DNS to the tunnel. Windows may still query other adapters' DNS servers
-// (including over IPv6) in parallel; the app will need NRPT and firewall
-// rules to stop that.
-func configure(name string, setdns bool) error {
+// (including over IPv6) in parallel; the NRPT rule (-nrpt) stops that.
+//
+// It calls IP Helper directly (win/ipconf), in a few milliseconds; netsh, a
+// program started per setting (about 0.2 s each), is the fallback.
+func configure(name string, luid uint64, setdns bool) error {
+	if luid != 0 {
+		err := ipconf.SetAddress(luid, netip.PrefixFrom(netip.MustParseAddr(ifaddr4), 24))
+		if err == nil && setdns {
+			err = errors.Join(ipconf.SetDNS(luid, netip.MustParseAddr(fakedns4)), ipconf.SetMetric(luid, 1))
+		}
+		if err == nil {
+			return nil
+		}
+		fmt.Println("fswin: configuring the adapter directly failed; using netsh:", err)
+	}
 	cmds := [][]string{
 		{"interface", "ipv4", "set", "address", "name=" + name, "source=static", "address=" + ifaddr4, "mask=255.255.255.0"},
 	}
@@ -537,8 +555,19 @@ func configure(name string, setdns bool) error {
 }
 
 // fullTunnel sends all IPv4 traffic to the adapter with two /1 routes, which
-// beat any 0.0.0.0/0 default route without replacing it.
-func fullTunnel(name string) error {
+// beat any 0.0.0.0/0 default route without replacing it. Directly through IP
+// Helper (win/ipconf); netsh is the fallback.
+func fullTunnel(name string, luid uint64) error {
+	if luid != 0 {
+		err := errors.Join(
+			ipconf.AddRoute(luid, netip.MustParsePrefix("0.0.0.0/1"), 0),
+			ipconf.AddRoute(luid, netip.MustParsePrefix("128.0.0.0/1"), 0),
+		)
+		if err == nil {
+			return nil
+		}
+		fmt.Println("fswin: adding the routes directly failed; using netsh:", err)
+	}
 	return netsh([][]string{
 		{"interface", "ipv4", "add", "route", "prefix=0.0.0.0/1", "interface=" + name, "nexthop=0.0.0.0", "metric=0", "store=active"},
 		{"interface", "ipv4", "add", "route", "prefix=128.0.0.0/1", "interface=" + name, "nexthop=0.0.0.0", "metric=0", "store=active"},
