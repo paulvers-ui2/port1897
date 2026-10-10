@@ -127,6 +127,7 @@ PAGES.apps = () => {
   const list = h('div', { class: 'group' }, note('Loading…'));
   const search = field({ placeholder: 'Search apps', oninput: () => fill() });
   let apps = [];
+  let paths = Object.create(null); // app name -> full program path
   const filters = h(
     'div',
     { class: 'seg-wrap' },
@@ -145,7 +146,7 @@ PAGES.apps = () => {
   };
   const fill = () => {
     const q = search.input.value.trim().toLowerCase();
-    const rows = apps.filter((a) => (!q || a.name.toLowerCase().includes(q)) && keep(a));
+    const rows = apps.filter((a) => (!q || a.name.toLowerCase().includes(q) || (paths[a.name.toLowerCase()] || '').toLowerCase().includes(q)) && keep(a));
     list.replaceChildren();
     if (!rows.length) {
       list.append(h('p', { class: 'empty', text: App.status ? 'No apps yet. Use the internet and they show up here.' : 'Start protection to see the apps that use the internet.' }));
@@ -158,7 +159,7 @@ PAGES.apps = () => {
           'div',
           { class: 'row clickable' + (isBlocked ? ' blocked' : ''), tabindex: '0', onclick: () => App.go('app-info', { app: a.name.toLowerCase() }), onkeydown: (e) => e.key === 'Enter' && App.go('app-info', { app: a.name.toLowerCase() }) },
           avatar(a.name),
-          h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: a.name }), h('span', { class: 'row-sub', text: `${appStatusText(a.name)} · ${a.n || 0} connections · ${fmtBytes(a.rx)} ▼ / ${fmtBytes(a.tx)} ▲` })),
+          h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: a.name }), h('span', { class: 'row-sub', text: `${appStatusText(a.name)} · ${a.n || 0} connections · ${fmtBytes(a.rx)} ▼ / ${fmtBytes(a.tx)} ▲` }), pathLine(paths[a.name.toLowerCase()])),
           toggle(!isBlocked, async (allow) => {
             await App.block(a.name, !allow);
             fill();
@@ -167,7 +168,8 @@ PAGES.apps = () => {
       );
     }
   };
-  App.port.stats('7d').then((st) => {
+  Promise.all([App.port.stats('7d'), App.port.appPaths()]).then(([st, p]) => {
+    paths = Object.assign(Object.create(null), p);
     const seen = new Map();
     for (const a of st.allowedApps.concat(st.blockedApps)) {
       const k = a.name.toLowerCase();
@@ -181,7 +183,7 @@ PAGES.apps = () => {
     apps = [...seen.values()].filter((a) => a.name !== '?').sort((x, y) => y.n - x.n || x.name.localeCompare(y.name));
     fill();
   });
-  return screen('Apps', note('Switch an app off to block it from the internet. Tap an app for its rules: isolate, bypass, exclude, IP and domain rules. Rules apply immediately.'), filters, h('div', { class: 'field-row' }, search), list);
+  return screen('Apps', note('Switch an app off to block it from the internet. Tap an app for its rules: isolate, bypass, exclude, IP and domain rules. Rules apply immediately. Search finds an app by name or by where it runs from.'), filters, h('div', { class: 'field-row' }, search), list);
 };
 
 // ---------- DNS ----------

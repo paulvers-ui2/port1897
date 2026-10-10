@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('port', {
   events: call('engine:events'),
   stats: call('engine:stats'),
   appStats: call('engine:appStats'),
+  appPaths: call('engine:appPaths'),
   block: call('engine:block'),
   setRules: call('rules:set'),
   pause: call('engine:pause'),
