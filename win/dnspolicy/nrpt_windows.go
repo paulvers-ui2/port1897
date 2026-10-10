@@ -12,11 +12,11 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -178,24 +178,41 @@ func apply() error {
 		return applyHook()
 	}
 	flush()
-	// ipconfig by its full System32 path, with one fixed argument: the Cmd
-	// is built directly, so there is no PATH lookup at all
-	cmd := &exec.Cmd{
-		Path:        systemTool("ipconfig.exe"),
-		Args:        []string{"ipconfig.exe", "/registerdns"},
-		SysProcAttr: &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW},
-	}
-	if !filepath.IsAbs(cmd.Path) {
-		return fmt.Errorf("%w: System32 not found", ErrNotApplied)
-	}
-	if err := cmd.Start(); err != nil {
+	h, err := startHidden(systemTool("ipconfig.exe"), "/registerdns")
+	if err != nil {
 		return fmt.Errorf("%w: ipconfig /registerdns: %w", ErrNotApplied, err)
 	}
 	go func() {
-		_ = cmd.Wait()
+		_, _ = windows.WaitForSingleObject(h, windows.INFINITE)
+		_ = windows.CloseHandle(h)
 		flush() // and once more after it, for answers cached meanwhile
 	}()
 	return nil
+}
+
+// startHidden starts exe, a full path, with fixed args, hidden: through
+// CreateProcess with that path as the program, so there is no PATH lookup
+// and no shell. It returns the process handle, for the caller to close.
+func startHidden(exe string, args ...string) (windows.Handle, error) {
+	if !filepath.IsAbs(exe) {
+		return 0, fmt.Errorf("%s: not a full path", exe)
+	}
+	app, err := windows.UTF16PtrFromString(exe)
+	if err != nil {
+		return 0, err
+	}
+	line, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(append([]string{filepath.Base(exe)}, args...)))
+	if err != nil {
+		return 0, err
+	}
+	si := windows.StartupInfo{Flags: windows.STARTF_USESHOWWINDOW, ShowWindow: windows.SW_HIDE}
+	si.Cb = uint32(unsafe.Sizeof(si)) //nolint:gosec // G103: the struct's size, for Windows
+	var pi windows.ProcessInformation
+	if err := windows.CreateProcess(app, line, nil, nil, false, windows.CREATE_NO_WINDOW, nil, nil, &si, &pi); err != nil {
+		return 0, err
+	}
+	_ = windows.CloseHandle(pi.Thread)
+	return pi.Process, nil
 }
 
 // systemTool is a program in System32, never one found through PATH, which
