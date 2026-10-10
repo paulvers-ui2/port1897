@@ -217,7 +217,29 @@ async function toggleEngine(wantOn) {
 
 // ---------- polling ----------
 
-async function poll() {
+// One look at a time: a tick that comes during a look brings one more look
+// after it, never a pile of them.
+let polling = null;
+let pollAgain = false;
+function poll() {
+  if (polling) {
+    pollAgain = true;
+    return polling;
+  }
+  polling = (async () => {
+    try {
+      do {
+        pollAgain = false;
+        await pollOnce();
+      } while (pollAgain);
+    } finally {
+      polling = null;
+    }
+  })();
+  return polling;
+}
+
+async function pollOnce() {
   const was = !!App.status;
   App.status = await App.port.status();
   if (was !== !!App.status) {
@@ -259,7 +281,14 @@ async function main() {
   App.applyTheme();
   await poll();
   App.render();
-  setInterval(poll, 1000);
+  if (App.port.onTick) {
+    // the app says when something changed (desktop/src/live.rs); a slow look
+    // stays, in case a tick is missed
+    App.port.onTick(() => poll());
+    setInterval(poll, 5000);
+  } else {
+    setInterval(poll, 1000);
+  }
   if (!App.settings.welcomed) showWelcome();
 }
 

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AuroraVPN",
+  "mainBinaryName": "AuroraVPN",
+  "version": "0.0.0",
+  "identifier": "AuroraVPN",
+  "build": {
+    "frontendDist": "../ui/renderer"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico", "icons/icon.png"]
+  }
+}
