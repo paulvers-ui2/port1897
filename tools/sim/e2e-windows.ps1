@@ -56,7 +56,13 @@ function Start-Fswin([string]$name, [string[]]$extra) {
   $p = Start-Process -FilePath $fswin -ArgumentList $argv -PassThru -WindowStyle Hidden
   for ($i = 0; $i -lt 90; $i++) {
     Start-Sleep -Milliseconds 500
-    try { $null = Api '/api/status'; return [pscustomobject]@{ Proc = $p; Log = $log } } catch {}
+    try {
+      $null = Api '/api/status'
+      # how long fswin took to come up, from its own "up on ... in N ms" line
+      $up = Select-String -Path $log -Pattern ' in (\d+) ms ' -ErrorAction SilentlyContinue | Select-Object -First 1
+      if ($up) { Note $name 'engine start' "$($up.Matches[0].Groups[1].Value) ms" }
+      return [pscustomobject]@{ Proc = $p; Log = $log }
+    } catch {}
     if ($p.HasExited) { break }
   }
   throw "fswin ($name) did not come up (exit $($p.ExitCode)); log:`n$(Get-Content $log -Raw -ErrorAction SilentlyContinue)"
@@ -175,6 +181,10 @@ try {
   Check $s 'status reports the other VPN' ((@($st.conflicts) -join ';') -match 'Sim VPN') ((@($st.conflicts) -join '; '))
   Check $s 'engine log warns about it' (LogHas $f 'warning: another VPN sends all DNS elsewhere') ''
   Note $s 'NRPT policy with both rules' ((Get-DnsClientNrptPolicy | ForEach-Object { "$($_.Namespace) -> $($_.NameServers)" }) -join '; ')
+  # fswin writes its rule to the registry (no PowerShell): Windows' DNS Client
+  # must have taken it into the policy it applies
+  $ours = @(Get-DnsClientNrptPolicy | Where-Object { $_.Namespace -eq '.' -and @($_.NameServers) -contains '10.111.222.3' })
+  Check $s 'the DNS Client applies fswin''s NRPT rule' ($ours.Count -gt 0) ((Get-DnsClientNrptPolicy | ForEach-Object { "$($_.Namespace) -> $($_.NameServers)" }) -join '; ')
   try {
     $sys = Resolve-DnsName example.com -Type A -DnsOnly -QuickTimeout -ErrorAction Stop | Where-Object Type -eq 'A' | ForEach-Object IPAddress
     Note $s 'a normal Windows lookup with both rules' ($sys -join ',')

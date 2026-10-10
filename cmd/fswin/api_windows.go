@@ -44,6 +44,10 @@ type apiStatus struct {
 	Dial      string   `json:"dial"`        // anti-censorship dial strategy
 	Conflicts []string `json:"conflicts"`   // other VPNs that break ours
 	MTU       *mtuPlan `json:"mtu,omitempty"` // mtu_windows.go
+	// WARP (MASQUE) and the chain: how often usque was restarted, and why
+	// the exit is down while it is (supervise_windows.go)
+	ExitRestarts int64  `json:"exitRestarts,omitempty"`
+	ExitIssue    string `json:"exitIssue,omitempty"`
 }
 
 type dnsStat struct {
@@ -322,6 +326,9 @@ func statusOf(b *bridge, o options, started time.Time, exitID, dnsLabel string) 
 	}
 	if exitID != "" {
 		st.Exit = exitName(exitID)
+	}
+	if sv := curSup.Load(); sv != nil {
+		st.ExitRestarts, st.ExitIssue = sv.status()
 	}
 	return st
 }

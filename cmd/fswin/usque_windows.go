@@ -37,9 +37,13 @@ import (
 //	chain:  apps -> usque chain -> WARP2 -> wg0 -> WARP1 -> internet
 
 type usque struct {
-	cmd *exec.Cmd
-	job windows.Handle
-	url string // socks5://user:pass@127.0.0.1:port
+	cmd        *exec.Cmd
+	job        windows.Handle
+	url        string // socks5://user:pass@127.0.0.1:port
+	port       int
+	user, pass string
+	done       chan struct{}    // closed once the process has exited
+	state      *os.ProcessState // how it exited, once done is closed
 }
 
 // usqueSetup holds what startUsque needs.
@@ -48,6 +52,7 @@ type usqueSetup struct {
 	dir     string   // where warp1.json / warp2.json live
 	chainWG string   // wg-quick file for the chain's middle hop; "" for plain MASQUE
 	extra   []string // more usque flags (SNI, MTU...), checked by usqueFlags
+	link    int      // the network's MTU (mtu_windows.go), for -i; 0 if unknown
 	logf    func(string, ...any)
 }
 
@@ -76,11 +81,21 @@ func prepareUsque(s usqueSetup) error {
 // the tunnel when they came, and went silent: no DNS and no traffic for 30 s,
 // until usque gave up on it and reconnected.
 func startUsque(s usqueSetup) (*usque, error) {
-	port, err := freePort()
-	if err != nil {
-		return nil, err
+	return startUsqueOn(s, 0, "", "")
+}
+
+// startUsqueOn starts usque with its SOCKS proxy on port, user and pass, or
+// on a free port with new credentials when port is 0. The supervisor
+// (supervise_windows.go) restarts usque on the same ones, so the exit that
+// points at them keeps working.
+func startUsqueOn(s usqueSetup, port int, user, pass string) (*usque, error) {
+	if port == 0 {
+		p, err := freePort()
+		if err != nil {
+			return nil, err
+		}
+		port, user, pass = p, randHex(8), randHex(16)
 	}
-	user, pass := randHex(8), randHex(16)
 	args := []string{"-c", filepath.Join(s.dir, "warp1.json")}
 	if s.chainWG != "" {
 		args = append(args, "chain", "--wg", s.chainWG, "--exit-config", filepath.Join(s.dir, "warp2.json"))
@@ -88,7 +103,8 @@ func startUsque(s usqueSetup) (*usque, error) {
 		args = append(args, "socks")
 	}
 	args = append(args, "-b", "127.0.0.1", "-p", fmt.Sprint(port), "-u", user, "-w", pass)
-	args = append(args, s.extra...)
+	args = append(args, usqueDefaults(s.chainWG != "", s.link)...)
+	args = append(args, s.extra...) // after the defaults: the last of a flag wins
 
 	// usque.exe beside fswin.exe; argv only, no shell; flags checked by usqueFlags
 	cmd := exec.Command(s.exe, args...) //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
@@ -103,8 +119,17 @@ func startUsque(s usqueSetup) (*usque, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("usque: start: %w", err)
 	}
-	u := &usque{cmd: cmd}
-	go pipeLog(out, "usque", s.logf)
+	u := &usque{cmd: cmd, port: port, user: user, pass: pass, done: make(chan struct{})}
+	// the one wait for this process: waitListening, stop and the supervisor
+	// all watch done
+	go func() {
+		u.state, _ = cmd.Process.Wait()
+		close(u.done)
+	}()
+	go func() {
+		pipeLog(out, "usque", s.logf)
+		_ = out.Close() // no cmd.Wait to close it
+	}()
 
 	// usque dies with us, even if fswin crashes
 	if job, err := killOnCloseJob(cmd.Process.Pid); err == nil {
@@ -114,7 +139,7 @@ func startUsque(s usqueSetup) (*usque, error) {
 	}
 
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	if err := waitListening(addr, 30*time.Second, cmd); err != nil {
+	if err := waitListening(addr, 30*time.Second, u); err != nil {
 		u.stop()
 		return nil, err
 	}
@@ -127,9 +152,23 @@ func (u *usque) stop() {
 		return
 	}
 	_ = u.cmd.Process.Kill()
-	_ = u.cmd.Wait()
+	select {
+	case <-u.done:
+	case <-time.After(5 * time.Second):
+	}
 	if u.job != 0 {
 		_ = windows.CloseHandle(u.job)
+		u.job = 0
+	}
+}
+
+// exited tells whether the process has ended.
+func (u *usque) exited() bool {
+	select {
+	case <-u.done:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -176,19 +215,44 @@ func randHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-// waitListening waits until addr accepts connections or cmd exits.
-func waitListening(addr string, d time.Duration, cmd *exec.Cmd) error {
-	exited := make(chan *os.ProcessState, 1)
-	go func() {
-		st, _ := cmd.Process.Wait()
-		exited <- st
-	}()
+// usqueDefaults are the Android app's usque flags (rethink-app-masque
+// ChainArgs.DEFAULT_WARP1_ARGS and UsqueManager's resilience flags), for
+// usque v0.0.4: how fast a dead tunnel is noticed and rebuilt. The user's
+// flags come after them and win.
+//
+//	-i 1350              QUIC packets of 1350 bytes, as Cloudflare's own
+//	                     client sends: usque's default starts at 1280 and
+//	                     grows by path MTU discovery, and until then a full
+//	                     1280-byte tunnel packet does not fit and is dropped
+//	                     (TLS handshakes stalled a second after each connect).
+//	                     Less on a network that cannot carry 1350 + 28.
+//	-k 10s               keepalive: keeps NAT bindings open
+//	-r 1s                a second between reconnect attempts
+//	--idle-timeout 25s   QUIC drops a connection that hears nothing for 25 s
+//	--stall-timeout 2s   packets go out, nothing comes back for 2 s, and a
+//	                     probe through the tunnel gets no answer: rebuild now
+//
+// WARP over MASQUE also gets --always-reconnect (rebuild at once, not on the
+// next packet); the chain reconnects always (usque sets it), and its WARP2
+// keeps usque's own --exit-stall-timeout 8s.
+func usqueDefaults(chain bool, link int) []string {
+	ips := 1350
+	if link > 0 {
+		ips = max(min(ips, link-28), 1200) // 28: IPv4 and UDP headers; QUIC needs 1200
+	}
+	f := []string{"-i", fmt.Sprint(ips), "-k", "10s", "-r", "1s", "--idle-timeout", "25s", "--stall-timeout", "2s"}
+	if !chain {
+		f = append(f, "--always-reconnect")
+	}
+	return f
+}
+
+// waitListening waits until addr accepts connections or u exits.
+func waitListening(addr string, d time.Duration, u *usque) error {
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		select {
-		case st := <-exited:
-			return fmt.Errorf("usque exited (exit code %s) before its proxy came up; see the log", exitCode(st))
-		default:
+		if u.exited() {
+			return fmt.Errorf("usque exited (exit code %s) before its proxy came up; see the log", exitCode(u.state))
 		}
 		if c, err := net.DialTimeout("tcp", addr, 500*time.Millisecond); err == nil {
 			c.Close()

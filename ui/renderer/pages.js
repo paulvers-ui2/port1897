@@ -381,8 +381,13 @@ async function removeCustomDns(type, e) {
 
 // ---------- Proxy (WARP, WireGuard, SOCKS5, HTTP) ----------
 
+// The flags the engine puts before the user's (fswin usqueDefaults, as on
+// Android); -i is lower on a network that cannot carry 1350-byte packets.
+const USQUE_DEFAULTS_CHAIN = '-i 1350 -k 10s -r 1s --idle-timeout 25s --stall-timeout 2s';
+
 function warpStatusText(reg) {
   const s = App.settings;
+  if (App.status && App.status.exit === EXIT_LABEL.masque && App.status.exitIssue) return 'Reconnecting…';
   if (App.status && App.status.exit === EXIT_LABEL.masque) return 'Connected · routing via Cloudflare WARP';
   if (App.status && s.exit === 'masque') return 'On · restart protection to connect';
   if (!reg.warp1.registered) return 'Not registered';
@@ -657,10 +662,11 @@ PAGES.chain = () => {
     const on = s.exit === 'chain';
     const running = !!App.status;
     const connected = running && App.status.exit === EXIT_LABEL.chain; // what the engine runs, not the setting
+    const reconnecting = connected && !!App.status.exitIssue; // the engine is restarting usque
     const m1 = flagVal(s.warp1Flags, ['-m', '--mtu'], 1280);
     const wgm = reg.wg0.present ? Math.min(flagVal(s.wgFlags, ['--wg-mtu'], 0) || wgMtu(reg.wg0.text) || m1 - 60, m1 - 60) : null;
     const m2 = flagVal(s.warp2Flags, ['--exit-mtu'], 1280);
-    const statusText = connected ? 'Connected' : !ready ? 'Setup incomplete' : running ? 'Protection is on without the chain' : 'Ready — not connected';
+    const statusText = reconnecting ? 'Reconnecting…' : connected ? 'Connected' : !ready ? 'Setup incomplete' : running ? 'Protection is on without the chain' : 'Ready — not connected';
     const exitOut = h('p', { class: 'cmd', text: 'Not checked yet' });
 
     const hop = (title, sub, registered, which, sniKey, sniLabel, flagsKey, flagsExample) => {
@@ -730,7 +736,7 @@ PAGES.chain = () => {
         h(
           'div',
           { class: 'hop-head' },
-          dot(connected ? 'on' : ready ? 'warn' : 'off'),
+          dot(reconnecting ? 'warn' : connected ? 'on' : ready ? 'warn' : 'off'),
           h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: statusText }), h('span', { class: 'row-sub', text: on ? 'Chain enabled' : 'Chain disabled' })),
           toggle(on, (v) => {
             if (v && !ready) {
@@ -761,7 +767,7 @@ PAGES.chain = () => {
       hop('WARP1 · entry', 'Hides you from your ISP. The only hop on your network: its SNI is what the ISP sees.', reg.warp1.registered, 'warp1', 'warpSni', 'SNI (ClientHello, seen by your ISP)', 'warp1Flags', '-m 1280 -i 1350 -P 443 -k 30s -r 1s --http2-fallback-after 2'),
       wgHop,
       hop('WARP2 · exit', 'Cloudflare egress IP. Runs inside wg0, over HTTP/2 because QUIC does not fit there.', reg.warp2.registered, 'warp2', 'exitSni', 'Exit SNI (inside wg0, hidden from your ISP)', 'warp2Flags', '--exit-transport auto --exit-mtu 1280 --exit-connect-port 443'),
-      h('div', { class: 'hop' }, h('h2', { text: 'usque command' }), note('Fixed core (the VPN tunnel is routed to this SOCKS port; port and password are new every start):'), h('p', { class: 'cmd', text: coreCmd }), note('Full command (next start):'), h('p', { class: 'cmd', text: coreCmd + (extra ? ' ' + extra : '') })),
+      h('div', { class: 'hop' }, h('h2', { text: 'usque command' }), note('Fixed core (the VPN tunnel is routed to this SOCKS port; port and password are new every start):'), h('p', { class: 'cmd', text: coreCmd }), note('Full command (next start):'), h('p', { class: 'cmd', text: coreCmd + ' ' + USQUE_DEFAULTS_CHAIN + (extra ? ' ' + extra : '') }), note('The engine adds Android\'s reconnect flags before yours (yours win): a dead tunnel is rebuilt within seconds, and if usque stops it starts again within a second.')),
       h(
         'div',
         { class: 'hop' },
