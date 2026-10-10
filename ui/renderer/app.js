@@ -356,6 +356,7 @@ function demoPort() {
       blockedDomains: [{ name: 'ads.example.com', n: 9, blocked: 9 }],
     }),
     appStats: async () => ({ domains: doms.map((d, i) => ({ name: d, n: 30 - i * 4, blocked: 0 })), ips: [{ name: '104.16.0.1', n: 22, blocked: 0 }] }),
+    appPaths: async () => Object.fromEntries(apps.concat('chrome.exe').map((a) => [a, demoPath(a)]).filter(([, p]) => p)),
     block: async (app, b) => {
       const a = { ...s.rules.apps[app.toLowerCase()] };
       if (b) a.mode = 'block';

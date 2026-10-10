@@ -288,6 +288,8 @@ PAGES['app-info'] = ({ app }) => {
   const tempAllowed = a.allowUntil > Date.now();
   const stats = h('div', {}, note('Loading…'));
   const connsBox = h('div', {}, note('Loading…'));
+  const where = h('div', {}); // where the app runs from, once known
+  App.port.appPaths().then((p) => where.replaceChildren(pathLine(p[app]) || ''));
   const loadConns = async () => {
     const list = App.status ? await App.port.conns(app) : [];
     connsBox.replaceChildren(
@@ -324,7 +326,7 @@ PAGES['app-info'] = ({ app }) => {
   const mode = APP_MODES.find((m) => m[0] === a.mode);
   return screen(
     'App info',
-    h('div', { class: 'app-head' }, avatar(app), h('div', {}, h('h2', { text: app }), h('p', { class: 'row-sub', text: appStatusText(app) }))),
+    h('div', { class: 'app-head' }, avatar(app), h('div', {}, h('h2', { text: app }), h('p', { class: 'row-sub', text: appStatusText(app) }), where)),
     sectionLabel('Firewall rules for this app'),
     card(
       row({ ico: 'firewall_home_screen', title: 'Allow internet', sub: blocked ? (tempAllowed ? 'Blocked, but allowed for now' : 'Blocked') : 'Allowed', right: toggle(!blocked, (on) => App.block(app, !on).then(() => App.render()), 'Allow ' + app) }),

@@ -416,6 +416,46 @@ async function pushRules(s) {
 
 const RULE_KEYS = ['rules', 'universal', 'dnsTypesAuto', 'dnsTypes', 'knownApps', 'pausedUntil'];
 
+// Where each app runs from (chrome.exe: C:\Program Files\Google\Chrome\
+// Application\chrome.exe), learned from the engine's events for the Apps
+// screen; the latest path wins. Kept apart from the settings: it is no rule.
+let appPaths = null;
+
+function appPathsFile() {
+  return path.join(dataDir(), 'app-paths.json');
+}
+
+function loadAppPaths() {
+  if (appPaths) return appPaths;
+  appPaths = Object.create(null);
+  try {
+    for (const [k, v] of Object.entries(JSON.parse(fs.readFileSync(appPathsFile(), 'utf8')))) if (safeKey(k) && typeof v === 'string') appPaths[k] = v;
+  } catch {
+    // none yet
+  }
+  return appPaths;
+}
+
+function learnPaths(evs) {
+  const m = loadAppPaths();
+  let changed = false;
+  for (const e of evs) {
+    if (!e.path || !e.app) continue;
+    const k = e.app.toLowerCase();
+    if (safeKey(k) && m[k] !== e.path) {
+      m[k] = e.path;
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  try {
+    fs.mkdirSync(dataDir(), { recursive: true });
+    fs.writeFileSync(appPathsFile(), JSON.stringify(m));
+  } catch {
+    // best effort: they come again with the next connection
+  }
+}
+
 // Apps seen for the first time: remembered, and blocked when "Block newly
 // installed apps" is on (fswin already blocked them; this makes it a rule
 // the user can see and undo).
@@ -1149,6 +1189,7 @@ async function pumpEvents(st, s) {
     return;
   }
   learnApps(evs);
+  learnPaths(evs);
   const lines = [];
   for (const e of evs) {
     hist.engineLast = e.id;
@@ -1600,6 +1641,7 @@ ipcMain.handle('engine:events', (_e, after) => {
 });
 ipcMain.handle('engine:stats', (_e, range) => stats(String(range)));
 ipcMain.handle('engine:appStats', (_e, appName) => appStats(appName));
+ipcMain.handle('engine:appPaths', () => ({ ...loadAppPaths() }));
 ipcMain.handle('bl:status', () => blStatus());
 ipcMain.handle('bl:filetag', async () => {
   try {
