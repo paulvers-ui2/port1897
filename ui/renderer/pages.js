@@ -1038,6 +1038,13 @@ function siteIcon(domain) {
   return img;
 }
 
+// The full path of the program a log row belongs to, on a line of its own
+// (C:\Program Files\Google\Chrome\Application\chrome.exe); nothing when
+// Windows did not tell it.
+function pathLine(path) {
+  return path ? h('span', { class: 'row-path', text: path, title: path }) : null;
+}
+
 // Matches the search box against the given fields and the country's name.
 function matches(q, fields, cc) {
   return !q || fields.concat(cc || '', countryName(cc)).some((v) => String(v || '').toLowerCase().includes(q));
@@ -1051,7 +1058,7 @@ function fillLog(list, q) {
   q = (q || '').trim().toLowerCase();
   const rows = App.events
     .filter((e) => e.kind === logFilter && (logShow === 'all' || (logShow === 'blocked') === !!e.blocked))
-    .filter((e) => matches(q, [e.app, e.domain, e.dst], e.country))
+    .filter((e) => matches(q, [e.app, e.path, e.domain, e.dst], e.country))
     .slice(-300)
     .reverse();
   list.replaceChildren();
@@ -1073,7 +1080,8 @@ function fillLog(list, q) {
             'span',
             { class: 'row-text' },
             h('span', { class: 'row-title' }, flag(e.country), (e.domain || e.dst) + (e.blocked ? '  · blocked' : '')),
-            h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.app || '?'} · ${e.proto} ${e.dst}${e.country ? ' · ' + countryName(e.country) : ''}${e.via && e.via !== 'direct' && e.via !== 'blocked' ? ' · via ' + e.via : ''}${e.blocked && e.rule ? ' · ' + e.rule : ''}` })
+            h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.app || '?'} · ${e.proto} ${e.dst}${e.country ? ' · ' + countryName(e.country) : ''}${e.via && e.via !== 'direct' && e.via !== 'blocked' ? ' · via ' + e.via : ''}${e.blocked && e.rule ? ' · ' + e.rule : ''}` }),
+            pathLine(e.path)
           )
         )
       );
@@ -1086,7 +1094,7 @@ function fillLog(list, q) {
           'div',
           o,
           siteIcon(e.domain),
-          h('span', { class: 'row-text' }, h('span', { class: 'row-title' }, flag(e.country), e.domain || ''), h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.qtype ? rrName(e.qtype) + ' · ' : ''}${e.answer || 'no answer'}${e.country ? ' · ' + countryName(e.country) : ''}${e.error ? ' (' + e.error + ')' : ''} · ${e.latencyMs} ms${marks ? ' · ' + marks : ''}` }))
+          h('span', { class: 'row-text' }, h('span', { class: 'row-title' }, flag(e.country), e.domain || ''), h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.qtype ? rrName(e.qtype) + ' · ' : ''}${e.answer || 'no answer'}${e.country ? ' · ' + countryName(e.country) : ''}${e.error ? ' (' + e.error + ')' : ''} · ${e.latencyMs} ms${marks ? ' · ' + marks : ''}` }), pathLine(e.path))
         )
       );
     }
@@ -1102,7 +1110,7 @@ async function fillActive(list, q) {
   const conns = App.status ? await App.port.conns('') : [];
   if (seq !== activeSeq || !list.isConnected || logShow !== 'active') return;
   q = (q || '').trim().toLowerCase();
-  const rows = conns.filter((c) => matches(q, [c.app, c.domain, c.dst], c.country));
+  const rows = conns.filter((c) => matches(q, [c.app, c.path, c.domain, c.dst], c.country));
   list.replaceChildren();
   if (!rows.length) {
     list.append(h('p', { class: 'empty', text: !App.status ? 'Start protection to see connections.' : conns.length ? 'No active connections match.' : 'No active connections' }));
@@ -1122,7 +1130,8 @@ async function fillActive(list, q) {
           'span',
           { class: 'row-text' },
           h('span', { class: 'row-title' }, flag(c.country), c.domain || c.dst),
-          h('span', { class: 'row-sub', text: `${c.app || '?'} · ${c.proto} ${c.dst}${where} · open ${fmtAge(now - c.since)}${via}` })
+          h('span', { class: 'row-sub', text: `${c.app || '?'} · ${c.proto} ${c.dst}${where} · open ${fmtAge(now - c.since)}${via}` }),
+          pathLine(c.path)
         )
       )
     );
