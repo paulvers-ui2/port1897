@@ -1217,13 +1217,19 @@ function activeList(list) {
   let rows = new Map(); // connection id -> { sig, c, node, sub }
   let emptyText = null;
   const head = h('p', { class: 'list-head' });
+  const shown = (my) => my === seq && list.isConnected && logFilter === 'flow' && logShow === 'active';
 
   async function draw(q, force) {
     if (!force && Date.now() - at < 900) return;
     at = Date.now();
     const my = ++seq;
     const conns = App.status ? await App.port.conns('') : [];
-    if (my !== seq || !list.isConnected || logFilter !== 'flow' || logShow !== 'active') return;
+    if (shown(my)) paint(conns, q, my);
+  }
+
+  // At most LOG_CHUNK new rows a go (LOG_FIRST the first time); the rest
+  // come in the next go, so a burst never holds the window up.
+  function paint(conns, q, my) {
     const match = conns.filter((c) => matches(q, [c.app, c.path, c.domain, c.dst], c.country));
     if (!match.length) {
       rows = new Map();
@@ -1239,12 +1245,22 @@ function activeList(list) {
     putText(head, `${match.length} active connection${match.length === 1 ? '' : 's'}${match.length > 300 ? ' (newest 300 shown)' : ''}`);
     const want = [head];
     const next = new Map();
+    const budget = rows.size ? LOG_CHUNK : LOG_FIRST;
+    let built = 0;
+    let more = false;
     for (const c of match.slice(0, 300)) {
       let key = String(c.cid);
       if (next.has(key)) key += '\u0000' + next.size; // never two rows on one node
       const sig = [c.app, c.path, c.proto, c.dst, c.domain, c.country, c.via].join('\u0000');
       let r = rows.get(key);
-      if (!r || r.sig !== sig) r = activeRow(sig, c);
+      if (!r || r.sig !== sig) {
+        if (built === budget) {
+          more = true;
+          break;
+        }
+        r = activeRow(sig, c);
+        built++;
+      }
       r.c = c;
       const where = c.country ? ' · ' + countryName(c.country) : '';
       const via = c.via && c.via !== 'direct' ? ' · via ' + c.via : '';
@@ -1252,15 +1268,21 @@ function activeList(list) {
       next.set(key, r);
       want.push(r.node);
     }
+    if (more) for (const [k, r] of rows) if (!next.has(k)) next.set(k, r); // for the next go
     rows = next;
-    // drop what closed, then put the rest in order, moving only what is out of place
-    const wanted = new Set(want);
-    for (const n of [...list.children]) if (!wanted.has(n)) n.remove();
-    let cur = list.firstChild;
-    for (const n of want) {
-      if (n === cur) cur = cur.nextSibling;
-      else list.insertBefore(n, cur);
+    if (head.parentNode !== list) {
+      list.replaceChildren(...want);
+    } else {
+      // drop what closed, then put the rest in order, moving only what is out of place
+      const wanted = new Set(want);
+      for (const n of [...list.children]) if (!wanted.has(n)) n.remove();
+      let cur = list.firstChild;
+      for (const n of want) {
+        if (n === cur) cur = cur.nextSibling;
+        else list.insertBefore(n, cur);
+      }
     }
+    if (more) setTimeout(() => shown(my) && paint(conns, q, my), 0);
   }
 
   // leaving Active: forget the rows, and let a fetch on its way land nowhere
