@@ -85,14 +85,14 @@ func Add(server netip.Addr) error {
 		_ = registry.DeleteKey(root, localRules+`\`+ruleKey)
 		return fmt.Errorf("dnspolicy: add: %w", err)
 	}
-	return apply()
+	return nudge(false)
 }
 
 // Remove deletes our rules, and has the DNS Client drop them: a rule left in
 // force after the engine stops would send every lookup to an address no one
 // answers.
 func Remove() error {
-	return errors.Join(removeOurs(), apply())
+	return errors.Join(removeOurs(), nudge(true))
 }
 
 // Others lists catch-all (".") rules that are not ours, such as another
@@ -166,14 +166,18 @@ func list(path string) ([]rule, error) {
 	return rules, nil
 }
 
-// applyHook replaces apply in tests, which write rules under HKCU.
+// applyHook replaces nudge in tests, which write rules under HKCU.
 var applyHook func() error
 
-// apply has the DNS Client take a rule change in and empties its cache. It
-// does not wait for ipconfig, which took 3 s on the Simulate runner (it goes
-// on to register the PC's names in DNS): the start no longer waits either,
-// and at a stop it finishes after fswin has gone.
-func apply() error {
+// nudge has the DNS Client take a rule change in, and empties its cache:
+// ipconfig /registerdns makes Windows notice changed DNS settings (about
+// 3 s on the Simulate runner). fswin writes its rule before the adapter gets
+// its DNS server, which makes the DNS Client reload too; this is the backup,
+// and does not hold the start up (wait false). At a stop (wait true) it is
+// waited for, at most 5 s: the rule must be out of force once fswin is gone,
+// and a nudge still running when the next start nudges kept that one from
+// taking effect (Simulate, PR #28).
+func nudge(wait bool) error {
 	if applyHook != nil {
 		return applyHook()
 	}
@@ -182,10 +186,18 @@ func apply() error {
 	if err != nil {
 		return fmt.Errorf("%w: ipconfig /registerdns: %w", ErrNotApplied, err)
 	}
+	done := func() {
+		_ = windows.CloseHandle(h)
+		flush() // once more after it, for answers cached meanwhile
+	}
+	if wait {
+		_, _ = windows.WaitForSingleObject(h, 5000)
+		done()
+		return nil
+	}
 	go func() {
 		_, _ = windows.WaitForSingleObject(h, windows.INFINITE)
-		_ = windows.CloseHandle(h)
-		flush() // and once more after it, for answers cached meanwhile
+		done()
 	}()
 	return nil
 }

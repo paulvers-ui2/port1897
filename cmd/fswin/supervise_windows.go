@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -58,6 +59,7 @@ var (
 	probeEvery   = 15 * time.Second
 	probeTimeout = 8 * time.Second
 	startGrace   = 30 * time.Second
+	quickProbe   = 3 * time.Second // while usque says the tunnel is down
 	netEvery     = 5 * time.Second
 	netSettle    = 8 * time.Second
 )
@@ -80,6 +82,9 @@ type supervisor struct {
 	quit     chan struct{}
 	stopOnce sync.Once
 	finished chan struct{}
+	ctx      context.Context // done once stop is called: ends a probe at once
+	cancel   context.CancelFunc
+	lost     chan struct{} // usque said its tunnel is down (usqueSays)
 
 	restarts atomic.Int64
 	issue    atomic.Pointer[string] // why it is (re)starting; nil when traffic flows
@@ -93,7 +98,8 @@ var curSup atomic.Pointer[supervisor]
 func supervise(s usqueSetup, u *usque, skip uint32, readd func(string) error) *supervisor {
 	sv := &supervisor{s: s, skip: skip, readd: readd, logf: s.logf, cur: u,
 		port: u.port, user: u.user, pass: u.pass, startedAt: time.Now(),
-		quit: make(chan struct{}), finished: make(chan struct{})}
+		quit: make(chan struct{}), finished: make(chan struct{}), lost: make(chan struct{}, 1)}
+	sv.ctx, sv.cancel = context.WithCancel(context.Background())
 	go sv.run()
 	return sv
 }
@@ -103,7 +109,10 @@ func (sv *supervisor) stop() {
 	if sv == nil {
 		return
 	}
-	sv.stopOnce.Do(func() { close(sv.quit) })
+	sv.stopOnce.Do(func() {
+		sv.cancel() // a probe through a dead tunnel waited out its 8 s
+		close(sv.quit)
+	})
 	<-sv.finished
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
@@ -119,6 +128,22 @@ func (sv *supervisor) status() (int64, string) {
 		why = *p
 	}
 	return sv.restarts.Load(), why
+}
+
+// usqueSays reads usque's log lines: a lost tunnel shows as Reconnecting in
+// the app at once (usque notices within seconds, --stall-timeout), instead
+// of at the next probe, up to 15 s later.
+func usqueSays(line string) {
+	sv := curSup.Load()
+	if sv == nil || (!strings.Contains(line, "Tunnel connection lost") && !strings.Contains(line, "Failed to connect tunnel")) {
+		return
+	}
+	why := "the tunnel to Cloudflare is down; usque is reconnecting"
+	sv.issue.CompareAndSwap(nil, &why)
+	select {
+	case sv.lost <- struct{}{}:
+	default:
+	}
 }
 
 func (sv *supervisor) current() *usque {
@@ -137,6 +162,9 @@ func (sv *supervisor) run() {
 	defer nets.Stop()
 	_, link := ifbind.LinkMTU(sv.skip)
 	var netChanged time.Time // zero: no check pending
+	// quick probes while usque says its tunnel is down: they clear the
+	// issue once traffic flows, and leave restarts to the probes above
+	var quick <-chan time.Time
 
 	restart := func(why string) bool {
 		failures, netChanged = 0, time.Time{}
@@ -154,24 +182,36 @@ func (sv *supervisor) run() {
 		select {
 		case <-sv.quit:
 			return
+		case <-sv.lost:
+			quick = time.After(quickProbe)
+		case <-quick:
+			if probe(sv.ctx, u) == nil {
+				sv.logf("fswin: usque: traffic flows again")
+				failures, wait, quick = 0, restartMin, nil
+				sv.issue.Store(nil)
+			} else {
+				quick = time.After(quickProbe)
+			}
 		case <-u.done:
 			if !restart(fmt.Sprintf("usque exited (exit code %s)", exitCode(u.state))) {
 				return
 			}
 		case <-probes.C:
-			err := probe(u)
+			err := probe(sv.ctx, u)
 			switch {
 			case err == nil:
 				if failures > 0 || sv.issue.Load() != nil {
 					sv.logf("fswin: usque: traffic flows")
 				}
-				failures, wait = 0, restartMin
+				failures, wait, quick = 0, restartMin, nil
 				sv.issue.Store(nil)
 			case time.Since(sv.startedAt) < startGrace:
 				sv.logf("fswin: usque: no traffic yet, %s after its start: %v", time.Since(sv.startedAt).Round(time.Second), err)
 			default:
 				failures++
 				sv.logf("fswin: usque: probe %d/%d failed: %v", failures, probeFailures, err)
+				why := fmt.Sprintf("no traffic through usque (probe %d/%d failed)", failures, probeFailures)
+				sv.issue.Store(&why)
 				if failures >= probeFailures && !restart(fmt.Sprintf("no traffic through usque for %d probes", failures)) {
 					return
 				}
@@ -185,7 +225,7 @@ func (sv *supervisor) run() {
 				continue
 			}
 			netChanged = time.Time{}
-			if err := probe(u); err != nil && !restart(fmt.Sprintf("no traffic %s after the network changed: %v", netSettle, err)) {
+			if err := probe(sv.ctx, u); err != nil && !restart(fmt.Sprintf("no traffic %s after the network changed: %v", netSettle, err)) {
 				return
 			}
 		}
@@ -246,7 +286,7 @@ func portFree(port int) bool {
 
 // probe opens a connection through usque's SOCKS proxy to probeTarget: it
 // passes only when every hop carries traffic.
-func probe(u *usque) error {
+func probe(ctx context.Context, u *usque) error {
 	d, err := proxy.SOCKS5("tcp", fmt.Sprintf("127.0.0.1:%d", u.port),
 		&proxy.Auth{User: u.user, Password: u.pass}, &net.Dialer{Timeout: probeTimeout})
 	if err != nil {
@@ -256,7 +296,7 @@ func probe(u *usque) error {
 	if !ok {
 		return fmt.Errorf("socks dialer without context")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	c, err := cd.DialContext(ctx, "tcp", probeTarget)
 	if err != nil {

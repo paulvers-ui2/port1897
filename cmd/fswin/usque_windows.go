@@ -197,6 +197,7 @@ func pipeLog(r io.Reader, tag string, logf func(string, ...any)) {
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		logf("%s: %s", tag, sc.Text())
+		usqueSays(sc.Text())
 	}
 }
 
