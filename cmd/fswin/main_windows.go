@@ -222,6 +222,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "fswin:", err)
 		os.Exit(1)
 	}
+	stopStep("stopped")
 }
 
 func run(o options) error {
@@ -296,6 +297,23 @@ func run(o options) error {
 	var luid uint64 // the adapter, for ipconf's calls
 	if nt, ok := dev.(*tun.NativeTun); ok {
 		luid = nt.LUID()
+	}
+	// The NRPT rule goes in before the adapter gets its DNS server: Windows'
+	// DNS Client reloads its settings, NRPT rules among them, when that
+	// changes. Written after, it was not in force (Simulate, PRs #26, #28).
+	if o.nrpt {
+		if err := dnspolicy.Add(netip.MustParseAddr(fakedns4)); errors.Is(err, dnspolicy.ErrNotApplied) {
+			fmt.Println("fswin: warning: the NRPT rule is set, but Windows may apply it late:", err)
+		} else if err != nil {
+			_ = dev.Close()
+			return err
+		}
+		defer func() {
+			if err := dnspolicy.Remove(); err != nil {
+				fmt.Fprintln(os.Stderr, "fswin: remove NRPT rule (run fswin -cleanup):", err)
+			}
+			stopStep("NRPT rule removed")
+		}()
 	}
 	if err := configure(name, luid, o.setdns); err != nil {
 		_ = dev.Close()
@@ -389,7 +407,10 @@ func run(o options) error {
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
-	defer t.Disconnect()
+	defer func() {
+		t.Disconnect()
+		stopStep("tunnel closed")
+	}()
 	mtuDone := make(chan struct{})
 	defer close(mtuDone) // before Disconnect
 	go watchLinkMTU(t, uint32(ifc.Index), mtuDone)
@@ -455,19 +476,6 @@ func run(o options) error {
 		fmt.Printf("fswin: warning: %s; disconnect that VPN\n", c)
 	}
 
-	if o.nrpt {
-		if err := dnspolicy.Add(netip.MustParseAddr(fakedns4)); errors.Is(err, dnspolicy.ErrNotApplied) {
-			fmt.Println("fswin: warning: the NRPT rule is set, but Windows may apply it late:", err)
-		} else if err != nil {
-			return err
-		}
-		defer func() {
-			if err := dnspolicy.Remove(); err != nil {
-				fmt.Fprintln(os.Stderr, "fswin: remove NRPT rule (run fswin -cleanup):", err)
-			}
-		}()
-	}
-
 	mode := "DNS only"
 	if o.full {
 		// routes go once the tunnel can carry traffic; they vanish with the adapter
@@ -499,7 +507,10 @@ func run(o options) error {
 				return err
 			})
 			curSup.Store(sup)
-			defer sup.stop() // before uq.stop above
+			defer func() {
+				sup.stop() // before uq.stop above
+				stopStep("usque stopped")
+			}()
 		}
 	}
 	mode += killMode
@@ -534,18 +545,31 @@ func run(o options) error {
 		select {
 		case <-stop:
 			fmt.Println("fswin: stopping")
+			stopAt = time.Now()
 			return nil
 		case <-apiStop:
 			fmt.Println("fswin: stopping (requested by the app)")
+			stopAt = time.Now()
 			return nil
 		case <-serviceStop:
 			fmt.Println("fswin: stopping (requested by AuroraVPN Service)")
+			stopAt = time.Now()
 			return nil
 		case <-tick.C:
 			if st, err := t.Stat(); err == nil && st != nil {
 				b.logf("tun   %s", st.TUNSt.EpStats)
 			}
 		}
+	}
+}
+
+// stopAt is when a stop was asked for; stopStep logs how long each part of
+// the stop took after it, to see what holds a stop up (one took 15 s).
+var stopAt time.Time
+
+func stopStep(what string) {
+	if !stopAt.IsZero() {
+		fmt.Printf("fswin: stop: %s after %d ms\n", what, time.Since(stopAt).Milliseconds())
 	}
 }
 

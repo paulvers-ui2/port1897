@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net"
 	"os"
@@ -120,12 +121,12 @@ func TestProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer u.stop()
-	if err := probe(u); err != nil {
+	if err := probe(context.Background(), u); err != nil {
 		t.Fatalf("probe through a working proxy: %v", err)
 	}
 	bad := *u
 	bad.pass = "wrong"
-	if probe(&bad) == nil {
+	if probe(context.Background(), &bad) == nil {
 		t.Fatal("probe with the wrong password passed")
 	}
 }
@@ -147,7 +148,7 @@ func TestSupervisorRestartsUsqueThatDies(t *testing.T) {
 		t.Fatal(err)
 	}
 	for time.Since(killed) < 15*time.Second {
-		if n := sv.current(); n != nil && n != u && !n.exited() && probe(n) == nil {
+		if n := sv.current(); n != nil && n != u && !n.exited() && probe(context.Background(), n) == nil {
 			if took := time.Since(killed); took > 3*time.Second {
 				t.Errorf("back after %s, want about 1 s", took)
 			}
@@ -215,5 +216,70 @@ func TestUsqueDefaults(t *testing.T) {
 		if f := usqueDefaults(true, link); f[1] != want {
 			t.Errorf("link %d: -i %s, want %s", link, f[1], want)
 		}
+	}
+}
+
+// usque's "Tunnel connection lost" shows as an issue at once; a quick probe
+// clears it once traffic flows again, without a restart.
+func TestSupervisorShowsALostTunnelAtOnce(t *testing.T) {
+	fastSupervisor(t)
+	qp := quickProbe
+	quickProbe = 100 * time.Millisecond
+	t.Cleanup(func() { quickProbe = qp })
+	probeEvery = time.Hour // only the quick probes run
+	t.Setenv(fakeUsqueEnv, "ok")
+	s := fakeSetup(t)
+	u, err := startUsque(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sv := supervise(s, u, 0, func(string) error { return nil })
+	curSup.Store(sv)
+	defer func() { sv.stop(); curSup.Store(nil) }()
+
+	usqueSays("2026/10/09 22:34:13 PDT Tunnel connection lost: tunnel stalled: nothing received for 2.5s. Reconnecting...")
+	if _, why := sv.status(); why == "" {
+		t.Fatal("no issue right after usque said the tunnel was lost")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, why := sv.status(); why == "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the issue did not clear once the probe passed")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n, _ := sv.status(); n != 0 {
+		t.Errorf("restarted %d times; a quick probe that passes must not restart", n)
+	}
+}
+
+// stop does not wait for a probe through a dead tunnel to time out.
+func TestStopEndsAProbe(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() { // a SOCKS server that never answers
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+		}
+	}()
+	u := &usque{port: ln.Addr().(*net.TCPAddr).Port, user: "u", pass: "p"}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	began := time.Now()
+	if probe(ctx, u) == nil {
+		t.Fatal("a probe through a silent proxy passed")
+	}
+	if took := time.Since(began); took > 2*time.Second {
+		t.Errorf("the probe took %s after its context ended", took)
 	}
 }
