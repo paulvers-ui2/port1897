@@ -296,6 +296,15 @@ func (b *bridge) appName(uid int32) string {
 	return "?"
 }
 
+// appPath is uid's full program path, for the logs: "" when only a pid or
+// a name like "System" is known.
+func (b *bridge) appPath(uid int32) string {
+	if p := b.apps.path(uid); filepath.IsAbs(p) {
+		return p
+	}
+	return ""
+}
+
 func proto(p int32) string {
 	switch p {
 	case 1:
@@ -391,9 +400,9 @@ func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probable
 		b.log.flowsBlocked.Add(1)
 	} else {
 		b.conns.add(cid, liveConn{uid: uid, proto: protocol, dst: dap, domains: doms, app: app,
-			via: via, country: cc, at: time.Now().UnixMilli()})
+			path: b.appPath(uid), via: via, country: cc, at: time.Now().UnixMilli()})
 	}
-	b.log.add(event{Kind: "flow", App: app, Proto: proto(protocol), Dst: dst.V(),
+	b.log.add(event{Kind: "flow", App: app, Path: b.appPath(uid), Proto: proto(protocol), Dst: dst.V(),
 		Domain: domain, Country: cc, Via: via, Blocked: d.block, Rule: d.why, CID: cid})
 	return &intra.Mark{PIDCSV: pid, CID: cid, UID: strconv.Itoa(int(uid))}
 }
@@ -413,7 +422,7 @@ func (b *bridge) Inflow(protocol, uid int32, src, dst *x.Gostr) *intra.Mark {
 	b.log.flowsBlocked.Add(1)
 	// the remote end is the source; the event shows it as the address
 	sap, _ := netip.ParseAddrPort(src.V())
-	b.log.add(event{Kind: "flow", App: b.appName(uid), Proto: proto(protocol) + " in", Dst: src.V(),
+	b.log.add(event{Kind: "flow", App: b.appName(uid), Path: b.appPath(uid), Proto: proto(protocol) + " in", Dst: src.V(),
 		Country: country(sap.Addr()), Via: exitName(x.Block), Blocked: true, Rule: why, CID: cid})
 	mark.PIDCSV = x.Block
 	return mark
@@ -430,11 +439,11 @@ func (b *bridge) OnSocketClosed(s *intra.SocketSummary) {
 	b.conns.remove(s.ID)
 	b.log.rx.Add(s.Rx)
 	b.log.tx.Add(s.Tx)
-	app := "?"
+	app, path := "?", ""
 	if u, err := strconv.ParseInt(s.UID, 10, 32); err == nil {
-		app = b.appName(int32(u))
+		app, path = b.appName(int32(u)), b.appPath(int32(u))
 	}
-	b.log.add(event{Kind: "close", App: app, Proto: s.Proto, Dst: s.Target,
+	b.log.add(event{Kind: "close", App: app, Path: path, Proto: s.Proto, Dst: s.Target,
 		Via: exitName(s.PID), Rx: s.Rx, Tx: s.Tx, DurMs: s.Duration, CID: s.ID})
 }
 
@@ -504,11 +513,11 @@ func (b *bridge) OnResponse(s *x.DNSSummary) {
 	if why == "" && s.Blocklists != "" {
 		why = "blocklists: " + s.Blocklists
 	}
-	app := ""
+	app, path := "", ""
 	if u, err := strconv.ParseInt(s.UID, 10, 32); err == nil {
-		app = b.appName(int32(u)) // who asked; "?" if unknown
+		app, path = b.appName(int32(u)), b.appPath(int32(u)) // who asked; "?" if unknown
 	}
-	b.log.add(event{Kind: "dns", App: app, Domain: strings.TrimSuffix(s.QName, "."), Answer: s.RData,
+	b.log.add(event{Kind: "dns", App: app, Path: path, Domain: strings.TrimSuffix(s.QName, "."), Answer: s.RData,
 		Country: answerCountry(s.RData), Via: s.ID, LatencyMs: ms, Secure: s.AD, Cached: s.Cached,
 		Blocked: why != "" || (s.Status == x.Complete && isUnspecifiedAnswer(s.RData)), Rule: why,
 		QType: s.QType, Error: failure})

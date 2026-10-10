@@ -267,6 +267,17 @@ main();
 
 // ---------- demo mode (no engine, e.g. opened in a browser) ----------
 
+// where the demo's programs live, as the engine reports them
+function demoPath(app) {
+  return {
+    'chrome.exe': 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+    'msedge.exe': 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+    'discord.exe': 'C:\\Users\\me\\AppData\\Local\\Discord\\app-1.0.9200\\Discord.exe',
+    'spotify.exe': 'C:\\Users\\me\\AppData\\Roaming\\Spotify\\Spotify.exe',
+    'svchost.exe': 'C:\\Windows\\System32\\svchost.exe',
+  }[app] || '';
+}
+
 // the demo engine's MTUs, as mtu_windows.go works them out on Wi-Fi
 function demoMtu(exit, set) {
   const tunnel = { wg: ['WireGuard', 1420], warp: ['WireGuard', 1280], masque: ['WARP (MASQUE)', 1280], chain: ['WARP chain exit', 1280] }[exit];
@@ -332,8 +343,8 @@ function demoPort() {
         const app = pick(apps);
         const dom = pick(doms);
         const [ip, cc] = pick(ips);
-        out.push({ id: ++id, at: Date.now(), kind: 'dns', domain: dom, answer: ip, country: cc, latencyMs: 20, secure: dom.endsWith('.com'), qtype: 1 });
-        out.push({ id: ++id, at: Date.now(), kind: 'flow', app, proto: 'tcp', dst: ip + ':443', domain: dom, country: cc, via: 'Cloudflare WARP', blocked: isBlocked(app), rule: isBlocked(app) ? 'app blocked' : '', cid: String(id) });
+        out.push({ id: ++id, at: Date.now(), kind: 'dns', app, path: demoPath(app), domain: dom, answer: ip, country: cc, latencyMs: 20, secure: dom.endsWith('.com'), qtype: 1 });
+        out.push({ id: ++id, at: Date.now(), kind: 'flow', app, path: demoPath(app), proto: 'tcp', dst: ip + ':443', domain: dom, country: cc, via: 'Cloudflare WARP', blocked: isBlocked(app), rule: isBlocked(app) ? 'app blocked' : '', cid: String(id) });
       }
       return out;
     },
@@ -358,7 +369,7 @@ function demoPort() {
     conns: async () =>
       running
         ? [
-            { cid: '1', app: 'chrome.exe', proto: 'tcp', dst: '104.16.0.1:443', domain: 'github.com', country: 'US', via: 'Cloudflare WARP (MASQUE)', since: Date.now() - 5000 },
+            { cid: '1', app: 'chrome.exe', path: demoPath('chrome.exe'), proto: 'tcp', dst: '104.16.0.1:443', domain: 'github.com', country: 'US', via: 'Cloudflare WARP (MASQUE)', since: Date.now() - 5000 },
             { cid: '2', app: 'Code.exe', proto: 'tcp', dst: '34.49.39.67:443', country: 'US', via: 'Cloudflare WARP (MASQUE)', since: Date.now() - 95000 },
             { cid: '3', app: 'opera.exe', proto: 'udp', dst: '185.15.59.224:443', domain: 'upload.wikimedia.org', country: 'NL', via: 'Cloudflare WARP (MASQUE)', since: Date.now() - 4e6 },
             { cid: '4', app: 'AvastSvc.exe', proto: 'tcp', dst: '200.82.253.26:443', domain: 'ncc.avast.com', country: 'VE', via: 'Cloudflare WARP (MASQUE)', since: Date.now() - 61000 },

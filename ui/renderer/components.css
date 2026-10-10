@@ -61,6 +61,8 @@ button.row:hover { background: var(--line); border-radius: 14px; }
 .row-text { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
 .row-title { font-size: 16px; }
 .row-sub { font-size: 13px; opacity: 0.7; overflow-wrap: anywhere; }
+/* a program's full path under a log row */
+.row-path { font-family: "Cascadia Mono", Consolas, monospace; font-size: 11.5px; opacity: 0.55; overflow-wrap: anywhere; }
 .chev { width: 20px; height: 20px; opacity: 0.9; }
 .chev svg { width: 20px; height: 20px; }
 

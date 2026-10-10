@@ -30,6 +30,7 @@ type liveConn struct {
 	dst     netip.AddrPort
 	domains []string
 	app     string
+	path    string // the program's full path; "" if unknown
 	via     string // the exit or route it leaves through
 	country string // two-letter code of dst
 	at      int64  // unix millis
@@ -69,6 +70,7 @@ func (t *connTable) all() map[string]liveConn {
 type openConn struct {
 	CID     string `json:"cid"`
 	App     string `json:"app"`
+	Path    string `json:"path,omitempty"`
 	Proto   string `json:"proto"`
 	Dst     string `json:"dst"`
 	Domain  string `json:"domain,omitempty"`
@@ -85,7 +87,7 @@ func (t *connTable) list(app string) []openConn {
 		if app != "" && strings.ToLower(c.app) != app {
 			continue
 		}
-		o := openConn{CID: cid, App: c.app, Proto: proto(c.proto), Dst: c.dst.String(),
+		o := openConn{CID: cid, App: c.app, Path: c.path, Proto: proto(c.proto), Dst: c.dst.String(),
 			Country: c.country, Via: c.via, Since: c.at}
 		if len(c.domains) > 0 {
 			o.Domain = c.domains[0]
