@@ -9,6 +9,8 @@
 package main
 
 import (
+	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -34,6 +36,8 @@ func TestCheckEngineArgs(t *testing.T) {
 		{"-full", "-service", "install"},
 		{"-app", `C:\evil.exe`},
 		{"-stop-handle", "4"},
+		{"-user-token", "8"},
+		{"--user-token=8"},
 		{"-doh", "a\x00b"},
 		{"-doh", strings.Repeat("x", 9000)},
 		make([]string, 300),
@@ -77,20 +81,34 @@ func TestValidAdapterName(t *testing.T) {
 	}
 }
 
-// An elevated token (the runner's) is the engine's token as it is.
-func TestElevatedTokenOfAnAdmin(t *testing.T) {
-	needAdmin(t)
+// The token the service hands the engine: a primary copy of the asking
+// program's, which the engine (SYSTEM) turns into its user token.
+func TestUserTokenFromTheService(t *testing.T) {
 	var self windows.Token
 	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_DUPLICATE, &self); err != nil {
 		t.Fatal(err)
 	}
 	defer self.Close()
-	et, err := elevatedToken(self)
+	ut, err := userPrimary(self)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer et.Close()
-	if !et.IsElevated() {
-		t.Error("the engine's token is not elevated")
+	u, err := newUserTokenFrom(ut) // takes ut over
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u.close()
+	me, _ := self.GetTokenUser()
+	got, err := u.primary.GetTokenUser()
+	if err != nil || !got.User.Sid.Equals(me.User.Sid) {
+		t.Fatalf("user token of another user: %v", err)
+	}
+	if !slices.ContainsFunc(u.env, func(e string) bool { return strings.HasPrefix(strings.ToUpper(e), "USERPROFILE=") }) {
+		t.Errorf("no user environment: %d variables", len(u.env))
+	}
+	cmd := exec.Command("cmd.exe")
+	u.unelevated(cmd)
+	if cmd.SysProcAttr == nil || cmd.SysProcAttr.Token == 0 || len(cmd.Env) != len(u.env) {
+		t.Error("usque would not start as the user, with the user's environment")
 	}
 }

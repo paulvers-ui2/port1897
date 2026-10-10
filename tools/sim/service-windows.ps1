@@ -7,8 +7,10 @@
 # End-to-end test of AuroraVPN Service (cmd/fswin/service_windows.go) on a
 # GitHub runner (admin): installs the service for this PowerShell, which
 # stands in for AuroraVPN.exe, asks it over the pipe for an engine in DNS-only
-# mode, checks the engine's API and who it runs as, stops it both ways (the
-# service, the app's API), checks what the service refuses, and uninstalls.
+# mode, checks the engine's API and who it runs as (SYSTEM, with the user's
+# files the user's), stops it both ways (the service, the app's API), has a
+# standard user (no admin rights) turn it on, as with Proton VPN, checks what
+# the service refuses, and uninstalls.
 # Every check is recorded; the script exits 1 if any check failed.
 #
 #   pwsh tools/sim/service-windows.ps1 -Dist dist -Out sim-out
@@ -93,8 +95,10 @@ try {
   if ($enginePid) {
     $p = Get-Process -Id $enginePid -IncludeUserName -ErrorAction SilentlyContinue
     $mine = (Get-Process -Id $PID -IncludeUserName).UserName
-    Check 'the engine runs as the user, not SYSTEM' ($p -and $p.UserName -eq $mine) "engine: $($p.UserName), app: $mine"
-    Check 'the engine runs in the user''s session' ($p -and $p.SessionId -eq (Get-Process -Id $PID).SessionId) "engine: $($p.SessionId), app: $((Get-Process -Id $PID).SessionId)"
+    Check 'the engine runs as SYSTEM, as Proton VPN''s does' ($p -and $p.UserName -eq 'NT AUTHORITY\SYSTEM') "engine: $($p.UserName)"
+    # what it writes for the user it writes as the user (-user-token)
+    $owner = (Get-Acl (Join-Path $Out 'svc.engine.log') -ErrorAction SilentlyContinue).Owner
+    Check 'the engine writes the user''s files as the user' ($owner -eq $mine) "log owner: $owner, app: $mine"
   }
 
   # what the service refuses
@@ -134,6 +138,50 @@ $w.WriteLine('{"cmd":"ping"}')
 
   $r = Pipe @{ cmd = 'cleanup' }
   Check 'cleanup through the service' ($r.ok) ($r | ConvertTo-Json -Compress)
+
+  # ---------- a standard user, with no admin rights ----------
+  # The same app (this PowerShell), run by a new local account in Users only:
+  # the service used to refuse it ("only an administrator ..."); now it starts
+  # the engine, which reads and writes that user's files as that user.
+  $std = 'auroravpn-sim'
+  $stdDir = 'C:\auroravpn-sim'
+  try {
+    $pw = 'Aa1!' + [guid]::NewGuid().ToString('N')
+    $cred = [pscredential]::new($std, (ConvertTo-SecureString $pw -AsPlainText -Force))
+    New-LocalUser -Name $std -Password $cred.Password -AccountNeverExpires -PasswordNeverExpires | Out-Null
+    Check 'the account is not an administrator' (-not (Get-LocalGroupMember Administrators | Where-Object Name -like "*\$std")) ''
+    New-Item -ItemType Directory -Force $stdDir | Out-Null
+    $acl = Get-Acl $stdDir
+    $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($std, 'Modify', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
+    Set-Acl $stdDir $acl
+    $stdTok = Join-Path $stdDir 'api-token'
+    $stdLog = Join-Path $stdDir 'engine.log'
+    [IO.File]::WriteAllText($stdTok, $token)
+    $req = @{ cmd = 'start'; args = @('-api', $api, '-token-file', $stdTok, '-logfile', $stdLog, '-dns', 'doh') } | ConvertTo-Json -Compress
+    $script = @"
+`$c = [IO.Pipes.NamedPipeClientStream]::new('.', 'AuroraVPN', [IO.Pipes.PipeDirection]::InOut)
+`$c.Connect(5000)
+`$w = [IO.StreamWriter]::new(`$c); `$w.AutoFlush = `$true
+`$w.WriteLine('$($req -replace "'", "''")')
+[IO.StreamReader]::new(`$c).ReadLine()
+"@
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+    $outFile = Join-Path $stdDir 'reply.txt'
+    Start-Process -FilePath $me -Credential $cred -LoadUserProfile -ArgumentList '-NoProfile', '-NonInteractive', '-EncodedCommand', $enc -RedirectStandardOutput $outFile -Wait -WindowStyle Hidden
+    $reply = (Get-Content $outFile -Raw -ErrorAction SilentlyContinue) | ConvertFrom-Json -ErrorAction SilentlyContinue
+    Check 'a standard user turns protection on through the service' ($reply.ok -and $reply.pid -gt 0) "$(Get-Content $outFile -Raw -ErrorAction SilentlyContinue)"
+    $st = Wait-Api 45
+    Check 'the standard user''s engine comes up' ($null -ne $st) "$(Get-Content $stdLog -Tail 5 -ErrorAction SilentlyContinue)"
+    $logOwner = (Get-Acl $stdLog -ErrorAction SilentlyContinue).Owner
+    Check 'the engine writes the standard user''s files as that user' ($logOwner -like "*\$std") "log owner: $logOwner"
+    $r = Pipe @{ cmd = 'stop' }
+    Check 'and it stops' ($r.ok -and $reply.pid -and (Wait-Exit $reply.pid 30)) ($r | ConvertTo-Json -Compress)
+  } catch {
+    Check 'standard user scenario ran' $false "$_"
+  } finally {
+    Remove-LocalUser -Name $std -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force $stdDir -ErrorAction SilentlyContinue
+  }
 } catch {
   Check 'ran to the end' $false "$_"
 } finally {

@@ -804,7 +804,7 @@ PAGES.network = () => {
     card(
       switchRow({ ico: 'ic_firewall_shield', title: 'Kill switch', sub: 'Block the internet outside the app, at once. If the app crashes, the internet stays blocked until you start it again or release the kill switch below.', value: killSwitchOn(), onchange: (v) => setKillSwitch(v) }),
       switchRow({ ico: 'ic_private_network', title: 'Do not route Private IPs', sub: 'Let LAN, link-local and multicast traffic (printers, file shares, casting) through the kill switch.', value: s.allowLan, onchange: (v) => save({ allowLan: v }) }),
-      row({ ico: 'ic_loopback', title: 'Release kill switch', sub: 'Removes a kill switch left behind by a crash. Asks Windows for permission.', right: chevron(), onclick: async () => {
+      row({ ico: 'ic_loopback', title: 'Release kill switch', sub: 'Removes a kill switch left behind by a crash. The portable app asks for admin permission.', right: chevron(), onclick: async () => {
         const r = await App.port.cleanup();
         toast(r.ok ? 'Released. The internet works without the app again.' : r.error);
       } })

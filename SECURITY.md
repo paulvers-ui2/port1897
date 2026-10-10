@@ -37,7 +37,8 @@ AuroraVPN for Windows has three parts:
 - the engine (`fswin.exe`, firestack), which needs admin rights to create the
   tunnel adapter, routes, DNS rules and the kill switch;
 - AuroraVPN Service (`fswin.exe -service run`, LocalSystem), installed with
-  the app, which starts the engine without a UAC prompt each time.
+  the app, which starts the engine without a UAC prompt, for any user, as
+  Proton VPN's service does.
 
 **AuroraVPN Service**
 - **Install:** the installer is per-machine (Program Files) and sets the
@@ -47,18 +48,7 @@ AuroraVPN for Windows has three parts:
 - **Who it answers:** its named pipe (`\\.\pipe\AuroraVPN`) refuses
   remote clients and anyone but SYSTEM, administrators and interactive users.
   It answers only the installed `AuroraVPN.exe`, checked by the client
-  process's image path, and only for administrators. Standard users are
-  refused, as UAC would refuse them.
-- **What it starts:** the engine from its own folder, with the user's own
-  elevated token (the one a UAC prompt hands out), in the user's session and
-  with the user's environment. That is the engine of a UAC prompt, so
-  everything below still holds. Flags that would pick a program to run are
-  refused. The engine configures the adapter and the NRPT rule through
-  Windows APIs and the registry; its `netsh` fallback (for a Windows without
-  those APIs) comes from System32, never through `PATH`. Every request is
-  answered on its own thread.
-- **Without it** (the portable app, or a standard user), the engine starts
-  through a UAC prompt, as before.
+
 
 **The engine**
 - **Control API:** loopback only. Every request needs the per-install
@@ -68,12 +58,14 @@ AuroraVPN for Windows has three parts:
 - **Your files:** the engine opens the app's files in the user's folder
   (`%APPDATA%\AuroraVPN`) with the user's rights, never its own: the log,
   token, rules, routes, WireGuard and WARP files, blocklists and packet
-  captures. It uses a restricted copy of its token (Administrators deny-only,
-  no privileges, medium integrity), so a link planted there cannot make it
-  write, delete or read a system file (CWE-59).
-- **usque** (WARP over MASQUE) runs unelevated with that same token. A flaw
-  in its network code does not give admin rights, and it may not run hook
-  programs (`--on-connect`, `--on-disconnect`).
+  captures. It uses a restricted copy of the user's token (Administrators
+  deny-only, no privileges, medium integrity): the one the service handed it,
+  or after a UAC prompt its own. A link planted there cannot make it write,
+  delete or read a system file (CWE-59).
+- **usque** (WARP over MASQUE) runs unelevated with that same token, and
+  the user's environment. A flaw in its network code does not give admin or
+  SYSTEM rights, and it may not run hook programs (`--on-connect`,
+  `--on-disconnect`).
 - **Kill switch:** Windows Filtering Platform rules let only the tunnel, the
   engine, usque, loopback, DHCP and (optionally) the LAN through. They stay
   in place after a crash until protection starts again or is released.
@@ -94,14 +86,19 @@ AuroraVPN for Windows has three parts:
   (`go.sum`) and usque (a pinned commit) are pinned with hashes.
 
 **Known limits**
-- **Control by the user's programs:** with the service, programs running as
-  an administrator account, even unelevated, can turn protection on or off
-  and change its settings without a prompt. That is how other VPN services
-  work. They still cannot run their own code with admin rights through it.
+- **Control by the user's programs:** with the service, any program a
+  signed-in user runs (standard users too) can turn protection on or off and
+  change its settings without a prompt, through the installed app. That is
+  how other VPN services work (Proton VPN's among them). They still cannot
+  run their own code as SYSTEM through it: the engine opens their files and
+  starts usque with their own rights, and refuses the flags that pick a
+  program or a token. A flaw in the engine's parsing of those settings is the
+  risk that remains; the rules parser and the geo-IP lookup are fuzzed in
+  CI.
 - **The portable app** runs from a folder the user can write, and starts
   the engine through a UAC prompt from there.
-- **Before sign-in:** the engine runs in the user's session, so protection
-  starts when the user signs in, not at boot.
+- **Before sign-in:** the engine runs as SYSTEM, but the app asks for it
+  once the user signs in, so protection starts then, not at boot.
 - **Code signing:** the files are not code-signed.
 
 **Continuous checks**
