@@ -80,12 +80,11 @@ func newUserTokenFrom(t windows.Token) (*userToken, error) {
 	if err != nil {
 		return nil, err
 	}
-	env, err := t.Environ(false)
-	if err != nil {
-		u.close()
-		return nil, fmt.Errorf("user token: environment: %w", err)
+	// a user who never signed in here has no profile yet; usque then gets
+	// fswin's environment, as before
+	if env, err := t.Environ(false); err == nil {
+		u.env = env
 	}
-	u.env = env
 	return u, nil
 }
 

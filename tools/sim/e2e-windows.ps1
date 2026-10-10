@@ -182,9 +182,14 @@ try {
   Check $s 'engine log warns about it' (LogHas $f 'warning: another VPN sends all DNS elsewhere') ''
   Note $s 'NRPT policy with both rules' ((Get-DnsClientNrptPolicy | ForEach-Object { "$($_.Namespace) -> $($_.NameServers)" }) -join '; ')
   # fswin writes its rule to the registry (no PowerShell): Windows' DNS Client
-  # must have taken it into the policy it applies
-  $ours = @(Get-DnsClientNrptPolicy | Where-Object { $_.Namespace -eq '.' -and @($_.NameServers) -contains '10.111.222.3' })
-  Check $s 'the DNS Client applies fswin''s NRPT rule' ($ours.Count -gt 0) ((Get-DnsClientNrptPolicy | ForEach-Object { "$($_.Namespace) -> $($_.NameServers)" }) -join '; ')
+  # must have taken it into the policy it applies, by the time fswin is up
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  do {
+    $ours = @(Get-DnsClientNrptPolicy | Where-Object { $_.Namespace -eq '.' -and @($_.NameServers) -contains '10.111.222.3' })
+    if ($ours.Count) { break }
+    Start-Sleep -Milliseconds 100
+  } while ($sw.ElapsedMilliseconds -lt 5000)
+  Check $s 'the DNS Client applies fswin''s NRPT rule' ($ours.Count -gt 0) "after $($sw.ElapsedMilliseconds) ms more: $((Get-DnsClientNrptPolicy | ForEach-Object { "$($_.Namespace) -> $($_.NameServers)" }) -join '; ')"
   try {
     $sys = Resolve-DnsName example.com -Type A -DnsOnly -QuickTimeout -ErrorAction Stop | Where-Object Type -eq 'A' | ForEach-Object IPAddress
     Note $s 'a normal Windows lookup with both rules' ($sys -join ',')
@@ -192,6 +197,15 @@ try {
   Stop-Fswin $f
   $left = @(Get-DnsClientNrptRule | Where-Object { $_.Comment -in 'AuroraVPN', 'port1897' -or $_.DisplayName -in 'AuroraVPN', 'port1897' })
   Check $s "fswin removed its own NRPT rule on stop" ($left.Count -eq 0) "$($left.Count) left"
+  # and the DNS Client dropped it: a rule left in force sends every lookup
+  # to an address no one answers once fswin is gone
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  do {
+    $stale = @(Get-DnsClientNrptPolicy | Where-Object { @($_.NameServers) -contains '10.111.222.3' })
+    if (-not $stale.Count) { break }
+    Start-Sleep -Milliseconds 100
+  } while ($sw.ElapsedMilliseconds -lt 5000)
+  Check $s 'the DNS Client no longer applies it' ($stale.Count -eq 0) "after $($sw.ElapsedMilliseconds) ms more: $((Get-DnsClientNrptPolicy | ForEach-Object { "$($_.Namespace) -> $($_.NameServers)" }) -join '; ')"
   Remove-SimRules
 
   # ---------- a plain DNS upstream that misbehaves ----------

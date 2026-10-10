@@ -456,7 +456,9 @@ func run(o options) error {
 	}
 
 	if o.nrpt {
-		if err := dnspolicy.Add(netip.MustParseAddr(fakedns4)); err != nil {
+		if err := dnspolicy.Add(netip.MustParseAddr(fakedns4)); errors.Is(err, dnspolicy.ErrNotApplied) {
+			fmt.Println("fswin: warning: the NRPT rule is set, but Windows may apply it late:", err)
+		} else if err != nil {
 			return err
 		}
 		defer func() {

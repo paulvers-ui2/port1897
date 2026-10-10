@@ -12,19 +12,23 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
 // NRPT rules (the Name Resolution Policy Table) are registry keys, one per
-// rule; Windows' DNS Client watches them and applies a change by itself.
-// Tailscale and Proton VPN write them this way. This package used to run
-// PowerShell's Add-DnsClientNrptRule instead: about 1.5 s a call, two calls
-// per start and one per stop.
+// rule, as Tailscale writes them. Windows' DNS Client does not read them
+// again by itself (the Simulate run showed the rule written but not in
+// force), so apply has it take the change in, as Tailscale does: ipconfig
+// /registerdns, which makes Windows notice changed DNS settings. This
+// package used to run PowerShell's Add-DnsClientNrptRule instead: about
+// 1.5 s a call, two calls per start and one per stop.
 var (
 	root = registry.LOCAL_MACHINE // tests use HKCU
 	// rules this PC sets (Add-DnsClientNrptRule's, and ours)
@@ -43,6 +47,11 @@ const (
 	configGenericServers = 0x8
 	ruleVersion          = 2
 )
+
+// ErrNotApplied is a rule change written, but that the DNS Client may not
+// have taken in yet; protection can go on (it is in the registry, and the
+// next change of DNS settings applies it).
+var ErrNotApplied = errors.New("dnspolicy: the DNS Client did not confirm the change")
 
 // ours tells our rules apart: the fixed key, or the comment of one that
 // PowerShell made ("port1897": the app's name before 0.3).
@@ -76,15 +85,14 @@ func Add(server netip.Addr) error {
 		_ = registry.DeleteKey(root, localRules+`\`+ruleKey)
 		return fmt.Errorf("dnspolicy: add: %w", err)
 	}
-	flush()
-	return nil
+	return apply()
 }
 
-// Remove deletes our rules and flushes the DNS cache.
+// Remove deletes our rules, and has the DNS Client drop them: a rule left in
+// force after the engine stops would send every lookup to an address no one
+// answers.
 func Remove() error {
-	err := removeOurs()
-	flush()
-	return err
+	return errors.Join(removeOurs(), apply())
 }
 
 // Others lists catch-all (".") rules that are not ours, such as another
@@ -156,6 +164,64 @@ func list(path string) ([]rule, error) {
 		rules = append(rules, r)
 	}
 	return rules, nil
+}
+
+// applyHook replaces apply in tests, which write rules under HKCU.
+var applyHook func() error
+
+// apply has the DNS Client take a rule change in and empties its cache. It
+// does not wait for ipconfig, which took 3 s on the Simulate runner (it goes
+// on to register the PC's names in DNS): the start no longer waits either,
+// and at a stop it finishes after fswin has gone.
+func apply() error {
+	if applyHook != nil {
+		return applyHook()
+	}
+	flush()
+	h, err := startHidden(systemTool("ipconfig.exe"), "/registerdns")
+	if err != nil {
+		return fmt.Errorf("%w: ipconfig /registerdns: %w", ErrNotApplied, err)
+	}
+	go func() {
+		_, _ = windows.WaitForSingleObject(h, windows.INFINITE)
+		_ = windows.CloseHandle(h)
+		flush() // and once more after it, for answers cached meanwhile
+	}()
+	return nil
+}
+
+// startHidden starts exe, a full path, with fixed args, hidden: through
+// CreateProcess with that path as the program, so there is no PATH lookup
+// and no shell. It returns the process handle, for the caller to close.
+func startHidden(exe string, args ...string) (windows.Handle, error) {
+	if !filepath.IsAbs(exe) {
+		return 0, fmt.Errorf("%s: not a full path", exe)
+	}
+	app, err := windows.UTF16PtrFromString(exe)
+	if err != nil {
+		return 0, err
+	}
+	line, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(append([]string{filepath.Base(exe)}, args...)))
+	if err != nil {
+		return 0, err
+	}
+	si := windows.StartupInfo{Flags: windows.STARTF_USESHOWWINDOW, ShowWindow: windows.SW_HIDE}
+	si.Cb = uint32(unsafe.Sizeof(si)) //nolint:gosec // G103: the struct's size, for Windows
+	var pi windows.ProcessInformation
+	if err := windows.CreateProcess(app, line, nil, nil, false, windows.CREATE_NO_WINDOW, nil, nil, &si, &pi); err != nil {
+		return 0, err
+	}
+	_ = windows.CloseHandle(pi.Thread)
+	return pi.Process, nil
+}
+
+// systemTool is a program in System32, never one found through PATH, which
+// the user's environment sets.
+func systemTool(name string) string {
+	if dir, err := windows.GetSystemDirectory(); err == nil {
+		return filepath.Join(dir, name)
+	}
+	return name
 }
 
 var procDnsFlushResolverCache = windows.NewLazySystemDLL("dnsapi.dll").NewProc("DnsFlushResolverCache")
