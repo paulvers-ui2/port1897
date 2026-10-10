@@ -256,6 +256,9 @@ func run(o options) error {
 	link, linkWhy := linkMTU(0)
 	plan := planMTU(link, linkWhy, exitID, exitCfg, us, o.mtu)
 	curMTU.Store(&plan)
+	if us != nil {
+		us.link = plan.Link // usque's QUIC packets fit the network (usqueDefaults)
+	}
 	fmt.Printf("fswin: MTU: %s\n", &plan)
 	var uq *usque // started once all traffic goes to the tunnel
 	defer func() { uq.stop() }()
@@ -470,6 +473,16 @@ func run(o options) error {
 		}
 		if _, err := pxs.AddProxy(x.StrOf(exitID), x.StrOf(exitCfg)); err != nil {
 			return fmt.Errorf("add exit %s: %w", exitID, err)
+		}
+		if uq != nil {
+			// keeps usque up: a restart within a second when it dies, and
+			// when it lives on with no traffic (supervise_windows.go)
+			sup := supervise(*us, uq, uint32(ifc.Index), func(url string) error {
+				_, err := pxs.AddProxy(x.StrOf(exitID), x.StrOf(url))
+				return err
+			})
+			curSup.Store(sup)
+			defer sup.stop() // before uq.stop above
 		}
 	}
 	mode += killMode
