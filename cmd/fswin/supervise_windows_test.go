@@ -28,6 +28,10 @@ func TestMain(m *testing.M) {
 		fakeUsque(os.Args[1:])
 		return
 	}
+	if mode := os.Getenv(fakeEngineEnv); mode != "" {
+		fakeEngine(mode, os.Args[1:]) // service_windows_test.go
+		return
+	}
 	os.Exit(m.Run())
 }
 
