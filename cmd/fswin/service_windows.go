@@ -38,14 +38,15 @@ import (
 //   - local clients: the pipe refuses remote ones;
 //   - the installed app: the client process must be the AuroraVPN.exe the
 //     service was installed for;
-//   - administrators: the engine runs with the user's own elevated token,
-//     the one a UAC prompt hands out, in the user's session, so it is the
-//     engine of a UAC prompt, minus the prompt. Standard users are refused.
+//   - any user, standard users too, as Proton VPN's service: the engine runs
+//     as SYSTEM, which a VPN needs, and inherits the asking user's own token
+//     (-user-token).
 // The engine is fswin.exe from the service's own folder. The app picks its
-// flags, but the engine opens every file of the app with the user's rights
-// and runs usque unelevated (asuser_windows.go), and the flags that pick a
-// program to run are refused, so a request reaches nothing the user could
-// not reach alone, besides the network settings protection is about.
+// flags, but the engine opens every file of the app with that user's rights
+// and runs usque as that user (asuser_windows.go), and the flags that pick a
+// program to run or another token are refused, so a request reaches nothing
+// the user could not reach alone, besides the network settings protection is
+// about.
 
 const (
 	serviceName = "AuroraVPN"
@@ -380,14 +381,15 @@ func (ps *pipeServer) handle(h windows.Handle, req pipeRequest) pipeReply {
 	return pipeReply{Error: fmt.Sprintf("unknown request %q", req.Cmd)}
 }
 
-// pipeClient is who asks: an administrator in the installed app.
+// pipeClient is who asks: any user, in the installed app. Like Proton VPN's
+// service, this one lets a standard user turn the VPN on and off; the engine
+// runs as SYSTEM (Windows needs that for a VPN) and does what touches the
+// user's files as that user.
 type pipeClient struct {
 	pid   uint32
 	user  string
-	token windows.Token // the user's elevated token, primary
+	token windows.Token // the user's own token, primary, inheritable
 }
-
-var errNotAdmin = errors.New("only an administrator can turn on AuroraVPN (Windows needs admin rights for a VPN)")
 
 func (ps *pipeServer) identify(h windows.Handle) (*pipeClient, error) {
 	var pid uint32
@@ -418,11 +420,11 @@ func (ps *pipeServer) identify(h windows.Handle) (*pipeClient, error) {
 			user = d + `\` + a
 		}
 	}
-	et, err := elevatedToken(tok)
+	ut, err := userPrimary(tok)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", user, err)
 	}
-	return &pipeClient{pid: pid, user: user, token: et}, nil
+	return &pipeClient{pid: pid, user: user, token: ut}, nil
 }
 
 func processPath(p windows.Handle) (string, error) {
@@ -474,39 +476,22 @@ func tokenSession(t windows.Token) uint32 {
 	return session
 }
 
-// tokenLinked is TOKEN_LINKED_TOKEN.
-type tokenLinked struct{ token windows.Token }
-
-// elevatedToken is the token to run the engine with: the user's own elevated
-// one. An elevated client (UAC off, or the app run as administrator) has it
-// already; an administrator's ordinary token links to it, the token a UAC
-// prompt would hand out. A standard user has none.
-//
-//nolint:gosec // G103: GetTokenInformation fills a struct
-func elevatedToken(t windows.Token) (windows.Token, error) {
-	src := t
-	if !t.IsElevated() {
-		var linked tokenLinked
-		var n uint32
-		if err := windows.GetTokenInformation(t, windows.TokenLinkedToken, (*byte)(unsafe.Pointer(&linked)), uint32(unsafe.Sizeof(linked)), &n); err != nil {
-			return 0, errNotAdmin
-		}
-		defer linked.token.Close()
-		if !linked.token.IsElevated() {
-			return 0, errNotAdmin
-		}
-		src = linked.token
-	}
+// userPrimary is a primary copy of t, the token of the program that asked,
+// that the engine can inherit: it opens the user's files and starts usque
+// with it (asuser_windows.go). Only a handle list names it to the child.
+func userPrimary(t windows.Token) (windows.Token, error) {
+	sa := windows.SecurityAttributes{InheritHandle: 1}
+	sa.Length = uint32(unsafe.Sizeof(sa)) //nolint:gosec // G103: the struct's size, for Windows
 	var dup windows.Token
-	if err := windows.DuplicateTokenEx(src, windows.MAXIMUM_ALLOWED, nil, windows.SecurityImpersonation, windows.TokenPrimary, &dup); err != nil {
-		return 0, err
+	if err := windows.DuplicateTokenEx(t, windows.MAXIMUM_ALLOWED, &sa, windows.SecurityImpersonation, windows.TokenPrimary, &dup); err != nil {
+		return 0, fmt.Errorf("the user's token: %w", err)
 	}
 	return dup, nil
 }
 
 // refusedFlags pick a program for the engine to run, or one of fswin's own
 // modes, not a setting.
-var refusedFlags = map[string]bool{"service": true, "app": true, "stop-handle": true, "usque": true}
+var refusedFlags = map[string]bool{"service": true, "app": true, "stop-handle": true, "user-token": true, "usque": true}
 
 // checkEngineArgs refuses the flags a client may not pass.
 func checkEngineArgs(args []string) error {
@@ -572,7 +557,7 @@ func (ps *pipeServer) startEngine(c *pipeClient, args []string) (uint32, error) 
 		return 0, err
 	}
 	ps.running = e
-	ps.logf("engine %d started for %s in session %d", e.pid, c.user, tokenSession(c.token))
+	ps.logf("engine %d started as SYSTEM for %s (session %d)", e.pid, c.user, tokenSession(c.token))
 	return e.pid, nil
 }
 
@@ -606,7 +591,7 @@ func (ps *pipeServer) cleanup(c *pipeClient) error {
 	if running {
 		return errors.New("stop protection first")
 	}
-	e, err := launch(c.token, ps.engine, []string{"-cleanup"})
+	e, err := launch(0, ps.engine, []string{"-cleanup"})
 	if err != nil {
 		return err
 	}
@@ -622,10 +607,11 @@ func (ps *pipeServer) cleanup(c *pipeClient) error {
 	return nil
 }
 
-// launch starts exe with args as the user of token (elevated), on the user's
-// desktop, hidden, with the user's own environment. The engine inherits only
-// the stop event, and learns it from -stop-handle.
-func launch(token windows.Token, exe string, args []string) (*engineProc, error) {
+// launch starts exe with args as SYSTEM, the service's own account, hidden.
+// The engine inherits only the stop event (-stop-handle) and, when user is
+// not 0, the user's token (-user-token), with which it opens the user's
+// files and starts usque.
+func launch(user windows.Token, exe string, args []string) (*engineProc, error) {
 	sa := windows.SecurityAttributes{InheritHandle: 1}
 	sa.Length = uint32(unsafe.Sizeof(sa)) //nolint:gosec // G103: the struct's size, for Windows
 	stop, err := windows.CreateEvent(&sa, 1, 0, nil)
@@ -640,6 +626,11 @@ func launch(token windows.Token, exe string, args []string) (*engineProc, error)
 	}()
 
 	argv := append(append([]string{exe}, args...), "-stop-handle", strconv.FormatUint(uint64(stop), 10))
+	handles := []windows.Handle{stop}
+	if user != 0 {
+		argv = append(argv, "-user-token", strconv.FormatUint(uint64(user), 10))
+		handles = append(handles, windows.Handle(user))
+	}
 	cmdline, err := windows.UTF16PtrFromString(windows.ComposeCommandLine(argv))
 	if err != nil {
 		return nil, err
@@ -652,34 +643,25 @@ func launch(token windows.Token, exe string, args []string) (*engineProc, error)
 	if err != nil {
 		return nil, err
 	}
-	desktop, err := windows.UTF16PtrFromString(`winsta0\default`)
-	if err != nil {
-		return nil, err
-	}
-	var env *uint16
-	if err := windows.CreateEnvironmentBlock(&env, token, false); err != nil {
-		return nil, fmt.Errorf("the user's environment: %w", err)
-	}
-	defer windows.DestroyEnvironmentBlock(env)
-
 	attrs, err := windows.NewProcThreadAttributeList(1)
 	if err != nil {
 		return nil, err
 	}
 	defer attrs.Delete()
-	if err := attrs.Update(windows.PROC_THREAD_ATTRIBUTE_HANDLE_LIST, unsafe.Pointer(&stop), unsafe.Sizeof(stop)); err != nil { //nolint:gosec // G103: the attribute takes a pointer
+	if err := attrs.Update(windows.PROC_THREAD_ATTRIBUTE_HANDLE_LIST, unsafe.Pointer(&handles[0]), uintptr(len(handles))*unsafe.Sizeof(handles[0])); err != nil { //nolint:gosec // G103: the attribute takes a pointer
 		return nil, err
 	}
 	si := windows.StartupInfoEx{
-		StartupInfo:             windows.StartupInfo{Desktop: desktop, Flags: windows.STARTF_USESHOWWINDOW, ShowWindow: windows.SW_HIDE},
+		StartupInfo:             windows.StartupInfo{Flags: windows.STARTF_USESHOWWINDOW, ShowWindow: windows.SW_HIDE},
 		ProcThreadAttributeList: attrs.List(),
 	}
 	si.Cb = uint32(unsafe.Sizeof(si)) //nolint:gosec // G103: the struct's size, for Windows
 	var pi windows.ProcessInformation
-	flags := uint32(windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_NO_WINDOW)
-	if err := windows.CreateProcessAsUser(token, exe16, cmdline, nil, nil, true, flags, env, dir16, &si.StartupInfo, &pi); err != nil {
+	flags := uint32(windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_NO_WINDOW)
+	if err := windows.CreateProcess(exe16, cmdline, nil, nil, true, flags, nil, dir16, &si.StartupInfo, &pi); err != nil {
 		return nil, fmt.Errorf("start the engine: %w", err)
 	}
+	runtime.KeepAlive(handles)
 	_ = windows.CloseHandle(pi.Thread)
 	ok = true
 	return &engineProc{pid: pi.ProcessId, process: pi.Process, stop: stop}, nil

@@ -5,8 +5,11 @@ An open-source effort to bring the engine behind the Android firewall
 encrypted DNS, per-app firewall rules, connection logs and WireGuard, in a free
 app for everyone.
 
-> **Early test software.** It needs administrator rights and changes network
-> settings while it runs. Do not rely on it for privacy or security yet.
+> **Early test software.** Installing it needs administrator rights once;
+> after that, any Windows user turns protection on without an admin prompt
+> (through AuroraVPN Service, as with Proton VPN). The portable exe asks for
+> admin rights each time. It changes network settings while it runs. Do not
+> rely on it for privacy or security yet.
 
 This is an unofficial community project. It is not affiliated with or endorsed by
 Celzero (Rethink), Cloudflare, WireGuard LLC or Microsoft.

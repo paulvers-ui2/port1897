@@ -118,6 +118,7 @@ type options struct {
 	service    string // install, uninstall or run AuroraVPN Service (service_windows.go)
 	serviceApp string // with -service install: the app allowed to use it
 	stopHandle uint64 // set by the service: an event that stops the engine
+	userToken  uint64 // set by the service: the token of the user who asked
 }
 
 func main() {
@@ -177,6 +178,7 @@ func main() {
 	flag.StringVar(&o.service, "service", "", "install, uninstall or run AuroraVPN Service, which starts the engine for the app without a UAC prompt")
 	flag.StringVar(&o.serviceApp, "app", "", "with -service install: the path of AuroraVPN.exe, the only program the service answers")
 	flag.Uint64Var(&o.stopHandle, "stop-handle", 0, "set by AuroraVPN Service: an inherited event that, once set, stops the engine")
+	flag.Uint64Var(&o.userToken, "user-token", 0, "set by AuroraVPN Service, which runs the engine as SYSTEM: the inherited token of the user who asked; the user's files are opened, and usque started, with it")
 	showVersion := flag.Bool("version", false, "print the build and exit")
 	flag.Parse()
 	if *showVersion {
@@ -193,8 +195,15 @@ func main() {
 		return
 	}
 
-	// the app's files are opened with the user's rights (asuser_windows.go)
-	tok, err := newUserToken()
+	// the app's files are opened with the user's rights (asuser_windows.go):
+	// those of the user who asked the service, or else fswin's own, lowered
+	var tok *userToken
+	var err error
+	if o.userToken != 0 {
+		tok, err = newUserTokenFrom(windows.Token(o.userToken))
+	} else {
+		tok, err = newUserToken()
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "fswin:", err)
 		os.Exit(1)

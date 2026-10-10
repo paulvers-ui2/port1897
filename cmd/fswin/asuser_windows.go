@@ -31,12 +31,17 @@ import (
 // then refuses whatever the user could not reach alone. usque needs no
 // admin rights at all and runs with the same token.
 
+// Run by AuroraVPN Service, fswin is SYSTEM, and the token comes from the
+// user who asked the service (newUserTokenFrom), lowered the same way; usque
+// also gets that user's environment.
+
 // asUser is that token, made at start; nil (most tests) acts as fswin.
 var asUser *userToken
 
 type userToken struct {
 	primary windows.Token // for child processes
 	imp     windows.Token // for impersonation
+	env     []string      // the user's environment for children; nil: fswin's
 }
 
 var procCreateRestrictedToken = windows.NewLazySystemDLL("advapi32.dll").NewProc("CreateRestrictedToken")
@@ -57,6 +62,31 @@ func newUserToken() (*userToken, error) {
 		return nil, err
 	}
 	return userTokenFrom(self, restricted)
+}
+
+// newUserTokenFrom is the user token made from t, the token of the user who
+// asked AuroraVPN Service for the engine: restricted and lowered as
+// newUserToken's own, with that user's environment. It takes t over.
+func newUserTokenFrom(t windows.Token) (*userToken, error) {
+	defer t.Close()
+	if _, err := t.GetTokenUser(); err != nil {
+		return nil, fmt.Errorf("-user-token: %w", err)
+	}
+	restricted, err := restrict(t)
+	if err != nil {
+		return nil, err
+	}
+	u, err := userTokenFrom(t, restricted)
+	if err != nil {
+		return nil, err
+	}
+	env, err := t.Environ(false)
+	if err != nil {
+		u.close()
+		return nil, fmt.Errorf("user token: environment: %w", err)
+	}
+	u.env = env
+	return u, nil
 }
 
 // restrict is self with the Administrators group for deny only and no
@@ -178,6 +208,9 @@ func (u *userToken) unelevated(cmd *exec.Cmd) {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
 	cmd.SysProcAttr.Token = syscall.Token(u.primary)
+	if cmd.Env == nil && u.env != nil {
+		cmd.Env = u.env
+	}
 }
 
 func (u *userToken) close() {
