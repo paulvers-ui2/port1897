@@ -178,9 +178,16 @@ func apply() error {
 		return applyHook()
 	}
 	flush()
-	// ipconfig from System32, with one fixed argument
-	cmd := exec.Command(systemTool("ipconfig.exe"), "/registerdns") //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+	// ipconfig by its full System32 path, with one fixed argument: the Cmd
+	// is built directly, so there is no PATH lookup at all
+	cmd := &exec.Cmd{
+		Path:        systemTool("ipconfig.exe"),
+		Args:        []string{"ipconfig.exe", "/registerdns"},
+		SysProcAttr: &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW},
+	}
+	if !filepath.IsAbs(cmd.Path) {
+		return fmt.Errorf("%w: System32 not found", ErrNotApplied)
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("%w: ipconfig /registerdns: %w", ErrNotApplied, err)
 	}
