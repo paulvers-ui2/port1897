@@ -287,12 +287,16 @@ func run(o options) error {
 	if err != nil {
 		return fmt.Errorf("create wintun adapter (run as admin, wintun.dll next to the exe?): %w", err)
 	}
+	startStep(began, "adapter created")
 	name := o.name
 	if n, err := dev.Name(); err == nil {
 		name = n
 	}
-	// netstack owns dev from here and closes it (removing the adapter) on Disconnect.
+	// netstack owns dev from here and closes it (removing the adapter) on
+	// Disconnect; closing it again waits for that (stopTunnel), and is how a
+	// start that fails half way removes it.
 	id := netstack.RegisterTun(dev)
+	defer func() { _ = dev.Close() }()
 
 	var luid uint64 // the adapter, for ipconf's calls
 	if nt, ok := dev.(*tun.NativeTun); ok {
@@ -301,19 +305,21 @@ func run(o options) error {
 	// The NRPT rule goes in before the adapter gets its DNS server: Windows'
 	// DNS Client reloads its settings, NRPT rules among them, when that
 	// changes. Written after, it was not in force (Simulate, PRs #26, #28).
+	nrptSet := false // until stopTunnel drops it
 	if o.nrpt {
-		if err := dnspolicy.Add(netip.MustParseAddr(fakedns4)); errors.Is(err, dnspolicy.ErrNotApplied) {
-			fmt.Println("fswin: warning: the NRPT rule is set, but Windows may apply it late:", err)
-		} else if err != nil {
-			_ = dev.Close()
+		if err := dnspolicy.Add(netip.MustParseAddr(fakedns4)); err != nil {
 			return err
 		}
+		nrptSet = true
 		defer func() {
+			if !nrptSet {
+				return
+			}
 			if err := dnspolicy.Remove(); err != nil {
 				fmt.Fprintln(os.Stderr, "fswin: remove NRPT rule (run fswin -cleanup):", err)
 			}
-			stopStep("NRPT rule removed")
 		}()
+		startStep(began, "NRPT rule set")
 	}
 	if err := configure(name, luid, o.setdns); err != nil {
 		_ = dev.Close()
@@ -333,6 +339,7 @@ func run(o options) error {
 		_ = dev.Close()
 		return errors.New("-full: no IPv4 default route outside the tunnel to send firestack's own traffic over")
 	}
+	startStep(began, "adapter configured")
 
 	// The kill switch (on now for -killswitch, or later from the app's
 	// button) goes on before fswin opens a connection of its own: turning it
@@ -363,6 +370,11 @@ func run(o options) error {
 		} else {
 			killMode = "; kill switch on"
 		}
+		startStep(began, "kill switch set")
+	} else if cleared, err := kill.clearLeftover(); err != nil {
+		fmt.Println("fswin: warning: a kill switch left by an earlier run may still block:", err)
+	} else if cleared {
+		fmt.Println("fswin: removed the kill switch an earlier run left on")
 	}
 
 	fbURL, fbIPs := o.fallbackDoH, o.fallbackIPs
@@ -407,10 +419,8 @@ func run(o options) error {
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
-	defer func() {
-		t.Disconnect()
-		stopStep("tunnel closed")
-	}()
+	// after the API, the supervisor and usque (deferred later, so done first)
+	defer stopTunnel(t, dev, luid, o.setdns, kill, &nrptSet)
 	mtuDone := make(chan struct{})
 	defer close(mtuDone) // before Disconnect
 	go watchLinkMTU(t, uint32(ifc.Index), mtuDone)
@@ -446,6 +456,7 @@ func run(o options) error {
 	if lists {
 		dnsLabel += " + on-device blocklists"
 	}
+	startStep(began, "tunnel and DNS ready")
 
 	if o.routesFile != "" {
 		r, err := loadRoutes(t, o.routesFile)
@@ -476,6 +487,19 @@ func run(o options) error {
 		fmt.Printf("fswin: warning: %s; disconnect that VPN\n", c)
 	}
 
+	// The NRPT rule's backup (dnspolicy.Nudge), here as up to 0.2.22. Started
+	// right after the rule, before the adapter had its address and the kill
+	// switch was on, the time from the adapter's creation to the DNS setup
+	// went from 3-4 s to 6.5 and 19.6 s (0.2.24 logs); ipconfig /registerdns
+	// also renews every adapter's DHCP lease, the new one's among them.
+	if nrptSet {
+		n, err := dnspolicy.Nudge()
+		if err != nil {
+			fmt.Println("fswin: warning: the NRPT rule is set, but Windows may apply it late:", err)
+		}
+		go n.Wait(-1)
+	}
+
 	mode := "DNS only"
 	if o.full {
 		// routes go once the tunnel can carry traffic; they vanish with the adapter
@@ -490,6 +514,7 @@ func run(o options) error {
 			return err
 		}
 		exitCfg = uq.url
+		startStep(began, "usque listening")
 	}
 	if exitID != "" {
 		pxs, err := t.GetProxies()
@@ -570,6 +595,59 @@ var stopAt time.Time
 func stopStep(what string) {
 	if !stopAt.IsZero() {
 		fmt.Printf("fswin: stop: %s after %d ms\n", what, time.Since(stopAt).Milliseconds())
+	}
+}
+
+// startStep logs how long the start took up to a step: one took 22 s, 19
+// of them between the adapter's creation and the DNS setup, with nothing in
+// the log to say where.
+func startStep(began time.Time, what string) {
+	fmt.Printf("fswin: start: %s after %d ms\n", what, time.Since(began).Milliseconds())
+}
+
+// stopTunnel is the stop once the API, the supervisor and usque are gone,
+// in an order that lets nothing out of the tunnel while it is up and waits
+// on nothing it need not:
+//
+//  1. The NRPT rule: its registry key goes, then the adapter's DNS server,
+//     which makes the DNS Client reload its settings, the rule among them
+//     (as the start relies on). ipconfig /registerdns, the backup, runs on
+//     by itself; waiting up to 5 s for it held every stop up ("NRPT rule
+//     removed after 7249 ms").
+//  2. The tunnel, then the adapter and its routes: Disconnect only begins
+//     that; closing the device again waits until the adapter is gone.
+//  3. The kill switch last: until the adapter is gone nothing leaves outside
+//     it, and a stop cut short (the service ends an engine still running
+//     after 15 s) leaves the PC blocked rather than open, until -cleanup or
+//     the next start.
+//  4. The DNS cache is emptied once more, of answers from the tunnel.
+func stopTunnel(t intra.Tunnel, dev tun.Device, luid uint64, setdns bool, kill *killSwitch, nrptSet *bool) {
+	var nudge *dnspolicy.Nudging
+	if *nrptSet {
+		var err error
+		nudge, err = dnspolicy.Drop()
+		*nrptSet = false
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fswin: stop: NRPT rule (if DNS fails, run fswin -cleanup):", err)
+		}
+		if luid != 0 && setdns {
+			if err := ipconf.ClearDNS(luid); err != nil {
+				fmt.Fprintln(os.Stderr, "fswin: clear the adapter's DNS server:", err)
+			}
+		}
+		stopStep("NRPT rule removed")
+	}
+	t.Disconnect()
+	_ = dev.Close()
+	stopStep("tunnel and adapter removed")
+	if kill.isOn() {
+		if err := kill.set(false, false); err != nil {
+			fmt.Fprintln(os.Stderr, "fswin: remove kill switch (run fswin -cleanup):", err)
+		}
+		stopStep("kill switch removed")
+	}
+	if nudge != nil {
+		nudge.Wait(0)
 	}
 }
 

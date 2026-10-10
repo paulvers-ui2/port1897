@@ -98,3 +98,29 @@ func TestKillSwitchSetFull(t *testing.T) {
 	var none *killSwitch
 	none.setFull(true) // a PC without a Wintun kill switch: no panic
 }
+
+// A kill switch left on by an engine that crashed goes at the next start
+// even when that start has none; one this engine set is left alone.
+func TestKillSwitchLeftoverCleared(t *testing.T) {
+	active, disabled := true, 0
+	oldActive, oldDisable := wfpActive, wfpDisable
+	wfpActive = func() (bool, error) { return active, nil }
+	wfpDisable = func() error { disabled++; active = false; return nil }
+	t.Cleanup(func() { wfpActive, wfpDisable = oldActive, oldDisable })
+
+	k := newKillSwitch(wfp.Options{}, true)
+	if cleared, err := k.clearLeftover(); !cleared || err != nil || disabled != 1 {
+		t.Fatalf("leftover: cleared %t, %v, %d removals", cleared, err, disabled)
+	}
+	if cleared, err := k.clearLeftover(); cleared || err != nil || disabled != 1 {
+		t.Errorf("nothing left: cleared %t, %v, %d removals", cleared, err, disabled)
+	}
+	active, k.on = true, true // this engine's own
+	if cleared, _ := k.clearLeftover(); cleared || disabled != 1 {
+		t.Error("removed this engine's own kill switch")
+	}
+	var none *killSwitch
+	if cleared, err := none.clearLeftover(); cleared || err != nil {
+		t.Error("a PC without a Wintun kill switch: something cleared")
+	}
+}
