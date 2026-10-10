@@ -1144,13 +1144,13 @@ function logView(list) {
   };
 
   const drawRest = (g) =>
-    setTimeout(() => {
+    nextFrame(() => {
       if (g !== gen || !list.isConnected || !pending.length) return;
       const more = pending.splice(0, LOG_CHUNK).map((e) => ({ e, node: logRow(e) }));
       list.append(...more.map((r) => r.node));
       shown = shown.concat(more);
       if (pending.length) drawRest(g);
-    }, 0);
+    });
 
   function fill(text) {
     if (text !== undefined) q = text.trim().toLowerCase();
@@ -1282,7 +1282,7 @@ function activeList(list) {
         else list.insertBefore(n, cur);
       }
     }
-    if (more) setTimeout(() => shown(my) && paint(conns, q, my), 0);
+    if (more) nextFrame(() => shown(my) && paint(conns, q, my));
   }
 
   // leaving Active: forget the rows, and let a fetch on its way land nowhere

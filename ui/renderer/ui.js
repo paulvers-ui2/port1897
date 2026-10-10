@@ -216,6 +216,19 @@ function fmtTime(ms) {
   return isNaN(d) ? 'Invalid Date' : TIME_FMT.format(d);
 }
 
+// Runs f just before the next frame is drawn, so work split into parts is
+// laid out one part a frame; a hidden window draws no frames, so a timer
+// stands in.
+function nextFrame(f) {
+  const run = () => {
+    cancelAnimationFrame(raf);
+    clearTimeout(timer);
+    f();
+  };
+  const raf = requestAnimationFrame(run);
+  const timer = setTimeout(run, 100);
+}
+
 // f, run once typing pauses for ms
 function debounce(f, ms) {
   let t = 0;
