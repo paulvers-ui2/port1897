@@ -315,6 +315,10 @@ function demoMtu(exit, set) {
   return { link: 1500, exit: ex, adapter, auto: !set, why: `Wi-Fi 1500${tunnel ? `, ${tunnel[0]} ${ex}` : ''}` };
 }
 
+// ?stress in the address makes the demo busy, for measuring the screens:
+// 60 log lines a look (not 6) and 400 open connections.
+const DEMO_STRESS = /[?&]stress\b/.test(location.search);
+
 function demoPort() {
   let s = {
     dnsType: 'doh', doh: 'https://cloudflare-dns.com/dns-query', dohIps: '1.1.1.1,1.0.0.1', dohName: 'Cloudflare',
@@ -368,7 +372,7 @@ function demoPort() {
     events: async () => {
       if (!running) return [];
       const out = [];
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < (DEMO_STRESS ? 30 : 3); i++) {
         const app = pick(apps);
         const dom = pick(doms);
         const [ip, cc] = pick(ips);
@@ -397,7 +401,13 @@ function demoPort() {
     pause: async (m) => ((s = { ...s, pausedUntil: m ? Date.now() + m * 60000 : 0 }), { ...s }),
     proxies: async () => (running ? [{ id: 'masque', name: 'Cloudflare WARP (MASQUE)', status: 'connected', rx: 5e7, tx: 4e6, lastOK: Date.now() - 12000 }] : []),
     conns: async () =>
-      running
+      running && DEMO_STRESS
+        ? Array.from({ length: 400 }, (_, i) => {
+            const app = apps[i % apps.length];
+            const [ip, cc] = ips[i % ips.length];
+            return { cid: String(i + 1), app, path: demoPath(app), proto: i % 3 ? 'tcp' : 'udp', dst: `${ip}:${443 + (i % 7)}`, domain: doms[i % doms.length], country: cc, via: 'Cloudflare WARP (MASQUE)', since: Date.now() - i * 7000 };
+          })
+        : running
         ? [
             { cid: '1', app: 'chrome.exe', path: demoPath('chrome.exe'), proto: 'tcp', dst: '104.16.0.1:443', domain: 'github.com', country: 'US', via: 'Cloudflare WARP (MASQUE)', since: Date.now() - 5000 },
             { cid: '2', app: 'Code.exe', proto: 'tcp', dst: '34.49.39.67:443', country: 'US', via: 'Cloudflare WARP (MASQUE)', since: Date.now() - 95000 },
