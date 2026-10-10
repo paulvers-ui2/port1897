@@ -9,22 +9,28 @@
 package dnspolicy
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/netip"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
 // NRPT rules (the Name Resolution Policy Table) are registry keys, one per
-// rule; Windows' DNS Client watches them and applies a change by itself.
-// Tailscale and Proton VPN write them this way. This package used to run
-// PowerShell's Add-DnsClientNrptRule instead: about 1.5 s a call, two calls
-// per start and one per stop.
+// rule, as Tailscale writes them. Windows' DNS Client does not read them
+// again by itself (the Simulate run showed the rule written but not in
+// force), so apply has it take the change in, as Tailscale does: ipconfig
+// /registerdns, which makes Windows notice changed DNS settings. This
+// package used to run PowerShell's Add-DnsClientNrptRule instead: about
+// 1.5 s a call, two calls per start and one per stop.
 var (
 	root = registry.LOCAL_MACHINE // tests use HKCU
 	// rules this PC sets (Add-DnsClientNrptRule's, and ours)
@@ -43,6 +49,11 @@ const (
 	configGenericServers = 0x8
 	ruleVersion          = 2
 )
+
+// ErrNotApplied is a rule change written, but that the DNS Client may not
+// have taken in yet; protection can go on (it is in the registry, and the
+// next change of DNS settings applies it).
+var ErrNotApplied = errors.New("dnspolicy: the DNS Client did not confirm the change")
 
 // ours tells our rules apart: the fixed key, or the comment of one that
 // PowerShell made ("port1897": the app's name before 0.3).
@@ -76,15 +87,14 @@ func Add(server netip.Addr) error {
 		_ = registry.DeleteKey(root, localRules+`\`+ruleKey)
 		return fmt.Errorf("dnspolicy: add: %w", err)
 	}
-	flush()
-	return nil
+	return apply()
 }
 
-// Remove deletes our rules and flushes the DNS cache.
+// Remove deletes our rules, and has the DNS Client drop them: a rule left in
+// force after the engine stops would send every lookup to an address no one
+// answers.
 func Remove() error {
-	err := removeOurs()
-	flush()
-	return err
+	return errors.Join(removeOurs(), apply())
 }
 
 // Others lists catch-all (".") rules that are not ours, such as another
@@ -156,6 +166,36 @@ func list(path string) ([]rule, error) {
 		rules = append(rules, r)
 	}
 	return rules, nil
+}
+
+// applyHook replaces apply in tests, which write rules under HKCU.
+var applyHook func() error
+
+// apply has the DNS Client take a rule change in and empties its cache.
+func apply() error {
+	if applyHook != nil {
+		return applyHook()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	// ipconfig from System32, with one fixed argument
+	cmd := exec.CommandContext(ctx, systemTool("ipconfig.exe"), "/registerdns") //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+	out, err := cmd.CombinedOutput()
+	flush()
+	if err != nil {
+		return fmt.Errorf("%w: ipconfig /registerdns: %w: %s", ErrNotApplied, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// systemTool is a program in System32, never one found through PATH, which
+// the user's environment sets.
+func systemTool(name string) string {
+	if dir, err := windows.GetSystemDirectory(); err == nil {
+		return filepath.Join(dir, name)
+	}
+	return name
 }
 
 var procDnsFlushResolverCache = windows.NewLazySystemDLL("dnsapi.dll").NewProc("DnsFlushResolverCache")

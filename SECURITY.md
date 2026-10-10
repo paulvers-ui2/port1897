@@ -48,7 +48,20 @@ AuroraVPN for Windows has three parts:
 - **Who it answers:** its named pipe (`\\.\pipe\AuroraVPN`) refuses
   remote clients and anyone but SYSTEM, administrators and interactive users.
   It answers only the installed `AuroraVPN.exe`, checked by the client
-
+  process's image path (a folder only administrators may change), for any
+  user, standard users too.
+- **What it starts:** the engine from its own folder, as SYSTEM, which a VPN
+  needs (the adapter, routes, DNS rules, kill switch). With it, the engine
+  inherits the asking user's own token (`-user-token`): it opens that user's
+  files and starts usque with it, so neither runs with more rights than the
+  user has (see below). Flags that would pick a program to run, or hand the
+  engine another token, are refused. The engine configures the adapter and
+  the NRPT rule through Windows APIs and the registry; it runs `ipconfig
+  /registerdns` (so Windows applies the NRPT change) and, as a fallback,
+  `netsh` from System32, never through `PATH`. Every request is answered on
+  its own thread.
+- **Without it** (the portable app), the engine starts through a UAC
+  prompt, with the user's elevated token.
 
 **The engine**
 - **Control API:** loopback only. Every request needs the per-install

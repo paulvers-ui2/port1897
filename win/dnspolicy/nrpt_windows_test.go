@@ -22,10 +22,11 @@ import (
 func sandbox(t *testing.T) string {
 	t.Helper()
 	base := `Software\AuroraVPNTest\` + strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
-	oldRoot, oldLocal, oldPolicy := root, localRules, policyRules
+	oldRoot, oldLocal, oldPolicy, oldApply := root, localRules, policyRules, applyHook
 	root, localRules, policyRules = registry.CURRENT_USER, base+`\local`, base+`\policy`
+	applyHook = func() error { return nil } // nothing in force to change
 	t.Cleanup(func() {
-		root, localRules, policyRules = oldRoot, oldLocal, oldPolicy
+		root, localRules, policyRules, applyHook = oldRoot, oldLocal, oldPolicy, oldApply
 		deleteTree(t, registry.CURRENT_USER, base)
 	})
 	return base

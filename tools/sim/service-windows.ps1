@@ -146,8 +146,15 @@ $w.WriteLine('{"cmd":"ping"}')
   $std = 'auroravpn-sim'
   $stdDir = 'C:\auroravpn-sim'
   try {
-    $pw = 'Aa1!' + [guid]::NewGuid().ToString('N')
-    $cred = [pscredential]::new($std, (ConvertTo-SecureString $pw -AsPlainText -Force))
+    # a throwaway password made in a SecureString from random bytes, never a
+    # plain string; 'Aa1!' meets Windows' complexity rules
+    $pw = [Security.SecureString]::new()
+    foreach ($ch in [char[]]'Aa1!') { $pw.AppendChar($ch) }
+    $rnd = [byte[]]::new(24)
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($rnd)
+    foreach ($b in $rnd) { $pw.AppendChar([char](0x61 + ($b % 26))) }
+    $pw.MakeReadOnly()
+    $cred = [pscredential]::new($std, $pw)
     New-LocalUser -Name $std -Password $cred.Password -AccountNeverExpires -PasswordNeverExpires | Out-Null
     Check 'the account is not an administrator' (-not (Get-LocalGroupMember Administrators | Where-Object Name -like "*\$std")) ''
     New-Item -ItemType Directory -Force $stdDir | Out-Null
@@ -166,10 +173,26 @@ $w.WriteLine('{"cmd":"ping"}')
 [IO.StreamReader]::new(`$c).ReadLine()
 "@
     $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
-    $outFile = Join-Path $stdDir 'reply.txt'
-    Start-Process -FilePath $me -Credential $cred -LoadUserProfile -ArgumentList '-NoProfile', '-NonInteractive', '-EncodedCommand', $enc -RedirectStandardOutput $outFile -Wait -WindowStyle Hidden
-    $reply = (Get-Content $outFile -Raw -ErrorAction SilentlyContinue) | ConvertFrom-Json -ErrorAction SilentlyContinue
-    Check 'a standard user turns protection on through the service' ($reply.ok -and $reply.pid -gt 0) "$(Get-Content $outFile -Raw -ErrorAction SilentlyContinue)"
+    # the app (this PowerShell) as that user. Start-Process -Credential failed
+    # here with "The parameter is incorrect": it starts in this job's folder,
+    # which the new account cannot open. ProcessStartInfo sets one it can.
+    $psi = [Diagnostics.ProcessStartInfo]::new($me)
+    foreach ($a in '-NoProfile', '-NonInteractive', '-EncodedCommand', $enc) { $psi.ArgumentList.Add($a) }
+    $psi.UserName = $std
+    $psi.Domain = $env:COMPUTERNAME
+    $psi.Password = $cred.Password
+    $psi.LoadUserProfile = $true
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.WorkingDirectory = $stdDir
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $proc = [Diagnostics.Process]::Start($psi)
+    $replyText = $proc.StandardOutput.ReadToEnd()
+    $errText = $proc.StandardError.ReadToEnd()
+    $null = $proc.WaitForExit(60000)
+    $reply = $replyText | ConvertFrom-Json -ErrorAction SilentlyContinue
+    Check 'a standard user turns protection on through the service' ($reply.ok -and $reply.pid -gt 0) ("$replyText $errText".Trim())
     $st = Wait-Api 45
     Check 'the standard user''s engine comes up' ($null -ne $st) "$(Get-Content $stdLog -Tail 5 -ErrorAction SilentlyContinue)"
     $logOwner = (Get-Acl $stdLog -ErrorAction SilentlyContinue).Owner

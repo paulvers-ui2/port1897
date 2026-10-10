@@ -585,8 +585,11 @@ func (ps *pipeServer) stopEngine(d time.Duration) {
 // cleanup runs fswin -cleanup for c: it removes a kill switch and DNS rule
 // that a crashed engine left behind.
 func (ps *pipeServer) cleanup(c *pipeClient) error {
+	// an engine the app has just stopped may still be ending (its API goes
+	// first): give it a moment, as the Simulate run hit cleanup 25 ms after
+	// a stop
 	ps.mu.Lock()
-	running := ps.running != nil && !ps.running.exited(0)
+	running := ps.running != nil && !ps.running.exited(5*time.Second)
 	ps.mu.Unlock()
 	if running {
 		return errors.New("stop protection first")
