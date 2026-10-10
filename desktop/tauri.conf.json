@@ -17,6 +17,22 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "icon": ["icons/icon.ico", "icons/icon.png"]
+    "publisher": "AuroraVPN contributors",
+    "homepage": "https://github.com/paulvers-ui2/port1897",
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "resources": {
+      "../ui/engine/fswin.exe": "engine/fswin.exe",
+      "../ui/engine/usque.exe": "engine/usque.exe",
+      "../ui/engine/usque-LICENSE.md": "engine/usque-LICENSE.md",
+      "../ui/engine/wintun.dll": "engine/wintun.dll",
+      "../ui/engine/wintun-LICENSE.txt": "engine/wintun-LICENSE.txt"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "perMachine",
+        "installerIcon": "icons/icon.ico",
+        "installerHooks": "nsis/hooks.nsh"
+      }
+    }
   }
 }
