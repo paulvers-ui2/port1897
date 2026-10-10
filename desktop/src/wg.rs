@@ -19,9 +19,11 @@ fn re(p: &'static str) -> Regex {
     Regex::new(p).expect("valid regex")
 }
 
+/// n random bytes as hex. Without the OS's random numbers there is no safe
+/// token or id to make, so that is fatal.
 pub fn random_hex(n: usize) -> String {
     let mut b = vec![0u8; n];
-    let _ = getrandom::fill(&mut b);
+    getrandom::fill(&mut b).expect("the OS gave no random numbers");
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 

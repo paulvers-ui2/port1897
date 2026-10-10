@@ -19,19 +19,19 @@ static TOKEN: Mutex<String> = Mutex::new(String::new());
 
 /// The token stays the same while an engine may be running, so a reopened
 /// app can still talk to it.
-pub fn ensure_token() -> String {
+pub fn ensure_token() -> Result<String, String> {
     let mut t = TOKEN.lock().unwrap_or_else(|e| e.into_inner());
     if !t.is_empty() {
-        return t.clone();
+        return Ok(t.clone());
     }
     let mut tok = std::fs::read_to_string(paths::token_file()).unwrap_or_default().trim().to_string();
     if tok.len() < 32 {
         tok = crate::wg::random_hex(32);
-        let _ = std::fs::create_dir_all(paths::data_dir());
-        let _ = std::fs::write(paths::token_file(), &tok);
+        // the engine reads it from this file: without it, no call would pass
+        std::fs::create_dir_all(paths::data_dir()).and_then(|()| std::fs::write(paths::token_file(), &tok)).map_err(|e| format!("could not save the API token: {e}"))?;
     }
     *t = tok.clone();
-    tok
+    Ok(tok)
 }
 
 fn client() -> &'static reqwest::Client {
@@ -50,7 +50,7 @@ fn client() -> &'static reqwest::Client {
 /// Calls the engine; Err when it is not running or refuses.
 pub async fn call(method: reqwest::Method, path: &str, body: Option<&Value>) -> Result<Value, String> {
     let url = format!("http://{}:{}{}", paths::API_HOST, paths::API_PORT, path);
-    let mut req = client().request(method, url).bearer_auth(ensure_token());
+    let mut req = client().request(method, url).bearer_auth(ensure_token()?);
     if let Some(b) = body {
         req = req.json(b);
     }

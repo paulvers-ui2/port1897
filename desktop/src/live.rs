@@ -48,10 +48,26 @@ pub fn notify(app: &AppHandle, body: &str) {
     let _ = app.notification().builder().title("AuroraVPN").body(body).show();
 }
 
+/// Runs the status loop, and runs it again should it ever fail: without it
+/// the tray, the window and history would stop following the engine.
 pub fn spawn(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
+        loop {
+            match tauri::async_runtime::spawn(run(app.clone())).await {
+                Ok(()) => break,
+                Err(e) => {
+                    crate::applog!("status loop stopped ({e}); starting it again");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+    });
+}
+
+async fn run(app: AppHandle) {
+    {
         let mut was = false;
-        let mut last_emit = Instant::now() - Duration::from_secs(10);
+        let mut last_emit: Option<Instant> = None;
         let mut last_save = Instant::now();
         let mut auto_disabled_for = 0i64;
         loop {
@@ -93,17 +109,22 @@ pub fn spawn(app: AppHandle) {
                     && auto_disabled_for != started
                 {
                     auto_disabled_for = started;
-                    engine::stop(true).await;
-                    refresh(&app).await;
-                    notify(&app, "WARP was turned off after running for 11 hours.");
+                    // on its own: a start in progress holds the engine for
+                    // up to a minute, and this loop must keep going
+                    let app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        engine::stop(true).await;
+                        refresh(&app).await;
+                        notify(&app, "WARP was turned off after running for 11 hours.");
+                    });
                 }
             }
             // the window hears of a start or stop at once, of new events
             // within 250 ms, and of counters (traffic, lookups) every second
-            let since = last_emit.elapsed();
+            let since = last_emit.map_or(Duration::MAX, |t| t.elapsed());
             if was != on || (fresh > 0 && since >= Duration::from_millis(250)) || (on && since >= Duration::from_secs(1)) {
                 let _ = app.emit_to("main", "tick", ());
-                last_emit = Instant::now();
+                last_emit = Some(Instant::now());
             }
             was = on;
             if last_save.elapsed() >= Duration::from_secs(60) {
@@ -112,5 +133,5 @@ pub fn spawn(app: AppHandle) {
             }
             tokio::time::sleep(Duration::from_millis(if on { 300 } else { 700 })).await;
         }
-    });
+    }
 }

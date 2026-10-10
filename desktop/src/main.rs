@@ -36,8 +36,10 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
-/// Quit was chosen: the window closes for real and the engine stops.
+/// Quit was chosen: the engine is stopping.
 static QUITTING: AtomicBool = AtomicBool::new(false);
+/// The engine is stopped: the app may end now, and only now.
+static EXITING: AtomicBool = AtomicBool::new(false);
 
 fn is_automation(a: &str) -> bool {
     matches!(a, "--start" | "--stop" | "--resume" | "--pause") || a.strip_prefix("--pause=").is_some_and(|m| !m.is_empty() && m.bytes().all(|b| b.is_ascii_digit()))
@@ -52,13 +54,13 @@ fn create_window(app: &AppHandle, show: bool) -> tauri::Result<()> {
         .min_inner_size(720.0, 600.0)
         .visible(show)
         .background_color(tauri::window::Color(0x0e, 0x1b, 0x21, 0xff))
-        .on_navigation(|url| url.host_str() == Some("tauri.localhost") || url.scheme() == "tauri")
+        .on_navigation(|url| matches!(url.scheme(), "http" | "https") && url.host_str() == Some("tauri.localhost"))
         .disable_drag_drop_handler()
         .build()?;
     let ww = w.clone();
     w.on_window_event(move |e| {
         if let WindowEvent::CloseRequested { api, .. } = e
-            && !QUITTING.load(Ordering::Relaxed)
+            && !EXITING.load(Ordering::Relaxed)
         {
             api.prevent_close();
             let _ = ww.hide();
@@ -83,9 +85,15 @@ pub fn quit(app: AppHandle) {
     if QUITTING.swap(true, Ordering::Relaxed) {
         return;
     }
+    // hidden at once; the app ends once the engine has stopped, which can
+    // wait for a start in progress
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
     tauri::async_runtime::spawn(async move {
         history::save(&settings::read());
         engine::stop(false).await;
+        EXITING.store(true, Ordering::Relaxed);
         app.exit(0);
     });
 }
@@ -297,7 +305,7 @@ fn main() {
         // the app lives in the tray; it ends only through Quit
         if let RunEvent::ExitRequested { api, code, .. } = event
             && code.is_none()
-            && !QUITTING.load(Ordering::Relaxed)
+            && !EXITING.load(Ordering::Relaxed)
         {
             api.prevent_exit();
             let _ = app;

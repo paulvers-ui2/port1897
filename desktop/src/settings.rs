@@ -102,11 +102,15 @@ pub fn defaults() -> &'static S {
 }
 
 static CACHE: Mutex<Option<S>> = Mutex::new(None);
+/// One change at a time: the window, the status loop, the tray and the
+/// engine all change settings, each from its own thread. (Electron's single
+/// thread did this by itself.)
+static WRITE: Mutex<()> = Mutex::new(());
 
-/// The settings: the defaults, then the file's values over them.
+/// The settings: the defaults, then the file's values over them. The first
+/// read happens at start, before anything else runs.
 pub fn read() -> S {
-    let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = c.as_ref() {
+    if let Some(s) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
         return s.clone();
     }
     let mut s = defaults().clone();
@@ -122,27 +126,41 @@ pub fn read() -> S {
             s.insert(k, v);
         }
     }
-    let s = migrate(s);
-    *c = Some(s.clone());
+    let (s, changed) = migrate_changed(s);
+    if changed && let Err(e) = store(&s) {
+        applog!("settings: could not write: {e}"); // read-only; again next time
+    }
+    *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some(s.clone());
     s
 }
 
 /// Writes the settings, whole or not at all, and keeps them for read.
-pub fn write(s: &S) -> std::io::Result<()> {
+fn store(s: &S) -> std::io::Result<()> {
     let text = serde_json::to_string_pretty(s).unwrap_or_default();
     paths::write_atomic(&paths::settings_file(), text.as_bytes())?;
     *CACHE.lock().unwrap_or_else(|e| e.into_inner()) = Some(s.clone());
     Ok(())
 }
 
-/// Changes the settings with f and writes them.
-pub fn update(f: impl FnOnce(&mut S)) -> S {
+/// Changes the settings with f and writes them when f returns true; no
+/// other change runs meanwhile. Returns the settings and whether they changed.
+pub fn update_if(f: impl FnOnce(&mut S) -> bool) -> (S, bool) {
+    let _w = WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let mut s = read();
-    f(&mut s);
-    if let Err(e) = write(&s) {
+    let changed = f(&mut s);
+    if changed && let Err(e) = store(&s) {
         applog!("settings: could not write: {e}");
     }
-    s
+    (s, changed)
+}
+
+/// Changes the settings with f and writes them.
+pub fn update(f: impl FnOnce(&mut S)) -> S {
+    update_if(|s| {
+        f(s);
+        true
+    })
+    .0
 }
 
 // ---------- typed reads ----------
@@ -175,7 +193,13 @@ pub fn number(n: f64) -> Value {
 
 /// Settings from 0.1.0: exit "proxy" with a URL, a single wgFile, and a list
 /// of blocked apps; and the defaults of nested settings.
-pub fn migrate(mut s: S) -> S {
+pub fn migrate(s: S) -> S {
+    migrate_changed(s).0
+}
+
+/// migrate, and whether an old setting was converted: the file then needs
+/// writing. It never writes itself (read() holds no lock while it runs).
+fn migrate_changed(mut s: S) -> (S, bool) {
     let mut changed = false;
     if str(&s, "exit") == "proxy" && !str(&s, "proxy").is_empty() {
         match reqwest::Url::parse(str(&s, "proxy")) {
@@ -221,7 +245,6 @@ pub fn migrate(mut s: S) -> S {
         if str(&s, "exit") == "proxy" {
             s.insert("exit".into(), json!("none"));
         }
-        let _ = write(&s);
     }
     if let Some(Value::Array(blocked)) = s.remove("blocked") {
         let mut rules = obj(&s, "rules").cloned().unwrap_or_default();
@@ -237,7 +260,7 @@ pub fn migrate(mut s: S) -> S {
         }
         rules.insert("apps".into(), Value::Object(apps));
         s.insert("rules".into(), Value::Object(rules));
-        let _ = write(&s);
+        changed = true;
     }
     // rules: { apps, ips, domains } with whatever the file adds
     let mut rules = json!({ "apps": {}, "ips": [], "domains": [] }).as_object().cloned().unwrap_or_default();
@@ -259,7 +282,7 @@ pub fn migrate(mut s: S) -> S {
             s.insert(k.into(), json!([]));
         }
     }
-    s
+    (s, changed)
 }
 
 fn percent_decode(t: &str) -> String {

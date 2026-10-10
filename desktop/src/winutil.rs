@@ -53,7 +53,23 @@ pub fn win_quote(arg: &str) -> String {
 }
 
 /// Starts exe as admin (a UAC prompt), hidden, and returns its process id.
-pub fn launch_elevated(exe: &Path, args: &[String]) -> Result<u32, String> {
+/// The prompt waits for the user, so this runs on a thread of its own.
+pub async fn launch_elevated(exe: &Path, args: &[String]) -> Result<u32, String> {
+    let (exe, args) = (exe.to_path_buf(), args.to_vec());
+    tokio::task::spawn_blocking(move || {
+        // ShellExecuteEx wants COM on its thread (Microsoft's docs)
+        // SAFETY: once per call on this pool thread; a thread that has COM
+        // already gets S_FALSE or RPC_E_CHANGED_MODE, both harmless here
+        unsafe {
+            let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE);
+        }
+        launch_elevated_blocking(&exe, &args)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn launch_elevated_blocking(exe: &Path, args: &[String]) -> Result<u32, String> {
     let file = wide(exe);
     let params = wide(args.iter().map(|a| win_quote(a)).collect::<Vec<_>>().join(" "));
     let mut info = SHELLEXECUTEINFOW {
@@ -101,6 +117,15 @@ pub fn alive(pid: u32) -> bool {
         }
         Err(e) => e.code() == ERROR_ACCESS_DENIED.to_hresult(),
     }
+}
+
+/// Whether the server end of a named pipe runs in session 0, where services
+/// run; programs of a signed-in user run in their own session.
+pub fn pipe_server_is_service(pipe: &impl std::os::windows::io::AsRawHandle) -> bool {
+    let mut session = u32::MAX;
+    // SAFETY: the pipe handle is open for the duration of the call
+    let ok = unsafe { windows::Win32::System::Pipes::GetNamedPipeServerSessionId(windows::Win32::Foundation::HANDLE(pipe.as_raw_handle()), &mut session) }.is_ok();
+    ok && session == 0
 }
 
 // ---------- screen lock ----------

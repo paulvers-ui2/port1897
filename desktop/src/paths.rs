@@ -16,14 +16,21 @@ static ENGINE_DIR: OnceLock<PathBuf> = OnceLock::new();
 pub const API_HOST: &str = "127.0.0.1";
 pub const API_PORT: u16 = 47897;
 
-/// Sets where fswin.exe, usque.exe and wintun.dll are: the app's resources
-/// when installed, or FSWIN_PATH's folder (a build run from source).
+/// Sets where fswin.exe, usque.exe and wintun.dll are: engine\ in the app's
+/// resources (beside AuroraVPN.exe). A debug build run from source may use
+/// FSWIN_PATH's folder or the source tree's ui\engine; a release never does,
+/// so nothing in the user's environment can choose what runs as admin.
 pub fn init(resource_dir: Option<PathBuf>) {
-    let dir = std::env::var_os("FSWIN_PATH")
-        .map(PathBuf::from)
-        .and_then(|p| p.parent().map(PathBuf::from))
-        .or_else(|| resource_dir.map(|r| r.join("engine")).filter(|d| d.join("fswin.exe").exists()))
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("ui").join("engine"));
+    let packaged = resource_dir.map(|r| r.join("engine"));
+    let dir = if cfg!(debug_assertions) {
+        std::env::var_os("FSWIN_PATH")
+            .map(PathBuf::from)
+            .and_then(|p| p.parent().map(PathBuf::from))
+            .or_else(|| packaged.clone().filter(|d| d.join("fswin.exe").exists()))
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("ui").join("engine"))
+    } else {
+        packaged.unwrap_or_default()
+    };
     let _ = ENGINE_DIR.set(dir);
 }
 
@@ -101,7 +108,10 @@ pub fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> 
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("tmp");
+    // a name of its own per write: two writers never share a half-written file
+    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_extension(format!("{}.{n}.tmp", std::process::id()));
     std::fs::write(&tmp, data)?;
     std::fs::rename(&tmp, path)
 }

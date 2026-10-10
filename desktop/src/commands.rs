@@ -11,7 +11,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{Map, Value, json};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -39,14 +39,12 @@ pub async fn settings_get() -> Value {
 #[tauri::command]
 pub async fn settings_set(patch: Value) -> Value {
     let p = settings::clean_patch(&patch, None);
-    let mut merged = settings::read();
-    for (k, v) in &p {
-        merged.insert(k.clone(), v.clone());
-    }
-    let merged = settings::migrate(merged);
-    if let Err(e) = settings::write(&merged) {
-        applog!("settings: could not write: {e}");
-    }
+    let merged = settings::update(|s| {
+        for (k, v) in &p {
+            s.insert(k.clone(), v.clone());
+        }
+        *s = settings::migrate(std::mem::take(s));
+    });
     if rules::RULE_KEYS.iter().any(|k| p.contains_key(*k)) {
         rules::push_rules(&merged).await;
     }
@@ -57,14 +55,12 @@ pub async fn settings_set(patch: Value) -> Value {
 #[tauri::command]
 pub async fn rules_set(patch: Value) -> Value {
     let p = settings::clean_patch(&patch, Some(&rules::RULE_KEYS));
-    let mut s = settings::read();
-    for (k, v) in p {
-        s.insert(k, v);
-    }
-    let s = settings::migrate(s);
-    if let Err(e) = settings::write(&s) {
-        applog!("settings: could not write: {e}");
-    }
+    let s = settings::update(|s| {
+        for (k, v) in p {
+            s.insert(k, v);
+        }
+        *s = settings::migrate(std::mem::take(s));
+    });
     let r = rules::push_rules(&s).await;
     json!({ "settings": s, "warnings": r.get("warnings").cloned().unwrap_or(json!("")) })
 }
@@ -133,7 +129,7 @@ pub async fn engine_cleanup() -> Value {
     {
         return json!({ "ok": true });
     }
-    match winutil::launch_elevated(&paths::engine_path(), &["-cleanup".to_string()]) {
+    match winutil::launch_elevated(&paths::engine_path(), &["-cleanup".to_string()]).await {
         Ok(_) => json!({ "ok": true }),
         Err(e) => json!({ "ok": false, "error": e }),
     }
@@ -287,23 +283,36 @@ pub async fn usque_save_wg0(text: String) -> Value {
     usque::save_wg0(&text)
 }
 
-/// A .conf the user picks: (its name without .conf, its text).
-async fn open_conf(app: &AppHandle, title: &str) -> Option<(String, String)> {
+/// A file dialog in front of the app's window.
+fn file_dialog(app: &AppHandle) -> tauri_plugin_dialog::FileDialogBuilder<tauri::Wry> {
+    let d = app.dialog().file();
+    match app.get_webview_window("main") {
+        Some(w) => d.set_parent(&w),
+        None => d,
+    }
+}
+
+/// A .conf the user picks: Ok(None) when they cancel, else (its name
+/// without .conf, its text).
+async fn open_conf(app: &AppHandle, title: &str) -> Result<Option<(String, String)>, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog().file().set_title(title).add_filter("WireGuard config", &["conf"]).pick_file(move |p| {
+    file_dialog(app).set_title(title).add_filter("WireGuard config", &["conf"]).pick_file(move |p| {
         let _ = tx.send(p);
     });
-    let p = rx.await.ok()??.into_path().ok()?;
+    let Some(p) = rx.await.ok().flatten().and_then(|p| p.into_path().ok()) else {
+        return Ok(None);
+    };
     let name = p.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let text = tokio::fs::read_to_string(&p).await.ok()?;
-    Some((name, text))
+    let text = tokio::fs::read_to_string(&p).await.map_err(|e| format!("Could not read {}: {e}", p.display()))?;
+    Ok(Some((name, text)))
 }
 
 #[tauri::command]
 pub async fn usque_import_wg0(app: AppHandle) -> Value {
     match open_conf(&app, "Import wg0.conf").await {
-        Some((_, text)) => usque::import_wg0(&text),
-        None => json!({}),
+        Ok(Some((_, text))) => usque::import_wg0(&text),
+        Ok(None) => json!({}),
+        Err(e) => json!({ "error": e }),
     }
 }
 
@@ -329,8 +338,9 @@ pub async fn wg_remove(id: String) -> Value {
 #[tauri::command]
 pub async fn wg_import_file(app: AppHandle) -> Value {
     match open_conf(&app, "Import a WireGuard config").await {
-        Some((name, text)) => wg::save(None, &name, &text),
-        None => json!({}),
+        Ok(Some((name, text))) => wg::save(None, &name, &text),
+        Ok(None) => json!({}),
+        Err(e) => json!({ "error": e }),
     }
 }
 
@@ -410,10 +420,10 @@ pub async fn open_pcap_folder(app: AppHandle) -> Value {
 #[tauri::command]
 pub async fn debug_zip(app: AppHandle) -> Value {
     let stamp = chrono::Utc::now().format("%Y%m%d-%H%M").to_string();
-    let desktop = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from).unwrap_or_default().join("Desktop");
+    // the Desktop where Windows has it, OneDrive's included
+    let desktop = app.path().desktop_dir().unwrap_or_default();
     let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog()
-        .file()
+    file_dialog(&app)
         .set_title("Save debug logs")
         .set_directory(desktop)
         .set_file_name(format!("AuroraVPN-debug-{stamp}.zip"))

@@ -195,56 +195,53 @@ pub struct Learned {
 /// the user can see and undo).
 pub fn learn_apps(evs: &[Value]) -> Learned {
     let none = Learned { push: None, notice: None };
-    let mut s: Option<S> = None;
-    let mut known: BTreeSet<String> = BTreeSet::new();
-    let mut fresh: Vec<(String, bool)> = Vec::new();
+    // (name, the rule fswin gave) of each flow from a named app
+    let flows: Vec<(String, String)> = evs
+        .iter()
+        .filter(|e| e.get("kind").and_then(Value::as_str) == Some("flow"))
+        .filter_map(|e| {
+            let app = e.get("app").and_then(Value::as_str).unwrap_or("");
+            let name = app.to_lowercase();
+            (!app.is_empty() && app != "?" && !is_pid_name(app) && settings::safe_key(&name)).then(|| (name, e.get("rule").and_then(Value::as_str).unwrap_or("").to_string()))
+        })
+        .collect();
+    if flows.is_empty() {
+        return none;
+    }
+    let mut blocked: Vec<String> = Vec::new();
     let mut allowed: BTreeSet<String> = BTreeSet::new();
-    for e in evs {
-        let app = e.get("app").and_then(Value::as_str).unwrap_or("");
-        if e.get("kind").and_then(Value::as_str) != Some("flow") || app.is_empty() || app == "?" || is_pid_name(app) {
-            continue;
+    // one change of the settings, so nothing else's change is lost meanwhile
+    let (s, changed) = settings::update_if(|s| {
+        let mut known: BTreeSet<String> = settings::arr(s, "knownApps").iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        let mut apps = apps_of(s);
+        let mut fresh: Vec<(String, bool)> = Vec::new();
+        for (name, rule) in &flows {
+            if rule == OUTGOING_ALLOWED && !apps.contains_key(name) {
+                allowed.insert(name.clone());
+            }
+            if known.insert(name.clone()) {
+                fresh.push((name.clone(), rule == "universal: new app"));
+            }
         }
-        let st = s.get_or_insert_with(|| {
-            let st = settings::read();
-            known = settings::arr(&st, "knownApps").iter().filter_map(|v| v.as_str().map(String::from)).collect();
-            st
-        });
-        let name = app.to_lowercase();
-        if !settings::safe_key(&name) {
-            continue;
+        if fresh.is_empty() && allowed.is_empty() {
+            return false;
         }
-        let rule = e.get("rule").and_then(Value::as_str).unwrap_or("");
-        let has_rule = apps_of(st).contains_key(&name);
-        if rule == OUTGOING_ALLOWED && !has_rule {
-            allowed.insert(name.clone());
+        s.insert("knownApps".into(), json!(known.iter().collect::<Vec<_>>()));
+        blocked = fresh.iter().filter(|(n, b)| *b && !apps.contains_key(n)).map(|(n, _)| n.clone()).collect();
+        for n in &blocked {
+            apps.insert(n.clone(), json!({ "mode": "block" }));
         }
-        if known.contains(&name) {
-            continue;
+        // whitelisted: the app keeps working whatever the universal rules say
+        for n in &allowed {
+            apps.insert(n.clone(), json!({ "mode": "bypassUniversal" }));
         }
-        known.insert(name.clone());
-        fresh.push((name, rule == "universal: new app"));
-    }
-    let Some(mut s) = s else {
+        if let Some(Value::Object(r)) = s.get_mut("rules") {
+            r.insert("apps".into(), Value::Object(apps));
+        }
+        true
+    });
+    if !changed {
         return none;
-    };
-    if fresh.is_empty() && allowed.is_empty() {
-        return none;
-    }
-    s.insert("knownApps".into(), json!(known.iter().collect::<Vec<_>>()));
-    let mut apps = apps_of(&s);
-    let blocked: Vec<String> = fresh.iter().filter(|(n, b)| *b && !apps.contains_key(n)).map(|(n, _)| n.clone()).collect();
-    for n in &blocked {
-        apps.insert(n.clone(), json!({ "mode": "block" }));
-    }
-    // whitelisted: the app keeps working whatever the universal rules say
-    for n in &allowed {
-        apps.insert(n.clone(), json!({ "mode": "bypassUniversal" }));
-    }
-    if let Some(Value::Object(r)) = s.get_mut("rules") {
-        r.insert("apps".into(), Value::Object(apps));
-    }
-    if let Err(e) = settings::write(&s) {
-        applog!("settings: could not write: {e}");
     }
     write_rules(&s);
     if !allowed.is_empty() {

@@ -222,15 +222,25 @@ pub fn engine_args(s: &S) -> Vec<String> {
 // AuroraVPN.exe. None when there is no service.
 const SERVICE_PIPE: &str = r"\\.\pipe\AuroraVPN";
 const ERROR_PIPE_BUSY: i32 = 231;
+// The service impersonates the app to learn who asks and to start the
+// engine with the app user's own token, which needs this level. tokio's
+// default (identification) made every start fall back to a UAC prompt.
+const SECURITY_IMPERSONATION: u32 = 2 << 16;
 
 async fn service_call_once(req: &Value, timeout: Duration) -> Result<Option<Value>, bool> {
     use tokio::net::windows::named_pipe::ClientOptions;
-    let mut pipe = match ClientOptions::new().open(SERVICE_PIPE) {
+    let mut pipe = match ClientOptions::new().security_qos_flags(SECURITY_IMPERSONATION).open(SERVICE_PIPE) {
         Ok(p) => p,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => return Err(true),
         Err(e) => return Ok(Some(json!({ "ok": false, "error": format!("AuroraVPN Service: {e}") }))),
     };
+    // services run in session 0; a pipe of that name made by a program in
+    // the user's own session is not the service, and gets nothing from us
+    if !winutil::pipe_server_is_service(&pipe) {
+        crate::applog!("AuroraVPN Service: the pipe's server is not in session 0; not used");
+        return Ok(Some(json!({ "ok": false, "error": "AuroraVPN Service: the pipe is not the service's" })));
+    }
     let talk = async {
         pipe.write_all(format!("{req}\n").as_bytes()).await?;
         let mut buf = Vec::new();
@@ -347,7 +357,9 @@ async fn start_once() -> Value {
     if settings::str(&s, "exit") == "wg" && wg::file(settings::str(&s, "wgActive")).is_none() {
         return fail("Choose a WireGuard config first (Proxy → Setup WireGuard).");
     }
-    api::ensure_token();
+    if let Err(e) = api::ensure_token() {
+        return fail(format!("The engine could not start: {e}"));
+    }
     crate::logs::reset_offset();
     // the engine truncates its log; keep the last run's for the debug zip
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -370,7 +382,7 @@ async fn start_once() -> Value {
             if let Some(r) = other {
                 applog!("AuroraVPN Service did not start the engine; asking through UAC: {}", r.get("error").and_then(Value::as_str).unwrap_or(""));
             }
-            match winutil::launch_elevated(&exe, &args) {
+            match winutil::launch_elevated(&exe, &args).await {
                 Ok(id) => id,
                 Err(e) => return fail(e),
             }

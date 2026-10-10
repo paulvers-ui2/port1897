@@ -76,11 +76,10 @@
 
   // the window's errors go to app.log, as Electron logged its console
   const report = (level, message) => {
-    try {
-      T.core.invoke('log_window', { level, message: String(message).slice(0, 2000) });
-    } catch {
-      // nothing more to do
-    }
+    // a failing call is dropped: reporting it would fail and report again
+    Promise.resolve()
+      .then(() => T.core.invoke('log_window', { level, message: String(message).slice(0, 2000) }))
+      .catch(() => {});
   };
   window.addEventListener('error', (e) => report('error', `${e.message} (${e.filename}:${e.lineno})`));
   window.addEventListener('unhandledrejection', (e) => report('error', `unhandled: ${e.reason && e.reason.stack ? e.reason.stack : e.reason}`));
