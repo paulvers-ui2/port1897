@@ -9,7 +9,6 @@
 package dnspolicy
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -18,7 +17,6 @@ import (
 	"slices"
 	"strings"
 	"syscall"
-	"time"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -171,21 +169,25 @@ func list(path string) ([]rule, error) {
 // applyHook replaces apply in tests, which write rules under HKCU.
 var applyHook func() error
 
-// apply has the DNS Client take a rule change in and empties its cache.
+// apply has the DNS Client take a rule change in and empties its cache. It
+// does not wait for ipconfig, which took 3 s on the Simulate runner (it goes
+// on to register the PC's names in DNS): the start no longer waits either,
+// and at a stop it finishes after fswin has gone.
 func apply() error {
 	if applyHook != nil {
 		return applyHook()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	// ipconfig from System32, with one fixed argument
-	cmd := exec.CommandContext(ctx, systemTool("ipconfig.exe"), "/registerdns") //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
-	out, err := cmd.CombinedOutput()
 	flush()
-	if err != nil {
-		return fmt.Errorf("%w: ipconfig /registerdns: %w: %s", ErrNotApplied, err, strings.TrimSpace(string(out)))
+	// ipconfig from System32, with one fixed argument
+	cmd := exec.Command(systemTool("ipconfig.exe"), "/registerdns") //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("%w: ipconfig /registerdns: %w", ErrNotApplied, err)
 	}
+	go func() {
+		_ = cmd.Wait()
+		flush() // and once more after it, for answers cached meanwhile
+	}()
 	return nil
 }
 

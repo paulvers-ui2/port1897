@@ -165,34 +165,41 @@ $w.WriteLine('{"cmd":"ping"}')
     $stdLog = Join-Path $stdDir 'engine.log'
     [IO.File]::WriteAllText($stdTok, $token)
     $req = @{ cmd = 'start'; args = @('-api', $api, '-token-file', $stdTok, '-logfile', $stdLog, '-dns', 'doh') } | ConvertTo-Json -Compress
-    $script = @"
-`$c = [IO.Pipes.NamedPipeClientStream]::new('.', 'AuroraVPN', [IO.Pipes.PipeDirection]::InOut)
-`$c.Connect(5000)
-`$w = [IO.StreamWriter]::new(`$c); `$w.AutoFlush = `$true
-`$w.WriteLine('$($req -replace "'", "''")')
-[IO.StreamReader]::new(`$c).ReadLine()
-"@
-    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
-    # the app (this PowerShell) as that user. Start-Process -Credential failed
-    # here with "The parameter is incorrect": it starts in this job's folder,
-    # which the new account cannot open. ProcessStartInfo sets one it can.
-    $psi = [Diagnostics.ProcessStartInfo]::new($me)
-    foreach ($a in '-NoProfile', '-NonInteractive', '-EncodedCommand', $enc) { $psi.ArgumentList.Add($a) }
-    $psi.UserName = $std
-    $psi.Domain = $env:COMPUTERNAME
-    $psi.Password = $cred.Password
-    $psi.LoadUserProfile = $true
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow = $true
-    $psi.WorkingDirectory = $stdDir
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $proc = [Diagnostics.Process]::Start($psi)
-    $replyText = $proc.StandardOutput.ReadToEnd()
-    $errText = $proc.StandardError.ReadToEnd()
-    $null = $proc.WaitForExit(60000)
+    # The app as that user: this PowerShell (the "installed app") logs the
+    # account on and talks to the pipe while impersonating it, so the
+    # service sees what it would from that user's AuroraVPN.exe. (Starting a
+    # second process as the account failed on the runner, through Start-Process
+    # -Credential and ProcessStartInfo alike: "The parameter is incorrect".)
+    if (-not ('Sim.Logon' -as [type])) {
+      Add-Type -Namespace Sim -Name Logon -MemberDefinition @'
+[DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+public static extern bool LogonUser(string user, string domain, IntPtr password, int logonType, int logonProvider, out Microsoft.Win32.SafeHandles.SafeAccessTokenHandle token);
+'@
+    }
+    $plain = [Runtime.InteropServices.Marshal]::SecureStringToGlobalAllocUnicode($cred.Password)
+    try {
+      $tok = $null
+      # LOGON32_LOGON_INTERACTIVE (2): a signed-in user, with the INTERACTIVE
+      # group the pipe lets in; LOGON32_PROVIDER_DEFAULT (0)
+      $ok = [Sim.Logon]::LogonUser($std, $env:COMPUTERNAME, $plain, 2, 0, [ref]$tok)
+      $why = [ComponentModel.Win32Exception]::new([Runtime.InteropServices.Marshal]::GetLastWin32Error()).Message
+    } finally {
+      [Runtime.InteropServices.Marshal]::ZeroFreeGlobalAllocUnicode($plain)
+    }
+    Check 'the standard user signs on' $ok $(if (-not $ok) { $why })
+    $replyText = [Security.Principal.WindowsIdentity]::RunImpersonated($tok, [Func[string]] {
+        $c = [IO.Pipes.NamedPipeClientStream]::new('.', 'AuroraVPN', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::None, [Security.Principal.TokenImpersonationLevel]::Impersonation)
+        try {
+          $c.Connect(5000)
+          $w = [IO.StreamWriter]::new($c)
+          $w.AutoFlush = $true
+          $w.WriteLine($req)
+          [IO.StreamReader]::new($c).ReadLine()
+        } finally { $c.Dispose() }
+      })
+    $tok.Dispose()
     $reply = $replyText | ConvertFrom-Json -ErrorAction SilentlyContinue
-    Check 'a standard user turns protection on through the service' ($reply.ok -and $reply.pid -gt 0) ("$replyText $errText".Trim())
+    Check 'a standard user turns protection on through the service' ($reply.ok -and $reply.pid -gt 0) "$replyText"
     $st = Wait-Api 45
     Check 'the standard user''s engine comes up' ($null -ne $st) "$(Get-Content $stdLog -Tail 5 -ErrorAction SilentlyContinue)"
     $logOwner = (Get-Acl $stdLog -ErrorAction SilentlyContinue).Owner
