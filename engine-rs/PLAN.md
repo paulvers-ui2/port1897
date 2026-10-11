@@ -47,7 +47,7 @@ are where they are most likely to slip.
 | SOCKS5 client | tokio-socks | 0.5.3 | MIT | TCP; UDP ASSOCIATE needs own code (fast-socks5 1.0.0 has some) |
 | Win32 | windows-sys | 0.61.2 | MIT/Apache | in use (`src/win/`): registry, processes, WFP, IP Helper; already in the lock file through tokio |
 | WFP | wfp (Mullvad) | 0.2.0 | MIT/Apache | evaluate; fallback is a port of `win/wfp` (from wireguard-windows, MIT) on `windows-sys` |
-| Windows service | windows-service (Mullvad) | 0.8.1 | MIT/Apache | |
+| Windows service | raw `windows-sys` (no extra crate) | 0.61.2 | MIT/Apache | in use (`src/win/svc.rs`); `windows-service` 0.8.1 (Mullvad, MIT/Apache) was the alternative |
 | MASQUE | none mature | | | quinn 0.11.12 + h3 0.0.8 (+ h3-datagram) could carry CONNECT-IP (RFC 9484); keep `usque.exe` as a child process |
 
 ## Contract notes the Rust code must keep
@@ -225,8 +225,8 @@ Started in this branch (no admin needed, all unit-tested):
   (the 27 + 4 per allowed program (+4 LAN) filters in Go's order, names,
   layers, weights, conditions, the 160-key limit with Go's error wording),
   the fixed provider/sublayer/filter GUIDs shared with the Go engine, and
-  the leftover removal. The `windows-sys` backend that executes the plan
-  (FwpmEngineOpen0, transactions, app ids) is still to write
+  the leftover removal; the `windows-sys` backend that executes it is
+  `win/wfp.rs` (below)
 - done: `api.rs` the control API over the engine on hyper: the guard
   (Origin, Host incl. absolute-form, constant-time bearer), Go 1.22 ServeMux
   behaviour (HEAD on GET routes, 405 with Allow, 404, 301 to the clean path,
@@ -248,14 +248,14 @@ Started in this branch (no admin needed, all unit-tested):
 - done: `service.rs` the pipe protocol (request decoding as Go's Decoder,
   reply encoding), the request dispatch behind an `EngineControl` trait,
   `checkEngineArgs`, `samePath`, `installRoot`, `validAdapterName`, and
-  x/sys `ComposeCommandLine` / `EscapeArg` (compared with Go's output). The
-  SCM, pipe ACL, impersonation and `CreateProcess` are still to write
+  x/sys `ComposeCommandLine` / `EscapeArg` (compared with Go's output); the
+  Windows side is `win/svc.rs` and `win/asuser.rs` (below)
 - done: `nrpt.rs` win/dnspolicy behind a `Registry` trait with a fake
   registry and a nudge function: add (replace ours, the seven values,
   not-applied vs failed), remove, `Others()` over local and group-policy
   rules, our-rule detection (fixed key in any case, "AuroraVPN" and
-  "port1897" tags), with `nrpt_windows_test.go` ported. The HKLM backend,
-  ipconfig /registerdns and DnsFlushResolverCache are still to write
+  "port1897" tags), with `nrpt_windows_test.go` ported; the HKLM backend
+  and the nudge are `win/registry.rs`
 - done: the Win32 backends in `src/win/` (Windows only; tests that change
   the system are `#[ignore]`d with the reason, for the admin CI runner):
   - `registry.rs` the `Registry` trait over the real registry (values as
@@ -289,8 +289,44 @@ Started in this branch (no admin needed, all unit-tested):
     wrapper made on demand, `-dns-fallback` to `Default`, the DNSSEC
     switch's second verdict on the answer, and `on_response` either
     way. SERVFAIL goes back to the asker as firestack does
-  - the DNS53/System transport, the undelegated domains and the
-    blocklists are phases 2 and 4, as below
+  - `dns53.rs` plain DNS over UDP (TCP when truncated) for `-dns proxy`
+    and the System transport (`-dns system`): servers tried in order,
+    the one that answered first next time, Go's timeout wording
+  - the undelegated domains and the blocklists are phases 2 and 4
+- done: `net/` the data path (firestack's netstack handlers):
+  - `stack.rs` the userspace TCP/IP stack on smoltcp 0.14: a SYN held
+    until the engine has decided and dialled, then SYN-ACK or RST; UDP
+    per 5-tuple
+  - `forward.rs` each flow: owner (Preflow), verdict (Flow), then refused,
+    answered by the fake DNS resolver (10.111.222.3:53, UDP and TCP), or
+    dialled and copied both ways with half closes; the close goes to
+    OnSocketClosed with the bytes each way; rule changes close flows by
+    id (CloseConns); a per-address map of DNS answers gives flows their
+    domains for the domain rules
+  - `dial.rs` the direct exit: sockets pinned to the physical interface
+    (win/ifbind) unless the destination is on-link; the DNS transports'
+    connections too
+  - `tunnel.rs` the adapter's packets in (a reading thread on the Wintun
+    session) and out; tests run it on a device in memory against echo
+    servers on 127.0.0.1
+- done: `run.rs` main_windows.go's run() and stopTunnel behind a `Sys`
+  trait (`win/sys.rs` on Windows, a recording fake in the tests): the
+  refusal of flags not served yet (exits, -routes, -pcap, blocklists,
+  -undelegated, dial strategies other than never, -tcp-keepalive, -eim,
+  DNSCrypt, ODoH; -filetag is accepted and reported, as the app always
+  passes it), the API preflight, the network wait, the MTU plan, adapter,
+  NRPT, address and DNS, kill switch, stack and DNS, conflicts (also every
+  15 s), NRPT nudge, routes, API; the stop in Go's order. `main.rs` runs
+  it: `-logfile` (opened as the user), `-stop-handle`, `-cleanup`,
+  Ctrl+C, `-service`. Go's log lines are kept word for word where the app
+  or the scripts read them; the network layer writes firestack-style
+  timestamped lines (`logline.rs`)
+- done: `win/svc.rs` AuroraVPN Service (SCM install/uninstall/run with
+  restart actions, the locked-down folder, the pipe with its SDDL, the
+  client's path check, impersonation for the user's token, the engine
+  started with only its stop event and token inheritable, the 15 s stop,
+  service.log) and `win/asuser.rs` (the user's token, or the engine's own
+  lowered; files opened impersonated on a thread of their own)
 
 Exit criteria: `tools/sim/e2e-windows.ps1` and `tools/sim/service-windows.ps1`
 pass with `fswin-rs.exe` copied in as `dist/fswin.exe`; iperf-style throughput
@@ -349,9 +385,11 @@ real networks does not shrink as much.
   tests faster and keep them off the firewall's radar.
 - **CI now**: `.github/workflows/engine-rs.yml` (windows-latest, Rust
   1.99.0): build, clippy `-D warnings`, unit tests, then the `#[ignore]`d
-  system tests one at a time with the pinned Wintun 0.14.1. Not yet: a
-  `cargo fmt --check` (the code is not rustfmt-formatted), the e2e scripts
-  below (no engine binary yet), `cargo deny`.
+  system tests one at a time with the pinned Wintun 0.14.1. Its `e2e` job
+  builds `fswin-rs.exe`, copies it in as `dist/fswin.exe` and runs
+  `tools/sim/e2e-windows.ps1` and `tools/sim/service-windows.ps1`
+  unchanged (see the PR for which checks pass). Not yet: a
+  `cargo fmt --check` (the code is not rustfmt-formatted), `cargo deny`.
 - **Integration on GitHub's Windows runners** (admin, like
   `.github/workflows/sim.yml`): a new job builds `fswin-rs.exe`, downloads
   Wintun 0.14.1 with the pinned SHA-256, copies the binary in as
