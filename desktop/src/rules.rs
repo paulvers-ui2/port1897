@@ -121,17 +121,33 @@ pub fn rule_set(s: &S) -> Value {
     })
 }
 
-pub fn write_rules(s: &S) {
-    let text = serde_json::to_string(&rule_set(s)).unwrap_or_default();
+fn write_rule_set(rs: &Value) {
+    let text = serde_json::to_string(rs).unwrap_or_default();
     if let Err(e) = paths::write_atomic(&paths::rules_file(), text.as_bytes()) {
         applog!("rules: could not write: {e}");
     }
 }
 
-/// Rules apply at once: the file for the next start, the API for now.
-pub async fn push_rules(s: &S) -> Value {
-    write_rules(s);
-    match api::post("/api/rules", Some(&rule_set(s))).await {
+// One rules.json write or push at a time, each with the settings as they
+// are when its turn comes, not as they were when it was asked for: a push
+// that waited behind another (the status loop's newly seen apps, a change
+// from the window) never sends older rules than the one before it, so the
+// last change is what the engine and rules.json end up with.
+static PUSH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// rules.json for the next start, from the settings as they are now.
+pub async fn save_rules() {
+    let _g = PUSH.lock().await;
+    write_rule_set(&rule_set(&settings::read()));
+}
+
+/// Rules apply at once: the file for the next start, the API for now. Call
+/// it after the settings changed; it sends them as they are then.
+pub async fn push_rules() -> Value {
+    let _g = PUSH.lock().await;
+    let rs = rule_set(&settings::read());
+    write_rule_set(&rs);
+    match api::post("/api/rules", Some(&rs)).await {
         Ok(r) => json!({ "ok": true, "warnings": r.get("warnings").cloned().unwrap_or(json!("")) }),
         Err(_) => json!({ "ok": true, "warnings": "" }), // not running; applies on next start
     }
@@ -184,9 +200,12 @@ pub fn learn_paths(evs: &[Value]) {
 
 // ---------- apps seen for the first time ----------
 
-/// What learn_apps decided: settings to push to the engine, and a notice.
+/// What learn_apps decided: whether the rules changed (then save_rules), or
+/// changed so the engine needs them now (push_rules), and a notice.
+#[derive(Default)]
 pub struct Learned {
-    pub push: Option<S>,
+    pub changed: bool,
+    pub push: bool,
     pub notice: Option<String>,
 }
 
@@ -194,7 +213,7 @@ pub struct Learned {
 /// installed apps" is on (fswin already blocked them; this makes it a rule
 /// the user can see and undo).
 pub fn learn_apps(evs: &[Value]) -> Learned {
-    let none = Learned { push: None, notice: None };
+    let none = Learned::default();
     // (name, the rule fswin gave) of each flow from a named app
     let flows: Vec<(String, String)> = evs
         .iter()
@@ -243,13 +262,12 @@ pub fn learn_apps(evs: &[Value]) -> Learned {
     if !changed {
         return none;
     }
-    write_rules(&s);
     if !allowed.is_empty() {
         applog!("allowed (outgoing only): {}", allowed.iter().cloned().collect::<Vec<_>>().join(", "));
     }
     let notice = (!blocked.is_empty() && settings::bool(&s, "notify")).then(|| format!("New app blocked: {}. Allow it in Apps.", blocked.join(", ")));
-    let push = (!blocked.is_empty() || !allowed.is_empty()).then(|| s.clone());
-    Learned { push, notice }
+    // apps only now known need no push: the engine has seen them
+    Learned { changed: true, push: !blocked.is_empty() || !allowed.is_empty(), notice }
 }
 
 fn is_pid_name(a: &str) -> bool {

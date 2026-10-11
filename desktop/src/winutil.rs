@@ -55,15 +55,25 @@ pub fn win_quote(arg: &str) -> String {
 /// Starts exe as admin (a UAC prompt), hidden, and returns its process id.
 /// The prompt waits for the user, so this runs on a thread of its own.
 pub async fn launch_elevated(exe: &Path, args: &[String]) -> Result<u32, String> {
+    // only a full path: a bare name would be looked up from the current
+    // folder, which is no place to pick what runs as admin
+    if !exe.is_absolute() {
+        return Err(format!("Engine not found at {}", exe.display()));
+    }
     let (exe, args) = (exe.to_path_buf(), args.to_vec());
     tokio::task::spawn_blocking(move || {
+        use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize};
         // ShellExecuteEx wants COM on its thread (Microsoft's docs)
-        // SAFETY: once per call on this pool thread; a thread that has COM
-        // already gets S_FALSE or RPC_E_CHANGED_MODE, both harmless here
-        unsafe {
-            let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE);
+        // SAFETY: on this pool thread; a thread that has COM already gets
+        // S_FALSE (counted, so undone below too) or RPC_E_CHANGED_MODE
+        let com = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) }.is_ok();
+        let r = launch_elevated_blocking(&exe, &args);
+        if com {
+            // SAFETY: pairs the successful CoInitializeEx above, so the pool
+            // thread goes back without COM for whatever runs on it next
+            unsafe { CoUninitialize() };
         }
-        launch_elevated_blocking(&exe, &args)
+        r
     })
     .await
     .map_err(|e| e.to_string())?
@@ -126,6 +136,46 @@ pub fn pipe_server_is_service(pipe: &impl std::os::windows::io::AsRawHandle) -> 
     // SAFETY: the pipe handle is open for the duration of the call
     let ok = unsafe { windows::Win32::System::Pipes::GetNamedPipeServerSessionId(windows::Win32::Foundation::HANDLE(pipe.as_raw_handle()), &mut session) }.is_ok();
     ok && session == 0
+}
+
+// ---------- the window's WebView2 ----------
+
+/// Locks the window's WebView2 down as the Electron app's window was: every
+/// web permission request (camera, microphone, location, notifications...)
+/// is refused, nothing typed into forms and no password is kept, and the
+/// browser's own keys (F5 and Ctrl+R reload, Ctrl+P print, Ctrl+F find...)
+/// do nothing, while editing keys (copy, paste, undo) and the page's own
+/// keys still work. A release also has no devtools and no default context
+/// menu; the packaged Electron window had neither. All but the autofill
+/// settings apply from the next page load: call it before the first one.
+pub fn lock_down_webview(controller: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller) -> windows::core::Result<()> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{COREWEBVIEW2_PERMISSION_STATE_DENY, ICoreWebView2Settings3, ICoreWebView2Settings4};
+    use windows::core::Interface;
+    // SAFETY: COM calls on the window's thread, which owns the controller;
+    // the handler is kept by WebView2 for the life of the webview
+    unsafe {
+        let wv = controller.CoreWebView2()?;
+        let mut token = 0i64;
+        wv.add_PermissionRequested(
+            &webview2_com::PermissionRequestedEventHandler::create(Box::new(|_, args| {
+                if let Some(args) = args {
+                    args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
+                }
+                Ok(())
+            })),
+            &mut token,
+        )?;
+        let settings = wv.Settings()?;
+        settings.cast::<ICoreWebView2Settings3>()?.SetAreBrowserAcceleratorKeysEnabled(false)?;
+        let s4 = settings.cast::<ICoreWebView2Settings4>()?;
+        s4.SetIsGeneralAutofillEnabled(false)?;
+        s4.SetIsPasswordAutosaveEnabled(false)?;
+        if !cfg!(debug_assertions) {
+            settings.SetAreDevToolsEnabled(false)?;
+            settings.SetAreDefaultContextMenusEnabled(false)?;
+        }
+    }
+    Ok(())
 }
 
 // ---------- screen lock ----------

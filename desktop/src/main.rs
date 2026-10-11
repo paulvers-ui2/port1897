@@ -40,23 +40,54 @@ use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, Wind
 static QUITTING: AtomicBool = AtomicBool::new(false);
 /// The engine is stopped: the app may end now, and only now.
 static EXITING: AtomicBool = AtomicBool::new(false);
+/// The window's WebView2 is locked down (winutil::lock_down_webview).
+static LOCKED_DOWN: AtomicBool = AtomicBool::new(false);
 
 fn is_automation(a: &str) -> bool {
     matches!(a, "--start" | "--stop" | "--resume" | "--pause") || a.strip_prefix("--pause=").is_some_and(|m| !m.is_empty() && m.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// Where Tauri serves the app's page on Windows (http, as use_https_scheme
+/// is off).
+const APP_ORIGIN: &str = "http://tauri.localhost";
+
+/// Whether the window may go to url: the app's own origin exactly (not
+/// https, another port such as the engine's API, or a look-alike host), or
+/// in a debug build the dev server's, when one is set.
+fn own_page(url: &tauri::Url, dev: Option<&tauri::Url>) -> bool {
+    let app = tauri::Url::parse(APP_ORIGIN).expect("app origin");
+    url.username().is_empty() && url.password().is_none() && (url.origin() == app.origin() || dev.is_some_and(|d| url.origin() == d.origin()))
+}
+
 /// The main window: hidden on close (the app stays in the tray), never
 /// navigating away from the app's own page.
 fn create_window(app: &AppHandle, show: bool) -> tauri::Result<()> {
+    let dev = if cfg!(debug_assertions) { app.config().build.dev_url.clone() } else { None };
     let w = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("AuroraVPN")
         .inner_size(1100.0, 820.0)
         .min_inner_size(720.0, 600.0)
         .visible(show)
         .background_color(tauri::window::Color(0x0e, 0x1b, 0x21, 0xff))
-        .on_navigation(|url| matches!(url.scheme(), "http" | "https") && url.host_str() == Some("tauri.localhost"))
+        .on_navigation(move |url| own_page(url, dev.as_ref()))
         .disable_drag_drop_handler()
         .build()?;
+    // Most WebView2 settings apply from the next page load. On the main
+    // thread (the app's start, the tray) Tauri runs this at once, while the
+    // first page load still waits on the app's NavigationStarting handler;
+    // from another thread it runs a moment later, and the page loads again.
+    let on_main = std::thread::current().name() == Some("main");
+    w.with_webview(move |wv| {
+        let c = wv.controller();
+        match winutil::lock_down_webview(&c) {
+            Ok(()) => LOCKED_DOWN.store(true, Ordering::Relaxed),
+            Err(e) => applog!("the window's WebView2 could not be locked down: {e}"),
+        }
+        if !on_main {
+            // SAFETY: on the window's thread, which owns the controller
+            let _ = unsafe { c.CoreWebView2().and_then(|v| v.Reload()) };
+        }
+    })?;
     let ww = w.clone();
     w.on_window_event(move |e| {
         if let WindowEvent::CloseRequested { api, .. } = e
@@ -159,7 +190,8 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()
 
 /// --self-test, for CI: open the window hidden, wait until the page asked
 /// for its settings (its scripts ran and IPC works), and quit with 0, or 1
-/// when it did not. It proves a packaged build starts.
+/// when it did not or its WebView2 was not locked down. It proves a
+/// packaged build starts.
 fn self_test(app: &AppHandle) {
     if let Err(e) = create_window(app, false) {
         applog!("self-test failed: {e}");
@@ -168,6 +200,10 @@ fn self_test(app: &AppHandle) {
     tauri::async_runtime::spawn(async {
         for _ in 0..600 {
             if commands::PAGE_UP.load(Ordering::Relaxed) {
+                if !LOCKED_DOWN.load(Ordering::Relaxed) {
+                    applog!("self-test failed: the window's WebView2 was not locked down");
+                    std::process::exit(1);
+                }
                 applog!("self-test ok");
                 std::process::exit(0);
             }
@@ -275,10 +311,9 @@ fn main() {
             // "Block all apps when the PC is locked"
             winutil::watch_lock(|locked| {
                 rules::SCREEN_LOCKED.store(locked, Ordering::Relaxed);
-                let s = settings::read();
-                if settings::sub_bool(&s, "universal", "locked") {
-                    tauri::async_runtime::spawn(async move {
-                        rules::push_rules(&s).await;
+                if settings::sub_bool(&settings::read(), "universal", "locked") {
+                    tauri::async_runtime::spawn(async {
+                        rules::push_rules().await;
                     });
                 }
             });
@@ -324,5 +359,17 @@ mod tests {
         assert!(is_automation("--pause=30"));
         assert!(!is_automation("--pause=x"));
         assert!(!is_automation("--autostart"));
+    }
+
+    #[test]
+    fn the_window_stays_on_the_apps_own_origin() {
+        let u = |t: &str| tauri::Url::parse(t).unwrap();
+        assert!(own_page(&u("http://tauri.localhost/"), None));
+        assert!(own_page(&u("http://tauri.localhost/index.html#stats"), None));
+        assert!(own_page(&u("http://tauri.localhost:80/"), None));
+        for bad in ["https://tauri.localhost/", "http://tauri.localhost:47897/api/status", "http://tauri.localhost.example.com/", "http://user@tauri.localhost/", "tauri://localhost/", "file:///C:/Windows/", "about:blank", "http://localhost:1420/"] {
+            assert!(!own_page(&u(bad), None), "{bad}");
+        }
+        assert!(own_page(&u("http://localhost:1420/x"), Some(&u("http://localhost:1420"))));
     }
 }

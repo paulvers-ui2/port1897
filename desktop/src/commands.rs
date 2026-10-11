@@ -46,7 +46,7 @@ pub async fn settings_set(patch: Value) -> Value {
         *s = settings::migrate(std::mem::take(s));
     });
     if rules::RULE_KEYS.iter().any(|k| p.contains_key(*k)) {
-        rules::push_rules(&merged).await;
+        rules::push_rules().await;
     }
     obj(merged)
 }
@@ -61,7 +61,7 @@ pub async fn rules_set(patch: Value) -> Value {
         }
         *s = settings::migrate(std::mem::take(s));
     });
-    let r = rules::push_rules(&s).await;
+    let r = rules::push_rules().await;
     json!({ "settings": s, "warnings": r.get("warnings").cloned().unwrap_or(json!("")) })
 }
 
@@ -98,7 +98,7 @@ pub async fn engine_block(app: Value, block: bool) -> Value {
             apps.insert(name.clone(), Value::Object(a));
         }
     });
-    rules::push_rules(&s).await;
+    rules::push_rules().await;
     obj(s)
 }
 
@@ -121,9 +121,13 @@ pub async fn engine_stop(app: AppHandle) -> Value {
 /// Removes a kill switch (and DNS rule) left behind if the engine crashed.
 #[tauri::command]
 pub async fn engine_cleanup() -> Value {
+    // never beside a start, a stop or an engine still ending: it would pull
+    // the firewall and DNS rule from under them
+    let _g = engine::OP.lock().await;
     if api::status().await.is_some() {
         return json!({ "ok": false, "error": "Stop protection first." });
     }
+    engine::wait_ended().await;
     if let Some(r) = engine::service_call(&json!({ "cmd": "cleanup" })).await
         && r.get("ok").and_then(Value::as_bool) == Some(true)
     {
@@ -254,9 +258,12 @@ pub async fn bl_latest() -> Value {
 }
 #[tauri::command]
 pub async fn bl_delete() -> Value {
+    // an engine starting or still ending has the lists open too
+    let _g = engine::OP.lock().await;
     if api::status().await.is_some() {
         return json!({ "ok": false, "error": "Stop protection first: the engine has the blocklists open." });
     }
+    engine::wait_ended().await;
     blocklists::delete()
 }
 

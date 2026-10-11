@@ -146,7 +146,7 @@ pub async fn pump(st: &Value, s: &S) -> Pumped {
     });
     let evs = match api::get(&format!("/api/events?after={after}&max=1000")).await {
         Ok(Value::Array(a)) => a,
-        _ => return Pumped { fresh: 0, learned: rules::Learned { push: None, notice: None } },
+        _ => return Pumped { fresh: 0, learned: rules::Learned::default() },
     };
     let learned = rules::learn_apps(&evs);
     rules::learn_paths(&evs);

@@ -93,7 +93,7 @@ pub async fn pause(app: &AppHandle, minutes: f64) -> settings::S {
         let until = if minutes > 0.0 { applog::now_ms() as f64 + minutes * 60_000.0 } else { 0.0 };
         s.insert("pausedUntil".into(), settings::number(until));
     });
-    rules::push_rules(&s).await;
+    rules::push_rules().await;
     update(app, live::last().as_ref(), true);
     s
 }

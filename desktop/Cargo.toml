@@ -41,6 +41,8 @@ windows = { version = "~0.61", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
+# the WebView2 types of the copy wry already uses, to lock the window down
+webview2-com = "~0.38.2"
 
 [profile.release]
 codegen-units = 1

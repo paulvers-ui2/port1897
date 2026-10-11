@@ -186,7 +186,7 @@ pub fn engine_args(s: &S) -> Vec<String> {
         }
         _ => {}
     }
-    rules::write_rules(s);
+    // written by start_once (rules::save_rules), from the newest settings
     a.extend(["-rules".into(), p(paths::rules_file())]);
     let routes = rules::routes_of(s);
     if !routes.is_empty() {
@@ -347,7 +347,7 @@ async fn start_once() -> Value {
     engine_exited(Duration::from_secs(20)).await;
 
     let exe = paths::engine_path();
-    if !exe.exists() {
+    if !exe.is_absolute() || !exe.exists() {
         return fail(format!("Engine not found at {}", exe.display()));
     }
     let s = settings::read();
@@ -371,6 +371,7 @@ async fn start_once() -> Value {
             Err(_) => break,
         }
     }
+    rules::save_rules().await;
     let args = engine_args(&s);
     let pid = match service_call(&json!({ "cmd": "start", "args": args })).await {
         Some(r) if r.get("ok").and_then(Value::as_bool) == Some(true) => {
@@ -428,9 +429,15 @@ pub async fn stop_locked(by_user: bool) -> Value {
     r
 }
 
-/// Asks the engine to stop and waits until its API is gone: protection is
-/// off then. Its cleanup (DNS rule, adapter) may go on a few seconds more;
-/// the next start waits for that, not the window.
+/// How long a stop waits for the engine to end once its API is gone, as the
+/// Electron app did.
+const ENDING: Duration = Duration::from_secs(15);
+
+/// Asks the engine to stop and waits until it has ended. Its API goes first
+/// (protection is off then); its cleanup (DNS rule, adapter) runs a moment
+/// more, with its files (the blocklists, its log) still open. A stop is done
+/// only then, so Cleanup or deleting the blocklists right after it finds
+/// nothing in use. The wait sleeps on the timer and holds only OP.
 async fn stop_once(by_user: bool) -> Value {
     EXPECTED_STOP.store(true, Ordering::Relaxed);
     if api::post("/api/stop", None).await.is_err() {
@@ -445,10 +452,25 @@ async fn stop_once(by_user: bool) -> Value {
     while t.elapsed() < Duration::from_secs(10) {
         tokio::time::sleep(Duration::from_millis(50)).await;
         if api::status().await.is_none() {
+            engine_exited(ENDING).await;
             return json!({ "ok": true });
         }
     }
     fail("The engine is still running.")
+}
+
+/// Whether the engine this app started is known to have ended (false when
+/// the app started none, or does not know its process).
+pub fn started_engine_gone() -> bool {
+    let pid = ENGINE_PID.load(Ordering::Relaxed);
+    pid != 0 && !winutil::alive(pid)
+}
+
+/// For a caller that holds OP: waits up to 15 s for an engine this app
+/// started that is still ending, so its work does not overlap the engine's
+/// own teardown.
+pub async fn wait_ended() -> bool {
+    engine_exited(ENDING).await
 }
 
 /// Waits up to d for the engine this app started to end. Its API goes away
