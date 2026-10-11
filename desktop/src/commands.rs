@@ -121,9 +121,13 @@ pub async fn engine_stop(app: AppHandle) -> Value {
 /// Removes a kill switch (and DNS rule) left behind if the engine crashed.
 #[tauri::command]
 pub async fn engine_cleanup() -> Value {
+    // never beside a start, a stop or an engine still ending: it would pull
+    // the firewall and DNS rule from under them
+    let _g = engine::OP.lock().await;
     if api::status().await.is_some() {
         return json!({ "ok": false, "error": "Stop protection first." });
     }
+    engine::wait_ended().await;
     if let Some(r) = engine::service_call(&json!({ "cmd": "cleanup" })).await
         && r.get("ok").and_then(Value::as_bool) == Some(true)
     {
@@ -254,9 +258,12 @@ pub async fn bl_latest() -> Value {
 }
 #[tauri::command]
 pub async fn bl_delete() -> Value {
+    // an engine starting or still ending has the lists open too
+    let _g = engine::OP.lock().await;
     if api::status().await.is_some() {
         return json!({ "ok": false, "error": "Stop protection first: the engine has the blocklists open." });
     }
+    engine::wait_ended().await;
     blocklists::delete()
 }
 

@@ -216,7 +216,10 @@ pub async fn download() -> Value {
 
 /// Removes the on-device download (not while the engine has it open).
 pub fn delete() -> Value {
-    let _ = std::fs::remove_dir_all(paths::bl_dir().join("local"));
+    match std::fs::remove_dir_all(paths::bl_dir().join("local")) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return json!({ "ok": false, "error": format!("Could not delete the blocklists: {e}") }),
+        _ => {}
+    }
     settings::update(|s| {
         s.insert("blocklistsLocal".into(), json!(false));
     });
