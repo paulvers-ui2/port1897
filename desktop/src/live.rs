@@ -70,8 +70,23 @@ async fn run(app: AppHandle) {
         let mut last_emit: Option<Instant> = None;
         let mut last_save = Instant::now();
         let mut auto_disabled_for = 0i64;
+        let mut misses = 0;
         loop {
-            let st = api::status().await;
+            let mut st = api::status().await;
+            // One unanswered status call (3 s timeout) is not a stop, unless
+            // the engine this app started is gone: with Proton VPN connected,
+            // single misses showed "Protection stopped unexpectedly" six times
+            // in 3 minutes. Two in a row are.
+            if st.is_some() || !was || engine::EXPECTED_STOP.load(Ordering::Relaxed) || engine::started_engine_gone() {
+                misses = 0;
+            } else {
+                misses += 1;
+                if misses < 2 {
+                    st = last();
+                } else {
+                    misses = 0;
+                }
+            }
             let s = settings::read();
             let on = st.is_some();
             set(st.clone());

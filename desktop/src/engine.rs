@@ -459,6 +459,13 @@ async fn stop_once(by_user: bool) -> Value {
     fail("The engine is still running.")
 }
 
+/// Whether the engine this app started is known to have ended (false when
+/// the app started none, or does not know its process).
+pub fn started_engine_gone() -> bool {
+    let pid = ENGINE_PID.load(Ordering::Relaxed);
+    pid != 0 && !winutil::alive(pid)
+}
+
 /// For a caller that holds OP: waits up to 15 s for an engine this app
 /// started that is still ending, so its work does not overlap the engine's
 /// own teardown.
