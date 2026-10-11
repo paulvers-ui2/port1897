@@ -21,7 +21,7 @@ pub const API_PORT: u16 = 47897;
 /// FSWIN_PATH's folder or the source tree's ui\engine; a release never does,
 /// so nothing in the user's environment can choose what runs as admin.
 pub fn init(resource_dir: Option<PathBuf>) {
-    let packaged = resource_dir.map(|r| r.join("engine"));
+    let packaged = resource_dir.map(|r| plain(r).join("engine"));
     let dir = if cfg!(debug_assertions) {
         std::env::var_os("FSWIN_PATH")
             .map(PathBuf::from)
@@ -32,6 +32,16 @@ pub fn init(resource_dir: Option<PathBuf>) {
         packaged.unwrap_or_default()
     };
     let _ = ENGINE_DIR.set(dir);
+}
+
+/// Tauri's resource folder is canonical, \\?\C:\...; the engine is started
+/// (UAC prompt included) and logged by its plain C:\... path. Long paths
+/// and \\?\UNC\ ones keep the prefix they need.
+fn plain(p: PathBuf) -> PathBuf {
+    match p.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(rest) if rest.len() < 230 && rest.as_bytes().get(1) == Some(&b':') && rest.as_bytes().get(2) == Some(&b'\\') => PathBuf::from(rest),
+        _ => p,
+    }
 }
 
 pub fn engine_dir() -> PathBuf {
@@ -114,4 +124,19 @@ pub fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> 
     let tmp = path.with_extension(format!("{}.{n}.tmp", std::process::id()));
     std::fs::write(&tmp, data)?;
     std::fs::rename(&tmp, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plain;
+    use std::path::PathBuf;
+
+    #[test]
+    fn verbatim_drive_paths_become_plain() {
+        assert_eq!(plain(PathBuf::from(r"\\?\C:\Program Files\AuroraVPN")), PathBuf::from(r"C:\Program Files\AuroraVPN"));
+        assert_eq!(plain(PathBuf::from(r"C:\AuroraVPN")), PathBuf::from(r"C:\AuroraVPN"));
+        assert_eq!(plain(PathBuf::from(r"\\?\UNC\server\share\AuroraVPN")), PathBuf::from(r"\\?\UNC\server\share\AuroraVPN"));
+        let long = format!(r"\\?\C:\{}", "a".repeat(300));
+        assert_eq!(plain(PathBuf::from(&long)), PathBuf::from(&long));
+    }
 }

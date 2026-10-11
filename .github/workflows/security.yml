@@ -10,7 +10,8 @@ name: Security
 #   govulncheck     known vulnerabilities reachable from the Windows code
 #   Semgrep         community security rules for Go, JS and workflows
 #   Electronegativity  Electron security settings of the app (ui/)
-#   OSV-Scanner     known vulnerabilities in Go modules and npm packages
+#   OSV-Scanner     known vulnerabilities in Go modules, npm packages and Rust
+#                   crates (go.mod and the lockfiles in ui/ and desktop/)
 #   Gitleaks        secrets committed anywhere in history
 #   zizmor          GitHub Actions security (injection, pinning, tokens)
 #   PSScriptAnalyzer  PowerShell scripts (tools/)
@@ -236,13 +237,6 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 22
-      - name: Resolve the app's npm dependencies
-        # ui/ has no lockfile; resolve what the App workflow's npm install would
-        working-directory: ui
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - name: Install osv-scanner
         env:
           OSV_SHA256: ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108
