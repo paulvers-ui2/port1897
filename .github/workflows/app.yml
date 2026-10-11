@@ -171,7 +171,8 @@ jobs:
           Invoke-WebRequest -Uri $env:OLD_URL -OutFile old-setup.exe
           if ((Get-FileHash old-setup.exe -Algorithm SHA256).Hash -ne $env:OLD_SHA256) { throw 'AuroraVPN-Setup-0.2.30.exe: wrong SHA-256' }
           $p = Start-Process -FilePath .\old-setup.exe -ArgumentList '/S' -PassThru -Wait
-          $old = (Get-ItemProperty $tauriKey -ErrorAction SilentlyContinue).InstallLocation
+          # Tauri writes it in quotes: "C:\Program Files\AuroraVPN"
+          $old = "$((Get-ItemProperty $tauriKey -ErrorAction SilentlyContinue).InstallLocation)".Trim('"')
           if (-not $old) { $old = Join-Path $env:ProgramFiles 'AuroraVPN' }
           Write-Host "Tauri app: exit code $($p.ExitCode), in $old; service: $(Service-Path)"
           if (-not (Test-Path "$old\engine\fswin.exe")) { throw 'the Tauri app did not install' }
@@ -183,7 +184,7 @@ jobs:
 
           $new = (Get-ChildItem new -Filter '*-Setup-*.exe' | Select-Object -First 1).FullName
           $p = Start-Process -FilePath $new -ArgumentList '/S' -PassThru -Wait
-          $dir = (Get-ItemProperty $electronKey -ErrorAction SilentlyContinue).InstallLocation
+          $dir = "$((Get-ItemProperty $electronKey -ErrorAction SilentlyContinue).InstallLocation)".Trim('"')
           Write-Host "Electron app: exit code $($p.ExitCode), in $dir; service: $(Service-Path)"
           Get-ChildItem $old -ErrorAction SilentlyContinue | Format-Table -AutoSize Name, Length | Out-String | Write-Host
 
@@ -196,9 +197,9 @@ jobs:
           Check 'the user''s files are kept' ((Get-Content (Join-Path $data 'upgrade-marker.txt') -ErrorAction SilentlyContinue) -eq 'kept')
 
           # and it uninstalls cleanly
-          $un = Get-ChildItem $dir -Filter 'Uninstall *.exe' | Select-Object -First 1
-          $p = Start-Process -FilePath $un.FullName -ArgumentList '/S', '/allusers', "_?=$dir" -PassThru -Wait
-          Check 'the Electron app uninstalls' ($p.ExitCode -eq 0)
+          $un = if ($dir) { Get-ChildItem $dir -Filter 'Uninstall *.exe' | Select-Object -First 1 }
+          if ($un) { $p = Start-Process -FilePath $un.FullName -ArgumentList '/S', '/allusers', "_?=$dir" -PassThru -Wait }
+          Check 'the Electron app uninstalls' ($un -and $p.ExitCode -eq 0)
           Check 'AuroraVPN Service is removed with it' (-not (Get-Service AuroraVPN -ErrorAction SilentlyContinue))
           if ($fail.Count) { throw "$($fail.Count) check(s) failed" }
 
