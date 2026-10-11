@@ -11,6 +11,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -167,6 +168,18 @@ func TestInstallRoot(t *testing.T) {
 	}
 	if got := installRoot(`D:\a\port1897\dist\fswin.exe`); got != `D:\a\port1897\dist` {
 		t.Errorf("a build: %s", got)
+	}
+	// the Tauri app: <install>\AuroraVPN.exe, <install>\engine\fswin.exe
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "AuroraVPN.exe"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := installRoot(filepath.Join(root, "engine", "fswin.exe")); got != root {
+		t.Errorf("installed engine beside the app: %s", got)
+	}
+	// ui\engine of a checkout has no app beside it
+	if got := installRoot(`D:\a\port1897\ui\engine\fswin.exe`); got != `D:\a\port1897\ui\engine` {
+		t.Errorf("a build in ui\\engine: %s", got)
 	}
 }
 

@@ -161,12 +161,19 @@ func stopService(s *mgr.Service) {
 }
 
 // installRoot is the folder the service runs code from: the app's install
-// folder when the engine sits in it (<install>\resources\engine), else the
-// engine's own.
+// folder when the engine sits in it (<install>\engine beside AuroraVPN.exe,
+// or <install>\resources\engine for the Electron app), else the engine's own.
 func installRoot(exe string) string {
 	dir := filepath.Dir(exe)
-	if strings.EqualFold(filepath.Base(dir), "engine") && strings.EqualFold(filepath.Base(filepath.Dir(dir)), "resources") {
-		return filepath.Dir(filepath.Dir(dir))
+	if !strings.EqualFold(filepath.Base(dir), "engine") {
+		return dir
+	}
+	up := filepath.Dir(dir)
+	if strings.EqualFold(filepath.Base(up), "resources") {
+		return filepath.Dir(up)
+	}
+	if fi, err := os.Stat(filepath.Join(up, "AuroraVPN.exe")); err == nil && !fi.IsDir() {
+		return up
 	}
 	return dir
 }
