@@ -127,7 +127,7 @@ impl ConnTable {
                 since: c.at,
             });
         }
-        out.sort_by(|a, b| b.since.cmp(&a.since));
+        out.sort_by_key(|c| std::cmp::Reverse(c.since));
         out
     }
 }

@@ -111,7 +111,7 @@ Legend: **P1..P4** = phase. Effort is for the Rust side only.
 | Ctrl+C | stop | `tokio::signal::ctrl_c` | P1 | - |
 | `service_windows.go` | SCM install/uninstall/run, locked-down folder ACL, pipe with SDDL, client check (path of the pipe client process), impersonation to get the user token, `CreateProcess` with handle list | `windows-service` for SCM; tokio `NamedPipeServer` (`reject_remote_clients`, `first_pipe_instance`, raw security attributes); `windows` crate for `ImpersonateNamedPipeClient`, `DuplicateTokenEx`, `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, `SetNamedSecurityInfo` | P1 | 1.5 ew |
 | `asuser_windows.go` | restricted user token (Administrators deny-only, no privileges, medium integrity, default DACL), file I/O impersonated on a locked thread, usque started with it | `windows` crate: `CreateRestrictedToken`, `SetTokenInformation`, `SetThreadToken` on a dedicated OS thread (not a tokio worker), `CreateProcessAsUserW` + `CreateEnvironmentBlock` | P1 | 1.5 ew; security-sensitive, needs review |
-| `mtu_windows.go` | MTU plan from link + exit, re-checked every 15 s | pure logic ported in P1; the watcher needs the stack's MTU setter | P1 | 0.3 ew |
+| `mtu_windows.go` | MTU plan from link + exit, re-checked every 15 s | pure logic ported in P1 (`mtu.rs`); the watcher needs the stack's MTU setter | P1 | logic done; watcher 0.1 ew |
 
 ### Tunnel, stack, routing
 
@@ -209,15 +209,18 @@ access + `-cleanup`, `-logfile`, `-stop-handle`.
 
 Started in this branch (no admin needed, all unit-tested):
 
-- `flags.rs` Go-compatible flag parsing for all 56 flags
-- `rules.rs` the firewall rules, with `rules_windows_test.go` ported
-- `events.rs`, `conns.rs` the journal, connection table, why-cache
-- `engine.rs` the bridge's decisions and counters, with the bridge tests ported
-- `api.rs` the control API (same paths, guard, JSON) over the engine
-- `geoip.rs`, `dnssec.rs`, `mtu.rs`, `exit.rs` (wg-quick, exit names),
-  `usque.rs` (flag checks, defaults), `service.rs` (engine-arg checks, paths)
-- `killswitch.rs` and `nrpt.rs` behind `Firewall` / `Registry` traits with fakes
-- `wintun.rs` adapter create/close wrapper (Windows only, not run here)
+- done: `flags.rs` Go-compatible flag parsing for all 56 flags
+- done: `rules.rs` the firewall rules, with `rules_windows_test.go` ported
+- done: `events.rs`, `conns.rs` the journal, connection table, why-cache
+- done: `geoip.rs`, `dnssec.rs`
+- done: `mtu.rs` the MTU plan, with `mtu_windows_test.go` ported; `exit.rs`
+  (wg-quick to the exit's config, WARP account config, exit names; Go's
+  base64 decoder and 64 KiB line limit copied so errors match)
+- next: `engine.rs` the bridge's decisions and counters, with the bridge tests ported
+- next: `api.rs` the control API (same paths, guard, JSON) over the engine
+- next: `usque.rs` (flag checks, defaults), `service.rs` (engine-arg checks, paths)
+- next: `killswitch.rs` and `nrpt.rs` behind `Firewall` / `Registry` traits with fakes
+- next: `wintun.rs` adapter create/close wrapper (Windows only, not run here)
 
 Exit criteria: `tools/sim/e2e-windows.ps1` and `tools/sim/service-windows.ps1`
 pass with `fswin-rs.exe` copied in as `dist/fswin.exe`; iperf-style throughput

@@ -271,7 +271,7 @@ fn has_prefix_fold(s: &[u8], prefix: &[u8]) -> bool {
             if !is_sep(s[i]) {
                 return false;
             }
-        } else if p.to_ascii_uppercase() != s[i].to_ascii_uppercase() {
+        } else if !p.eq_ignore_ascii_case(&s[i]) {
             return false;
         }
     }
@@ -400,9 +400,8 @@ pub fn clean(path: &str) -> String {
         dotdot = 1;
     }
     while r < n {
-        if is_sep(p[r]) {
-            r += 1;
-        } else if p[r] == b'.' && (r + 1 == n || is_sep(p[r + 1])) {
+        if is_sep(p[r]) || (p[r] == b'.' && (r + 1 == n || is_sep(p[r + 1]))) {
+            // an empty element, or "."
             r += 1;
         } else if p[r] == b'.' && r + 1 < n && p[r + 1] == b'.' && (r + 2 == n || is_sep(p[r + 2])) {
             r += 2;
