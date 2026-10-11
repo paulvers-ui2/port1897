@@ -243,7 +243,12 @@ Started in this branch (no admin needed, all unit-tested):
   `checkEngineArgs`, `samePath`, `installRoot`, `validAdapterName`, and
   x/sys `ComposeCommandLine` / `EscapeArg` (compared with Go's output). The
   SCM, pipe ACL, impersonation and `CreateProcess` are still to write
-- next: `nrpt.rs` behind a `Registry` trait with a fake
+- done: `nrpt.rs` win/dnspolicy behind a `Registry` trait with a fake
+  registry and a nudge function: add (replace ours, the seven values,
+  not-applied vs failed), remove, `Others()` over local and group-policy
+  rules, our-rule detection (fixed key in any case, "AuroraVPN" and
+  "port1897" tags), with `nrpt_windows_test.go` ported. The HKLM backend,
+  ipconfig /registerdns and DnsFlushResolverCache are still to write
 - next: `wintun.rs` adapter create/close wrapper (Windows only, not run here)
 
 Exit criteria: `tools/sim/e2e-windows.ps1` and `tools/sim/service-windows.ps1`

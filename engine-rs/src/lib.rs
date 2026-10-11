@@ -23,6 +23,7 @@ pub mod golike;
 pub mod killswitch;
 pub mod mtu;
 pub mod netaddr;
+pub mod nrpt;
 pub mod rules;
 pub mod service;
 pub mod usque;
