@@ -14,8 +14,6 @@ to do any of it.
 | `cmd/fswin/` | The engine `fswin.exe` (runs as admin) and AuroraVPN Service | Go |
 | `intra/`, `tunnel/` | firestack, the engine's network core (DNS transports, proxies, WireGuard) | Go |
 | `win/` | Windows parts: NRPT DNS rule, WFP kill switch, IP Helper, which program owns a connection | Go |
-| `engine-rs/` | The engine being rewritten in Rust; not shipped yet, see `engine-rs/PLAN.md` | Rust |
-| `desktop/` | The same app in Rust on Tauri, shipped from 0.2.28 to 0.2.30, parked and not built; see below | Rust (Tauri 2) |
 | `tools/sim/` | End-to-end tests the CI runs on an admin Windows machine | PowerShell |
 
 The app talks to the engine only through `fswin.exe`'s command-line flags and its
@@ -37,14 +35,20 @@ To build locally on Windows:
 - The installer expects `ui/engine/` to hold `fswin.exe`, `usque.exe`,
   `wintun.dll` and their licences; `app.yml` shows how CI fills it.
 
-Tests: `go test ./cmd/fswin ./win/...`, `cd engine-rs && cargo test`.
-Admin-only tests run on the CI runner.
+Tests: `go test ./cmd/fswin ./win/...`. Admin-only tests run on the CI
+runner.
 
-The app was Rust on Tauri (`desktop/`) from 0.2.28 to 0.2.30 and is Electron again after.
-The Electron installer removes an installed Tauri app first and keeps the
-user's files. `desktop/` still builds (`cd desktop && npm ci && npx tauri
-build`; its `app.yml` steps are in
-[PR 33](https://github.com/paulvers-ui2/port1897/pull/33)) if you want to switch back.
+### The Rust attempt
+
+The app was Rust on Tauri (`desktop/`) from 0.2.28 to 0.2.30, and a Rust
+engine (`engine-rs/`, `fswin-rs.exe`) ran the same end-to-end tests as the Go
+one for the direct, `-proxy` and `-wg` exits but never shipped. Both were
+removed from the tree; they are in git history (the commit before the one
+that removed them, and [PR 33](https://github.com/paulvers-ui2/port1897/pull/33)
+and [PR 36](https://github.com/paulvers-ui2/port1897/pull/36)) if anyone takes
+them up again. The Electron installer removes an installed Tauri app first
+and keeps the user's files; CI tests that upgrade (`app.yml`, job "Upgrade
+from the Tauri app").
 
 ## Releasing
 
@@ -68,19 +72,6 @@ Service e2e run the real engine with admin rights, and catch most breakage.
 
 ## What is left
 
-- **The Rust engine** (`engine-rs/`, binary `fswin-rs.exe`): it now runs
-  with `fswin.exe`'s command line: the userspace network stack, the direct
-  exit, the DNS layer (DoH, DoT, plain DNS, cache), the start and stop order,
-  the API, the kill switch, NRPT, AuroraVPN Service, the `-proxy` and `-wg`
-  exits and per-app `-routes`.
-  CI runs the same end-to-end scripts against it as against the Go engine
-  (`engine-rs.yml`, job "End to end with fswin-rs as fswin.exe").
-  Flags it cannot serve yet are refused at start with a clear error. Left:
-  `-warp` (WARP needs a patched boringtun), `-pcap`,
-  MASQUE and the chain through usque, DNSCrypt, ODoH, on-device blocklists,
-  the anti-censorship dialers, and a throughput comparison with the Go
-  engine. Until it matches `fswin.exe`, the Go engine ships. Details and
-  estimates are in `engine-rs/PLAN.md`.
 - **Code signing:** the installer is not signed, so SmartScreen warns. A free
   option for open-source projects is [SignPath Foundation](https://signpath.org).
 - **IPv6** inside the tunnel.

@@ -92,6 +92,8 @@ func TestOthersAndRemove(t *testing.T) {
 	another(t, localRules, "{11111111-1111-1111-1111-111111111111}", "", "Force all DNS requests via Proton VPN", ".")
 	another(t, localRules, "{22222222-2222-2222-2222-222222222222}", "corp", "", ".corp.example")
 	another(t, localRules, "{33333333-3333-3333-3333-333333333333}", "", "port1897", ".")
+	// ours under the old key, without a comment
+	another(t, localRules, oldRuleKey, "", "", ".")
 	another(t, policyRules, "{44444444-4444-4444-4444-444444444444}", "GP VPN", "from policy", ".")
 	if err := Add(netip.MustParseAddr("10.111.222.3")); err != nil {
 		t.Fatal(err)
@@ -119,7 +121,17 @@ func TestOthersAndRemove(t *testing.T) {
 	}
 	slices.Sort(keys)
 	if !slices.Equal(keys, []string{"{11111111-1111-1111-1111-111111111111}", "{22222222-2222-2222-2222-222222222222}"}) {
-		t.Fatalf("after Remove: %q; ours (the fixed key and the port1897 one) must be gone, the others kept", keys)
+		t.Fatalf("after Remove: %q; ours (the fixed key, the old one and the port1897 one) must be gone, the others kept", keys)
+	}
+}
+
+// Windows applies the catch-all rule whose key sorts first: ours must sort
+// before any random GUID another VPN picks.
+func TestRuleKeySortsFirst(t *testing.T) {
+	for _, other := range []string{"{00000001-0000-0000-0000-000000000000}", "{0A6E8F12-5B3C-4D2E-9F10-112233445566}", oldRuleKey} {
+		if strings.ToUpper(ruleKey) >= strings.ToUpper(other) {
+			t.Errorf("our key %s does not sort before %s", ruleKey, other)
+		}
 	}
 }
 

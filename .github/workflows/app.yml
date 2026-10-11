@@ -139,12 +139,76 @@ jobs:
           path: ui/dist/*-portable.exe
           compression-level: 0
 
+  # A PC with the Tauri app (0.2.28 to 0.2.30) installed gets this installer:
+  # it must remove the Tauri app (ui/build/installer.nsh, customInit), keep
+  # the user's files and leave the Electron app with its service.
+  upgrade:
+    name: Upgrade from the Tauri app
+    needs: app
+    runs-on: windows-latest # admin: both installers are per-machine
+    timeout-minutes: 15
+    env:
+      OLD_URL: https://github.com/paulvers-ui2/port1897/releases/download/v0.2.30/AuroraVPN-Setup-0.2.30.exe
+      OLD_SHA256: 51347f11eaebb8a75dd69ae15d4fb059c7b66e0a76a0dc9cb89fd1332fffa5d4
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: auroravpn-setup-windows-x64
+          path: new
+      - name: Install the Tauri app, then this one over it
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tauriKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\AuroraVPN'
+          $electronKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\b08e5cfd-4d07-54eb-9603-c0c30dd5023b'
+          $fail = @()
+          function Check([string]$what, [bool]$ok) {
+            Write-Host "$(if ($ok) { 'ok  ' } else { 'FAIL' }) $what"
+            if (-not $ok) { $script:fail += $what }
+          }
+          function Service-Path { (Get-CimInstance Win32_Service -Filter "Name='AuroraVPN'").PathName }
+
+          Invoke-WebRequest -Uri $env:OLD_URL -OutFile old-setup.exe
+          if ((Get-FileHash old-setup.exe -Algorithm SHA256).Hash -ne $env:OLD_SHA256) { throw 'AuroraVPN-Setup-0.2.30.exe: wrong SHA-256' }
+          $p = Start-Process -FilePath .\old-setup.exe -ArgumentList '/S' -PassThru -Wait
+          # Tauri writes it in quotes: "C:\Program Files\AuroraVPN"
+          $old = "$((Get-ItemProperty $tauriKey -ErrorAction SilentlyContinue).InstallLocation)".Trim('"')
+          if (-not $old) { $old = Join-Path $env:ProgramFiles 'AuroraVPN' }
+          Write-Host "Tauri app: exit code $($p.ExitCode), in $old; service: $(Service-Path)"
+          if (-not (Test-Path "$old\engine\fswin.exe")) { throw 'the Tauri app did not install' }
+
+          # the user's files, as the Tauri app keeps them
+          $data = Join-Path $env:APPDATA 'AuroraVPN'
+          New-Item -ItemType Directory -Force $data | Out-Null
+          Set-Content (Join-Path $data 'upgrade-marker.txt') 'kept'
+
+          $new = (Get-ChildItem new -Filter '*-Setup-*.exe' | Select-Object -First 1).FullName
+          $p = Start-Process -FilePath $new -ArgumentList '/S' -PassThru -Wait
+          $dir = "$((Get-ItemProperty $electronKey -ErrorAction SilentlyContinue).InstallLocation)".Trim('"')
+          Write-Host "Electron app: exit code $($p.ExitCode), in $dir; service: $(Service-Path)"
+          Get-ChildItem $old -ErrorAction SilentlyContinue | Format-Table -AutoSize Name, Length | Out-String | Write-Host
+
+          Check 'the installer succeeded' ($p.ExitCode -eq 0)
+          Check 'the Tauri app''s Apps & Features entry is gone' (-not (Test-Path $tauriKey))
+          Check 'the Tauri app''s engine folder is gone' (-not (Test-Path "$old\engine"))
+          Check 'the Tauri app''s uninstaller is gone' (-not (Test-Path "$old\uninstall.exe"))
+          Check 'the Electron app is installed' ($dir -and (Test-Path "$dir\resources\app.asar") -and (Test-Path "$dir\resources\engine\fswin.exe"))
+          Check 'AuroraVPN Service runs the Electron app''s engine' ("$(Service-Path)" -like '*\resources\engine\fswin.exe*')
+          Check 'the user''s files are kept' ((Get-Content (Join-Path $data 'upgrade-marker.txt') -ErrorAction SilentlyContinue) -eq 'kept')
+
+          # and it uninstalls cleanly
+          $un = if ($dir) { Get-ChildItem $dir -Filter 'Uninstall *.exe' | Select-Object -First 1 }
+          if ($un) { $p = Start-Process -FilePath $un.FullName -ArgumentList '/S', '/allusers', "_?=$dir" -PassThru -Wait }
+          Check 'the Electron app uninstalls' ($un -and $p.ExitCode -eq 0)
+          Check 'AuroraVPN Service is removed with it' (-not (Get-Service AuroraVPN -ErrorAction SilentlyContinue))
+          if ($fail.Count) { throw "$($fail.Count) check(s) failed" }
+
   # Publishes the build as the latest GitHub release: on every merge to main,
   # and for a pushed vX.Y.Z tag. The app's update check reads it.
   release:
     name: GitHub release
     if: needs.version.outputs.tag != ''
-    needs: [version, app]
+    needs: [version, app, upgrade]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

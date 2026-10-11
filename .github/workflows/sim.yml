@@ -126,3 +126,17 @@ jobs:
           name: sim-dns-linux
           path: dnssim.txt
           if-no-files-found: ignore
+
+  # Which of two catch-all NRPT rules Windows applies (tools/sim/nrpt-order.ps1):
+  # the reason our rule's key sorts first (win/dnspolicy)
+  nrpt-order:
+    name: NRPT rule order (Windows)
+    runs-on: windows-latest # admin: HKLM
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Which rule wins
+        shell: pwsh
+        run: ./tools/sim/nrpt-order.ps1
