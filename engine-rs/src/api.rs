@@ -746,10 +746,13 @@ mod tests {
         _guard: tokio::sync::MutexGuard<'static, ()>,
     }
 
-    // One server at a time: several servers on several runtimes in one
-    // process stalled for 10 s now and then on Windows (all of them at
-    // once, connects included); one server under parallel load does not,
-    // see many_clients_at_once.
+    // One server at a time. Several servers on several runtimes in one
+    // process once stalled for 10 s on Windows (all at once, connects
+    // included), but that build had corrupt hyper/tokio rlibs in target/;
+    // after a clean build, 8 servers x 40 requests (separate runtimes, one
+    // runtime, std clients, plain std) and the whole suite at 16 threads
+    // showed no request over 40 ms. The lock stays as cheap insurance
+    // (about 0.3 s); one server under parallel load: many_clients_at_once.
     static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     async fn start(e: Engine) -> T {
