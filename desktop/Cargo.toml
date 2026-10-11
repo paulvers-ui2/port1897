@@ -1,0 +1,51 @@
+[package]
+name = "auroravpn"
+version = "0.0.0" # releases take theirs from the tag (tauri.conf.json, set by CI)
+description = "AuroraVPN for Windows: the app around the fswin engine"
+license = "MPL-2.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "~2.6.3", features = [] }
+
+[dependencies]
+# every version at least two weeks old when chosen; Cargo.lock pins the rest
+tauri = { version = "~2.11.6", features = ["tray-icon", "image-png"] }
+tauri-plugin-single-instance = "~2.4.5"
+tauri-plugin-dialog = "~2.7.3"
+tauri-plugin-notification = "~2.4.0"
+tauri-plugin-clipboard-manager = "~2.3.3"
+tauri-plugin-opener = "~2.5.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+reqwest = { version = "~0.13.5", default-features = false, features = ["rustls", "json", "brotli", "gzip", "system-proxy"] }
+tokio = { version = "~1.53.1", features = ["net", "time", "sync", "fs", "io-util", "process", "rt-multi-thread", "macros"] }
+zip = { version = "~8.6.0", default-features = false, features = ["deflate"] }
+md-5 = "~0.10.6"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+regex = "1"
+winreg = "~0.56"
+getrandom = "~0.3"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "~0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_Threading",
+  "Win32_System_Com",
+  "Win32_System_Pipes",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+# the WebView2 types of the copy wry already uses, to lock the window down
+webview2-com = "~0.38.2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
+opt-level = 3
