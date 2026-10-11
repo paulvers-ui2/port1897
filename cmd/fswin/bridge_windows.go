@@ -91,9 +91,29 @@ type bridge struct {
 	selfuid   int32
 	exit      atomic.Value // string: proxy id for allowed flows and DNS
 	kill      *killSwitch  // set once before the API starts; nil without Wintun
+	luid      uint64       // the adapter, for its byte counters; 0 if unknown
+	// other VPNs that break ours (findConflicts), checked again while
+	// running; nil until the start has looked
+	conflicts atomic.Pointer[[]string]
 }
 
 var _ intra.Bridge = (*bridge)(nil)
+
+// setConflicts records the other VPNs in the way now, and returns those
+// that were not before.
+func (b *bridge) setConflicts(now []string) (added []string) {
+	now = append([]string{}, now...)
+	var was []string
+	if p := b.conflicts.Swap(&now); p != nil {
+		was = *p
+	}
+	for _, c := range now {
+		if !slices.Contains(was, c) {
+			added = append(added, c)
+		}
+	}
+	return added
+}
 
 func newBridge(binder *ifbind.Binder, initial *rules, blockcsv string) *bridge {
 	b := &bridge{

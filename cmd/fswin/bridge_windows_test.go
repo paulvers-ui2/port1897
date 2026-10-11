@@ -11,13 +11,16 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	x "github.com/celzero/firestack/intra/backend"
 	"github.com/celzero/firestack/win/ifbind"
+	"golang.org/x/sys/windows"
 )
 
 const testApp = `C:\Program Files\Test\app.exe`
@@ -382,6 +385,86 @@ func TestStatusConflictsIsAlwaysAnArray(t *testing.T) {
 	if !strings.Contains(raw, `"conflicts":[]`) {
 		t.Errorf("apiStatus{Conflicts: append([]string{}, nil...)} = %s, want \"conflicts\":[]", raw)
 	}
+}
+
+// Another VPN that connects after the start shows in the status (and the log
+// names it once); one that went goes from the status.
+func TestStatusConflictsFollowTheRun(t *testing.T) {
+	b := newTestBridge(t, "")
+	proton := "internet traffic leaves through another VPN's adapter: ProTUN (Proton VPN Windows Tun)"
+	o := options{conflicts: []string{"at start"}}
+	if got := statusOf(b, o, time.Now(), "", "test").Conflicts; !slices.Equal(got, []string{"at start"}) {
+		t.Errorf("before a check while running: %q, want the start's", got)
+	}
+	if added := b.setConflicts([]string{}); len(added) != 0 {
+		t.Errorf("none: added %q", added)
+	}
+	if added := b.setConflicts([]string{proton}); !slices.Equal(added, []string{proton}) {
+		t.Errorf("Proton connected: added %q", added)
+	}
+	if added := b.setConflicts([]string{proton}); len(added) != 0 {
+		t.Errorf("Proton still connected: added %q again", added)
+	}
+	if got := statusOf(b, o, time.Now(), "", "test").Conflicts; !slices.Equal(got, []string{proton}) {
+		t.Errorf("status conflicts = %q, want Proton's", got)
+	}
+	b.setConflicts([]string{})
+	if raw := mustJSON(t, statusOf(b, o, time.Now(), "", "test")); !strings.Contains(raw, `"conflicts":[]`) {
+		t.Errorf("Proton gone: %s, want \"conflicts\":[]", raw)
+	}
+}
+
+// Home's traffic counter: the adapter's live counts once they pass the
+// closed connections' (which count a connection only when it ends), and the
+// closed connections' when the adapter cannot be read.
+func TestStatusTrafficTakesTheLargerCount(t *testing.T) {
+	b := newTestBridge(t, "")
+	b.luid = 42
+	b.log.rx.Add(1000)
+	b.log.tx.Add(100)
+	defer func(f func(uint64) (int64, int64, bool)) { adapterCounts = f }(adapterCounts)
+	for _, c := range []struct {
+		name   string
+		rx, tx int64
+		ok     bool
+		want   trafStat
+	}{
+		{"adapter ahead", 50000, 4000, true, trafStat{Rx: 50000, Tx: 4000}},
+		{"adapter behind", 500, 100, true, trafStat{Rx: 1000, Tx: 100}},
+		{"adapter unreadable", 0, 0, false, trafStat{Rx: 1000, Tx: 100}},
+	} {
+		adapterCounts = func(luid uint64) (int64, int64, bool) {
+			if luid != 42 {
+				t.Errorf("%s: read adapter %d, want 42", c.name, luid)
+			}
+			return c.rx, c.tx, c.ok
+		}
+		if got := statusOf(b, options{}, time.Now(), "", "test").Traffic; got != c.want {
+			t.Errorf("%s: traffic = %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+// adapterBytes reads a real adapter's counters (the first Windows lists),
+// and none without an adapter.
+func TestAdapterBytes(t *testing.T) {
+	if _, _, ok := adapterBytes(0); ok {
+		t.Error("read counters for no adapter (LUID 0)")
+	}
+	var tab *windows.MibIfTable2
+	if err := windows.GetIfTable2Ex(windows.MibIfTableNormal, &tab); err != nil {
+		t.Fatal(err)
+	}
+	defer windows.FreeMibTable(unsafe.Pointer(tab)) //nolint:gosec // G103: Windows' own table
+	if tab.NumEntries == 0 {
+		t.Skip("no network interfaces")
+	}
+	row := tab.Table[0]
+	rx, tx, ok := adapterBytes(row.InterfaceLuid)
+	if !ok || rx < 0 || tx < 0 {
+		t.Errorf("adapterBytes(%#x) = %d, %d, %t; want counters", row.InterfaceLuid, rx, tx, ok)
+	}
+	t.Logf("%s: rx %d tx %d", windows.UTF16ToString(row.Alias[:]), rx, tx)
 }
 
 func mustJSON(t *testing.T, v any) string {

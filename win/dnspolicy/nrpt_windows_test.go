@@ -10,10 +10,14 @@ package dnspolicy
 
 import (
 	"net/netip"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -127,4 +131,47 @@ func TestNoRulesKey(t *testing.T) {
 	if err := Remove(); err != nil {
 		t.Fatalf("Remove without the key: %v", err)
 	}
+}
+
+// The engine's stop drops the rule at once and leaves the nudge to finish by
+// itself: waiting up to 5 s for it held every stop up.
+func TestDropDoesNotWait(t *testing.T) {
+	sandbox(t)
+	if err := Add(netip.MustParseAddr("10.111.222.3")); err != nil {
+		t.Fatal(err)
+	}
+	n, err := Drop()
+	if err != nil || n == nil {
+		t.Fatalf("Drop: %v, %v", n, err)
+	}
+	if left, _ := list(localRules); len(left) != 0 {
+		t.Errorf("rules left after Drop: %d", len(left))
+	}
+	if !n.Wait(0) {
+		t.Error("no nudge in a test, yet Wait says one is running")
+	}
+
+	// a nudge that runs on: a ping stands in for ipconfig
+	h, err := startHidden(filepath.Join(os.Getenv("SystemRoot"), "System32", "PING.EXE"), "-n", "30", "127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, _ := windows.GetProcessId(h)
+	n = &Nudging{h: h}
+	began := time.Now()
+	if n.Wait(0) {
+		t.Fatal("ping ended at once")
+	}
+	if d := time.Since(began); d > time.Second {
+		t.Errorf("Wait(0) took %s", d)
+	}
+	p, err := windows.OpenProcess(windows.SYNCHRONIZE|windows.PROCESS_TERMINATE, false, pid)
+	if err != nil {
+		t.Fatalf("the nudge did not go on after Wait: %v", err)
+	}
+	defer windows.CloseHandle(p)
+	if ev, _ := windows.WaitForSingleObject(p, 0); ev != uint32(windows.WAIT_TIMEOUT) {
+		t.Error("the nudge ended with Wait(0)")
+	}
+	_ = windows.TerminateProcess(p, 0)
 }
