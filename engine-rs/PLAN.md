@@ -233,7 +233,16 @@ Started in this branch (no admin needed, all unit-tested):
   tokio runtimes in one test process stalled for 10 s now and then on this
   PC, so the API tests run one server at a time; one server with 64
   parallel clients does not stall (to be re-checked on the CI runner)
-- next: `usque.rs` (flag checks, defaults), `service.rs` (engine-arg checks, paths)
+- done: `usque.rs` the `-usque-flags` checks (core flags, pflag shorthand
+  bundles, subcommands), `usqueDefaults`, the start and register argument
+  lists, the SOCKS URL, exit-code wording, the "tunnel lost" log trigger and
+  the supervisor's timings and backoff. The process, job object and
+  supervisor loop are phase 3
+- done: `service.rs` the pipe protocol (request decoding as Go's Decoder,
+  reply encoding), the request dispatch behind an `EngineControl` trait,
+  `checkEngineArgs`, `samePath`, `installRoot`, `validAdapterName`, and
+  x/sys `ComposeCommandLine` / `EscapeArg` (compared with Go's output). The
+  SCM, pipe ACL, impersonation and `CreateProcess` are still to write
 - next: `nrpt.rs` behind a `Registry` trait with a fake
 - next: `wintun.rs` adapter create/close wrapper (Windows only, not run here)
 
