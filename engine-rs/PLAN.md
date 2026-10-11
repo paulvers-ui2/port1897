@@ -220,8 +220,13 @@ Started in this branch (no admin needed, all unit-tested):
   closed, DNS query/upstream answer/response, rule updates that close
   connections, close by app or id, owner lookup and proxy stats behind
   `Owners` / `Proxies` traits), with `bridge_windows_test.go` ported
-- started: `killswitch.rs` the kill switch state machine behind a `Firewall`
-  trait with a fake; next: the WFP filter plan and fixed keys
+- done: `killswitch.rs` the kill switch state machine (killswitch_windows.go)
+  behind a `Firewall` trait with a fake; win/wfp's filter plan as data
+  (the 27 + 4 per allowed program (+4 LAN) filters in Go's order, names,
+  layers, weights, conditions, the 160-key limit with Go's error wording),
+  the fixed provider/sublayer/filter GUIDs shared with the Go engine, and
+  the leftover removal. The `windows-sys` backend that executes the plan
+  (FwpmEngineOpen0, transactions, app ids) is still to write
 - done: `api.rs` the control API over the engine on hyper: the guard
   (Origin, Host incl. absolute-form, constant-time bearer), Go 1.22 ServeMux
   behaviour (HEAD on GET routes, 405 with Allow, 404, 301 to the clean path,
