@@ -273,6 +273,24 @@ Started in this branch (no admin needed, all unit-tested):
   - `wintun.rs` adapter create/close over wintun-bindings, wintun.dll by
     full path, tunnel type "AuroraVPN", 8 MiB ring; like wireguard-go it
     does not set the interface MTU (the stack uses the planned one)
+- done: `dns/` the DNS layer, all unit-tested and without a tunnel:
+  - `msg.rs` the message helpers on hickory-proto after firestack's
+    xdns (query name and type, RFC 7830 padding, the BlockAll answer,
+    SERVFAIL, the summary's answer data)
+  - `doh.rs` the DoH client (bootstrap IPs with no name lookup, HTTP/2
+    with an HTTP/1.1 fallback, POST falling back to GET on 405, one
+    connection per exit, Go's timeouts), `dot.rs` DoT with its
+    connection pool, `tls.rs` rustls on ring with the system's roots
+  - `cache.rs` the cached transport behind `-dns-cache` (the `Cache`
+    id prefix): the answer kept while its TTL lasts, counted down, the
+    key case-insensitive, SERVFAIL and transport failures not kept
+  - `fake.rs` the resolver the netstack's DNS trap hands queries to:
+    `on_query` for the verdict, `BlockAll` answered here, the cached
+    wrapper made on demand, `-dns-fallback` to `Default`, the DNSSEC
+    switch's second verdict on the answer, and `on_response` either
+    way. SERVFAIL goes back to the asker as firestack does
+  - the DNS53/System transport, the undelegated domains and the
+    blocklists are phases 2 and 4, as below
 
 Exit criteria: `tools/sim/e2e-windows.ps1` and `tools/sim/service-windows.ps1`
 pass with `fswin-rs.exe` copied in as `dist/fswin.exe`; iperf-style throughput
@@ -318,6 +336,17 @@ real networks does not shrink as much.
 - **Property tests / fuzzing**: the Go fuzz targets (`FuzzRules`,
   `FuzzCountry`) become `cargo fuzz` targets (nightly, CI only) and
   stable-toolchain property tests on random inputs.
+- **No real TLS in the tests.** The DoH and DoT tests dial a
+  `tokio::io::duplex` pipe through the transports' own `Dialer`
+  (`dns/pipe.rs`), never a socket, not even to 127.0.0.1. An antivirus
+  that inspects TLS re-signs the server's certificate with a root of its
+  own, and every handshake then fails with `UnknownIssuer` however
+  correct the test CA is: on a developer machine here Avast's Web/Mail
+  Shield did that to a loopback connection, handing the client a
+  certificate with our subject and our SANs but issued by "Avast
+  Web/Mail Shield Untrusted Root". It cost hours to find, because the
+  fixtures and the rustls setup were both right. Pipes also make the
+  tests faster and keep them off the firewall's radar.
 - **CI now**: `.github/workflows/engine-rs.yml` (windows-latest, Rust
   1.99.0): build, clippy `-D warnings`, unit tests, then the `#[ignore]`d
   system tests one at a time with the pinned Wintun 0.14.1. Not yet: a
