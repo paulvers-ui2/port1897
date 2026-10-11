@@ -190,7 +190,7 @@ impl Proxies for ProxyTable {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::engine::{Engine, Owners, TZZ};
     use crate::exit::EXIT_PROXY;
@@ -321,7 +321,7 @@ mod tests {
     }
 
     /// Every flow comes from C:\Apps\app.exe.
-    struct OneApp;
+    pub(crate) struct OneApp;
     impl Owners for OneApp {
         fn tcp4(&self, _: SocketAddr, _: SocketAddr) -> Result<u32, String> {
             Ok(4242)
