@@ -7,7 +7,7 @@ app for everyone.
 
 > **Early test software.** Installing it needs administrator rights once;
 > after that, any Windows user turns protection on without an admin prompt
-> (through AuroraVPN Service, as with Proton VPN). The portable exe asks for
+> (through AuroraVPN Service, as with Proton VPN). The portable zip asks for
 > admin rights each time. It changes network settings while it runs. Do not
 > rely on it for privacy or security yet.
 
@@ -45,15 +45,29 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
   or proxy, the rest through the main VPN.
 - **Kill switch** (`-killswitch`): Windows Filtering Platform rules block everything
   outside the tunnel, and keep blocking if the engine crashes.
-- **App window** (`ui/`): an Electron app styled after the Android home screen, with
-  a tray icon. Download the installer or the portable exe from the
+- **The app** (`desktop/`, screens in `ui/renderer`): written in Rust on
+  [Tauri](https://tauri.app), styled after the Android home screen, with a tray
+  icon. Download the installer or the portable zip from the
   [latest release](https://github.com/paulvers-ui2/port1897/releases/latest);
   every change merged into `main` is published there as a new version.
+- **AuroraVPN Service:** installed with the app, it starts protection for any
+  Windows user without an admin prompt.
 
-Not yet: a background service, IPv6, country and network-provider stats.
-See the [roadmap](#roadmap).
+Not yet: IPv6. See the [roadmap](#roadmap).
 
-## Try it
+## Install
+
+1. Download **AuroraVPN-Setup-&lt;version&gt;.exe** from the
+   [latest release](https://github.com/paulvers-ui2/port1897/releases/latest)
+   (or the portable zip, which asks for admin rights at each start).
+2. Disconnect any other VPN (Proton VPN, NordVPN, ...). They fight over the same
+   network settings.
+3. Run the installer, open AuroraVPN and press Start.
+
+Uninstalling asks whether to also delete your settings, logs and WARP identities
+(unticked by default); upgrades keep everything.
+
+## Try the engine on its own
 
 1. Open the latest successful
    [Windows build](https://github.com/paulvers-ui2/port1897/actions/workflows/windows.yml?query=branch%3Amain+is%3Asuccess)
@@ -131,11 +145,14 @@ Please tell us how it went with a
 | Phase | What | Status |
 |---|---|---|
 | 1 | firestack builds on Windows; Wintun network adapter; `fswin` test tool | done |
-| 2 | Firewall core: program lookup, blocking, DNS leak fix, kill switch, rules engine and SQLite storage | in progress |
-| 3 | WireGuard and WARP (MASQUE) inside the service | planned |
-| 4 | App window and tray icon, installer, code signing, auto-update | planned |
+| 2 | Firewall core: program lookup, blocking, DNS leak fix, kill switch, rules engine | done |
+| 3 | WireGuard, WARP, WARP over MASQUE and the WARP chain | done |
+| 4 | App window and tray icon, installer, AuroraVPN Service | done (app in Rust since 0.3) |
+| 5 | The engine in Rust (`engine-rs/`, branch `feature/engine-rust`), a drop-in for `fswin.exe` | in progress, see its PLAN.md |
+| 6 | Code signing, auto-update, IPv6 | planned |
 
-The design and the details of every phase are in [PORT.md](PORT.md).
+The original design is in [PORT.md](PORT.md). To keep the project going, see
+[MAINTAINERS.md](MAINTAINERS.md).
 
 ## How it is put together
 
@@ -144,7 +161,10 @@ The design and the details of every phase are in [PORT.md](PORT.md).
 | `intra/`, `tunnel/` | firestack, the engine (from [celzero/firestack](https://github.com/celzero/firestack) via [paulvers-ui/firestack](https://github.com/paulvers-ui/firestack)). Linux-only parts sit in `_linux.go` files with `_windows.go` counterparts. |
 | `intra/netstack/wintun_windows.go` | Connects firestack's network stack to a Wintun adapter |
 | `win/` | Windows-only pieces: `ifbind` (keep firestack's own traffic out of the tunnel), `owner` (which program owns a connection), `dnspolicy` (DNS leak fix) |
-| `cmd/fswin` | The test tool |
+| `cmd/fswin` | The engine (`fswin.exe`) and AuroraVPN Service |
+| `desktop/` | The app, in Rust on Tauri; its installer hooks are in `desktop/nsis/` |
+| `ui/renderer` | The app's screens (HTML/JS), shared with the old Electron app in `ui/` |
+| `engine-rs/` | The engine being rewritten in Rust, a drop-in for `fswin.exe` once it matches it; see its PLAN.md |
 | `third_party/gotrie` | A patched copy of a firestack dependency, with Windows support |
 
 Builds run on GitHub Actions: every push builds Windows x64 and ARM64 and checks
