@@ -222,7 +222,17 @@ Started in this branch (no admin needed, all unit-tested):
   `Owners` / `Proxies` traits), with `bridge_windows_test.go` ported
 - started: `killswitch.rs` the kill switch state machine behind a `Firewall`
   trait with a fake; next: the WFP filter plan and fixed keys
-- next: `api.rs` the control API (same paths, guard, JSON) over the engine
+- done: `api.rs` the control API over the engine on hyper: the guard
+  (Origin, Host incl. absolute-form, constant-time bearer), Go 1.22 ServeMux
+  behaviour (HEAD on GET routes, 405 with Allow, 404, 301 to the clean path,
+  `OPTIONS *`), http.Error and json.Encoder output (HTML escaping, trailing
+  newline, field order, `[]`), body caps with Go's first-value decoding,
+  `status_of`, `check_addr`, `token_from`. Tests listen on 127.0.0.1:0.
+  Not yet like Go: the idle (60 s) and write (30 s) timeouts; the header
+  (5 s) and body (15 s) read timeouts are in. Several servers on several
+  tokio runtimes in one test process stalled for 10 s now and then on this
+  PC, so the API tests run one server at a time; one server with 64
+  parallel clients does not stall (to be re-checked on the CI runner)
 - next: `usque.rs` (flag checks, defaults), `service.rs` (engine-arg checks, paths)
 - next: `nrpt.rs` behind a `Registry` trait with a fake
 - next: `wintun.rs` adapter create/close wrapper (Windows only, not run here)

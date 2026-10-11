@@ -10,6 +10,7 @@
 //! left. The modules here are the parts that need no admin rights; the ones
 //! that change the system sit behind traits so they can be tested with fakes.
 
+pub mod api;
 pub mod conns;
 pub mod dnssec;
 pub mod engine;
