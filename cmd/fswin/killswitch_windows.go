@@ -72,7 +72,32 @@ func (k *killSwitch) setLocked(on, allowLAN bool) error {
 	return nil
 }
 
-// lastError is why the kill switch last failed to change, or "".
+// wfp's, replaced in tests
+var (
+	wfpActive  = wfp.Active
+	wfpDisable = wfp.Disable
+)
+
+// clearLeftover removes a kill switch an earlier engine left on, when this
+// one runs without: it is meant to block after a crash until the next
+// start, but only a start with the kill switch replaced it. Its rules let
+// only the old adapter through, so this run's tunnel carried nothing, and
+// they stayed after its stop, the internet blocked until fswin -cleanup.
+func (k *killSwitch) clearLeftover() (bool, error) {
+	if k == nil {
+		return false, nil
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.on {
+		return false, nil
+	}
+	if on, err := wfpActive(); err != nil || !on {
+		return false, err
+	}
+	return true, wfpDisable()
+}
+
 // setFull records that all IPv4 traffic goes through the tunnel, as per-app
 // routes make it after the kill switch was set up.
 func (k *killSwitch) setFull(full bool) {
@@ -84,6 +109,7 @@ func (k *killSwitch) setFull(full bool) {
 	k.full = full
 }
 
+// lastError is why the kill switch last failed to change, or "".
 func (k *killSwitch) lastError() string {
 	if k == nil {
 		return ""

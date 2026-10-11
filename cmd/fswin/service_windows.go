@@ -520,21 +520,78 @@ func checkEngineArgs(args []string) error {
 	return nil
 }
 
-// engineProc is an engine the service started.
+// engineProc is a process the service started: the engine, or fswin -cleanup.
+//
+// The service lets go of it the moment it ends. It used to hold the process
+// handle until the next start, which kept the ended engine's process id in
+// use; the app, which may not open a SYSTEM process, read the "access
+// denied" as "still running", and every stop waited out its full 15 s
+// ("engine <pid> still ending after 15 s").
 type engineProc struct {
-	pid     uint32
-	process windows.Handle
-	stop    windows.Handle // an event: set, the engine stops as for the app
+	pid  uint32
+	done chan struct{} // closed once the process has ended and its handles are closed
+	code uint32        // its exit code, once done is closed
+
+	// watch is the only wait on process and the only close of both: a use
+	// after the close could reach another object under the same handle value
+	mu      sync.Mutex
+	process windows.Handle // 0 once done
+	stop    windows.Handle // an event: set, the engine stops as for the app; 0 once done
 }
 
-func (e *engineProc) exited(d time.Duration) bool {
-	ev, err := windows.WaitForSingleObject(e.process, uint32(d.Milliseconds()))
-	return err == nil && ev == windows.WAIT_OBJECT_0
+func newEngineProc(pid uint32, process, stop windows.Handle) *engineProc {
+	e := &engineProc{pid: pid, done: make(chan struct{}), process: process, stop: stop}
+	go e.watch()
+	return e
 }
 
-func (e *engineProc) close() {
+func (e *engineProc) watch() {
+	_, _ = windows.WaitForSingleObject(e.process, windows.INFINITE)
+	e.mu.Lock()
+	_ = windows.GetExitCodeProcess(e.process, &e.code)
 	_ = windows.CloseHandle(e.process)
 	_ = windows.CloseHandle(e.stop)
+	e.process, e.stop = 0, 0
+	e.mu.Unlock()
+	close(e.done)
+}
+
+// exited waits up to d for the process to end.
+func (e *engineProc) exited(d time.Duration) bool {
+	if d <= 0 {
+		select {
+		case <-e.done:
+			return true
+		default:
+			return false
+		}
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-e.done:
+		return true
+	case <-t.C:
+		return false
+	}
+}
+
+// signal asks the engine to stop, as the app's stop button does.
+func (e *engineProc) signal() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.stop != 0 {
+		_ = windows.SetEvent(e.stop)
+	}
+}
+
+// kill ends the process at once.
+func (e *engineProc) kill() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.process != 0 {
+		_ = windows.TerminateProcess(e.process, 1)
+	}
 }
 
 func (ps *pipeServer) startEngine(c *pipeClient, args []string) (uint32, error) {
@@ -550,13 +607,12 @@ func (ps *pipeServer) startEngine(c *pipeClient, args []string) (uint32, error) 
 		// one exit to another never started). Wait for it, or end it.
 		if !e.exited(15 * time.Second) {
 			ps.logf("engine %d still running at a new start; ending it", e.pid)
-			_ = windows.SetEvent(e.stop)
+			e.signal()
 			if !e.exited(5 * time.Second) {
-				_ = windows.TerminateProcess(e.process, 1)
+				e.kill()
 				e.exited(5 * time.Second)
 			}
 		}
-		e.close()
 		ps.running = nil
 	}
 	e, err := launch(c.token, ps.engine, args)
@@ -565,7 +621,19 @@ func (ps *pipeServer) startEngine(c *pipeClient, args []string) (uint32, error) 
 	}
 	ps.running = e
 	ps.logf("engine %d started as SYSTEM for %s (session %d)", e.pid, c.user, tokenSession(c.token))
+	go func() {
+		<-e.done
+		ps.logf("engine %d ended (exit code %s)", e.pid, winCode(e.code))
+	}()
 	return e.pid, nil
+}
+
+// winCode is an exit code as Windows writes it: 1, or 0xC0000005 for a crash.
+func winCode(c uint32) string {
+	if c >= 0x80000000 {
+		return fmt.Sprintf("0x%08X", c)
+	}
+	return strconv.FormatUint(uint64(c), 10)
 }
 
 // stopEngine asks the running engine to stop, as the app's stop button does,
@@ -575,17 +643,13 @@ func (ps *pipeServer) stopEngine(d time.Duration) {
 	e := ps.running
 	ps.running = nil
 	ps.mu.Unlock()
-	if e == nil {
+	if e == nil || e.exited(0) {
 		return
 	}
-	defer e.close()
-	if e.exited(0) {
-		return
-	}
-	_ = windows.SetEvent(e.stop)
+	e.signal()
 	if !e.exited(d) {
 		ps.logf("engine %d did not stop in %s; ending it", e.pid, d)
-		_ = windows.TerminateProcess(e.process, 1)
+		e.kill()
 	}
 }
 
@@ -605,14 +669,12 @@ func (ps *pipeServer) cleanup(c *pipeClient) error {
 	if err != nil {
 		return err
 	}
-	defer e.close()
 	if !e.exited(30 * time.Second) {
-		_ = windows.TerminateProcess(e.process, 1)
+		e.kill()
 		return errors.New("cleanup did not finish in 30 s")
 	}
-	var code uint32
-	if err := windows.GetExitCodeProcess(e.process, &code); err != nil || code != 0 {
-		return fmt.Errorf("cleanup failed (exit code %d)", code)
+	if e.code != 0 {
+		return fmt.Errorf("cleanup failed (exit code %s)", winCode(e.code))
 	}
 	return nil
 }
@@ -674,7 +736,7 @@ func launch(user windows.Token, exe string, args []string) (*engineProc, error) 
 	runtime.KeepAlive(handles)
 	_ = windows.CloseHandle(pi.Thread)
 	ok = true
-	return &engineProc{pid: pi.ProcessId, process: pi.Process, stop: stop}, nil
+	return newEngineProc(pi.ProcessId, pi.Process, stop), nil
 }
 
 // validAdapterName keeps -name to what netsh takes as a plain name.

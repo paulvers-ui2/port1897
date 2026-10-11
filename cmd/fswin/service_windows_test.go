@@ -13,11 +13,112 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
+
+// fakeEngineEnv makes this test program a fake engine for the service's
+// launch: "exit" ends at once with exit code 5; "wait" ends with 0 once the
+// event of -stop-handle is set (9 if it is not within 30 s).
+const fakeEngineEnv = "FSWIN_FAKE_ENGINE"
+
+func fakeEngine(mode string, args []string) {
+	if mode == "exit" {
+		os.Exit(5)
+	}
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-stop-handle" {
+			h, _ := strconv.ParseUint(args[i+1], 10, 64)
+			if ev, err := windows.WaitForSingleObject(windows.Handle(h), 30000); err == nil && ev == windows.WAIT_OBJECT_0 {
+				os.Exit(0)
+			}
+		}
+	}
+	os.Exit(9)
+}
+
+// pidGone tells whether pid no longer names the process that had it, as the
+// app checks (Node's process.kill(pid, 0)): an ended process whose handle
+// someone still holds keeps its id, and the app took it for running.
+func pidGone(pid uint32) bool {
+	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return true
+	}
+	defer windows.CloseHandle(h)
+	var code uint32
+	const stillActive = 259
+	return windows.GetExitCodeProcess(h, &code) == nil && code == stillActive // the id went to a new process
+}
+
+func waitPidGone(t *testing.T, pid uint32) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if pidGone(pid) {
+			return
+		}
+	}
+	t.Errorf("process %d ended, but its id stays taken: the app waits 15 s for it", pid)
+}
+
+// An engine that ends lets go of its process id at once, with or without a
+// stop from the service, and its exit code is kept for the log.
+func TestServiceLetsGoOfAnEndedEngine(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(fakeEngineEnv, "exit")
+	e, err := launch(0, exe, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !e.exited(10 * time.Second) {
+		e.kill()
+		t.Fatal("the fake engine did not end")
+	}
+	if e.code != 5 {
+		t.Errorf("exit code %s, want 5", winCode(e.code))
+	}
+	waitPidGone(t, e.pid)
+	e.signal() // after the end: does nothing, rather than touch a closed handle
+	e.kill()
+}
+
+func TestServiceStopsItsEngine(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(fakeEngineEnv, "wait")
+	e, err := launch(0, exe, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps := &pipeServer{logf: t.Logf, running: e}
+	began := time.Now()
+	ps.stopEngine(10 * time.Second)
+	if !e.exited(0) || e.code != 0 {
+		t.Fatalf("not stopped by its event: ended %t, exit code %s", e.exited(0), winCode(e.code))
+	}
+	if d := time.Since(began); d > 5*time.Second {
+		t.Errorf("stop took %s", d)
+	}
+	if ps.running != nil {
+		t.Error("the service still counts it as running")
+	}
+	waitPidGone(t, e.pid)
+}
+
+func TestWinCode(t *testing.T) {
+	if winCode(1) != "1" || winCode(0xC0000005) != "0xC0000005" {
+		t.Errorf("%s %s", winCode(1), winCode(0xC0000005))
+	}
+}
 
 // The service passes the app's flags to the engine, but never those that
 // pick a program to run or one of fswin's own modes.
