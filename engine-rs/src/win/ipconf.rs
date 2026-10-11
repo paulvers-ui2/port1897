@@ -136,6 +136,16 @@ fn set_dns_fn() -> Option<SetDnsFn> {
 /// registering its name through it, as netsh's "set dnsservers
 /// register=none".
 pub fn set_dns(l: u64, server: Ipv4Addr) -> Result<(), String> {
+    set_dns_settings(l, &server.to_string(), (DNS_SETTING_NAMESERVER | DNS_SETTING_REGISTRATION_ENABLED | DNS_SETTING_REGISTER_ADAPTER_NAME) as u64)
+}
+
+/// Takes the adapter's DNS server away again: the DNS Client reloads its
+/// settings on that, the NRPT rule's removal among them (Go's ClearDNS).
+pub fn clear_dns(l: u64) -> Result<(), String> {
+    set_dns_settings(l, "", DNS_SETTING_NAMESERVER as u64)
+}
+
+fn set_dns_settings(l: u64, servers: &str, flags: u64) -> Result<(), String> {
     let f = set_dns_fn().ok_or(NO_DNS_API)?;
     let mut guid = GUID { data1: 0, data2: 0, data3: 0, data4: [0; 8] };
     // SAFETY: both point at valid values
@@ -143,11 +153,11 @@ pub fn set_dns(l: u64, server: Ipv4Addr) -> Result<(), String> {
     if r != NO_ERROR {
         return Err(format!("ipconf: interface guid: {}", err_text(r)));
     }
-    let ns = wide(&server.to_string());
+    let ns = wide(servers);
     // SAFETY: zeroed is valid: null strings, zero flags
     let mut s: DNS_INTERFACE_SETTINGS = unsafe { std::mem::zeroed() };
     s.Version = 1;
-    s.Flags = (DNS_SETTING_NAMESERVER | DNS_SETTING_REGISTRATION_ENABLED | DNS_SETTING_REGISTER_ADAPTER_NAME) as u64;
+    s.Flags = flags;
     s.NameServer = ns.as_ptr() as *mut u16; // registration stays 0: off
     // SAFETY: s and ns live through the call
     let r = unsafe { f(guid, &s) };

@@ -22,11 +22,13 @@ pub mod geoip;
 pub mod gojson;
 pub mod golike;
 pub mod killswitch;
+pub mod logline;
 pub mod mtu;
 pub mod net;
 pub mod netaddr;
 pub mod nrpt;
 pub mod rules;
+pub mod run;
 pub mod service;
 pub mod usque;
 #[cfg(windows)]

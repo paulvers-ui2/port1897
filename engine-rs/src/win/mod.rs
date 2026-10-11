@@ -19,6 +19,8 @@ pub mod ipconf;
 pub mod owner;
 pub mod proc;
 pub mod registry;
+pub mod stdio;
+pub mod sys;
 pub mod wfp;
 pub mod wintun;
 

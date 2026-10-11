@@ -107,6 +107,15 @@ impl dns::Dialer for Direct {
             Ok(Box::new(self.connect_tcp(addr).await?) as BoxStream)
         })
     }
+
+    fn dial_udp<'a>(&'a self, pid: &'a str, addr: SocketAddr) -> BoxFuture<'a, io::Result<UdpSocket>> {
+        Box::pin(async move {
+            if !pid.is_empty() && pid != BASE {
+                return Err(io::Error::other(format!("dial {addr}: exit {pid} is not supported yet")));
+            }
+            self.connect_udp(addr).await
+        })
+    }
 }
 
 /// Pins sockets with win/ifbind's Binder, as Go's protect.SkipBind and
