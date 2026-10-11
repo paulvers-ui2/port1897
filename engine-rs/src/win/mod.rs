@@ -19,6 +19,7 @@ pub mod owner;
 pub mod proc;
 pub mod registry;
 pub mod wfp;
+pub mod wintun;
 
 /// A handle closed on drop.
 pub struct OwnedHandle(pub windows_sys::Win32::Foundation::HANDLE);

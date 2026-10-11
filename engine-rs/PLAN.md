@@ -33,7 +33,7 @@ are where they are most likely to slip.
 | HTTP API server | hyper + hyper-util + http-body-util | 1.11.1 / 0.1.21 / 0.1.x | MIT | HTTP/1.1 only, like Go's server; axum is not needed for 10 routes |
 | JSON | serde, serde_json | 1.0.229 / 1.0.151 | MIT/Apache | Go's JSON quirks handled in our code (see below) |
 | Constant-time compare | subtle | 2.6.1 | BSD-3 | token check |
-| Wintun | wintun-bindings | 0.7.40 | MIT | maintained (tun2proxy org); `wintun` 0.5.1 is stale since 2025-01. `tun-rs` 2.8.11 (Apache-2.0) is the fallback |
+| Wintun | wintun-bindings | 0.7.40 (2026-08-17) | MIT | in use (`src/win/wintun.rs`), default features off; brings libloading 0.9.0 (ISC), log 0.4 and thiserror 2 (MIT/Apache). Maintained (tun2proxy org); `wintun` 0.5.1 is stale since 2025-01. `tun-rs` 2.8.11 (Apache-2.0) is the fallback. Its netsh helpers find netsh through PATH: not used |
 | Userspace TCP/IP | netstack-smoltcp (on smoltcp 0.14, 0BSD) | 0.2.4 | MIT/Apache | alternatives: ipstack 1.0.1 (Apache-2.0, own TCP, used by tun2proxy), own glue on smoltcp. Behind a trait so it can be swapped |
 | Packet parsing | etherparse | 0.21.0 | MIT/Apache | owner lookup, pcap, ICMP |
 | WireGuard | boringtun | 0.7.1 | BSD-3 | Cloudflare; sans-IO `Tunn`. gotatun 0.9.2 (Mullvad fork, MPL-2.0) is the alternative. Neither does WARP's reserved header bytes (see gaps) |
@@ -45,7 +45,7 @@ are where they are most likely to slip.
 | DNSCrypt | own client on `crypto_box`/`chacha20poly1305` (RustCrypto) | | MIT/Apache | `dnscrypt` 0.3.0 exists but is four months old with 170 downloads: not yet |
 | Oblivious DoH | odoh-rs | 1.0.5 | BSD-2 | Cloudflare; protocol only, transport is our DoH client |
 | SOCKS5 client | tokio-socks | 0.5.3 | MIT | TCP; UDP ASSOCIATE needs own code (fast-socks5 1.0.0 has some) |
-| Win32 | windows / windows-sys | 0.62.2 / 0.61.2 | MIT/Apache | IP Helper, WFP, tokens, pipes, registry |
+| Win32 | windows-sys | 0.61.2 | MIT/Apache | in use (`src/win/`): registry, processes, WFP, IP Helper; already in the lock file through tokio |
 | WFP | wfp (Mullvad) | 0.2.0 | MIT/Apache | evaluate; fallback is a port of `win/wfp` (from wireguard-windows, MIT) on `windows-sys` |
 | Windows service | windows-service (Mullvad) | 0.8.1 | MIT/Apache | |
 | MASQUE | none mature | | | quinn 0.11.12 + h3 0.0.8 (+ h3-datagram) could carry CONNECT-IP (RFC 9484); keep `usque.exe` as a child process |
@@ -254,7 +254,23 @@ Started in this branch (no admin needed, all unit-tested):
   rules, our-rule detection (fixed key in any case, "AuroraVPN" and
   "port1897" tags), with `nrpt_windows_test.go` ported. The HKLM backend,
   ipconfig /registerdns and DnsFlushResolverCache are still to write
-- next: `wintun.rs` adapter create/close wrapper (Windows only, not run here)
+- done: the Win32 backends in `src/win/` (Windows only; tests that change
+  the system are `#[ignore]`d with the reason, for the admin CI runner):
+  - `registry.rs` the `Registry` trait over the real registry (values as
+    x/sys/windows/registry reads them), the nudge (ipconfig /registerdns
+    from System32, no shell; DnsFlushResolverCache looked up in
+    dnsapi.dll); tested under HKCU as the Go tests are
+  - `proc.rs` hidden child processes by full path
+  - `owner.rs` win/owner over GetExtendedTcpTable/UdpTable, with its tests
+    (read only, no admin)
+  - `wfp.rs` executes the kill switch plan (dynamic session unless
+    persistent, one transaction, service SID matched as in Go); the whole
+    plan is installed in an aborted transaction on the CI runner
+  - `ipconf.rs` address, DNS (SetInterfaceDnsSettings looked up at run
+    time), metric, on-link routes, and the netsh fallback's commands
+  - `wintun.rs` adapter create/close over wintun-bindings, wintun.dll by
+    full path, tunnel type "AuroraVPN", 8 MiB ring; like wireguard-go it
+    does not set the interface MTU (the stack uses the planned one)
 
 Exit criteria: `tools/sim/e2e-windows.ps1` and `tools/sim/service-windows.ps1`
 pass with `fswin-rs.exe` copied in as `dist/fswin.exe`; iperf-style throughput

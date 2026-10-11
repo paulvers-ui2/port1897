@@ -41,6 +41,8 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_SystemInformation",
     "Win32_System_Threading",
 ] }
+# Wintun's DLL wrapper; default features off: no async, no logging hooks
+wintun-bindings = { version = "0.7.40", default-features = false }
 
 [profile.release]
 lto = true
