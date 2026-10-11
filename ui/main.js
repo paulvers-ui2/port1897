@@ -80,11 +80,11 @@ const DEFAULTS = {
   // Network and firewall
   mode: 'both', // dns | firewall | both (Android: "Choose mode")
   full: true,
-  killSwitch: false,
+  killSwitch: true,
   allowLan: true,
   // Firewall rules (Android: App info, Universal firewall, IP & domain rules)
   rules: { apps: {}, ips: [], domains: [] },
-  universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false, outgoingOnly: false },
+  universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false, outgoingOnly: true },
   dnsTypesAuto: true,
   dnsTypes: [1, 28, 5, 65, 64, 45], // A, AAAA, CNAME, HTTPS, SVCB, IPSECKEY: Android's defaults
   knownApps: [],

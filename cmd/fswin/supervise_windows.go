@@ -45,8 +45,9 @@ import (
 // --stall-timeout; see usqueDefaults); this is the backstop for what it
 // cannot fix from inside.
 //
-// It restarts usque on the same SOCKS port and credentials, so the exit
-// keeps pointing at it; on another port only when that one is taken.
+// It restarts usque on the same SOCKS port and credentials when it can, and
+// re-points the exit at it on every restart so firestack rebuilds its proxy
+// against the fresh process; a new port only when the old one is taken.
 const (
 	restartMax    = 60 * time.Second
 	probeFailures = 3
@@ -250,16 +251,10 @@ func (sv *supervisor) restart(why string, wait *time.Duration) bool {
 	if portFree(sv.port) {
 		u, err = startUsqueOn(sv.s, sv.port, sv.user, sv.pass)
 	} else {
-		// another program took the port meanwhile: a new one, and the exit
-		// moves to it
+		// another program took the port meanwhile: a new one, with new
+		// credentials, that readd below points the exit at
 		sv.logf("fswin: usque: port %d is taken; moving to another", sv.port)
-		if u, err = startUsqueOn(sv.s, 0, "", ""); err == nil {
-			if rerr := sv.readd(u.url); rerr != nil {
-				sv.logf("fswin: usque: exit not moved to the new port: %v", rerr)
-			} else {
-				sv.port, sv.user, sv.pass = u.port, u.user, u.pass
-			}
-		}
+		u, err = startUsqueOn(sv.s, 0, "", "")
 	}
 	sv.mu.Lock()
 	sv.cur = u // nil when it failed: run tries again
@@ -269,6 +264,17 @@ func (sv *supervisor) restart(why string, wait *time.Duration) bool {
 	if err != nil {
 		sv.logf("fswin: usque: restart %d failed: %v", n, err)
 		return true
+	}
+	// Point the exit at the fresh usque, on the same port or a new one. On
+	// the same port the URL is unchanged, but re-adding it still has
+	// firestack replace the proxy object (ipn.proxifier.add): its dialer and
+	// pooled connections pointed at the usque that just died, and a same-port
+	// restart used to leave them in place -- the stall that only a full
+	// engine restart cleared.
+	if rerr := sv.readd(u.url); rerr != nil {
+		sv.logf("fswin: usque: exit not refreshed to 127.0.0.1:%d: %v", u.port, rerr)
+	} else {
+		sv.port, sv.user, sv.pass = u.port, u.user, u.pass
 	}
 	sv.logf("fswin: usque: restart %d: up on 127.0.0.1:%d (waiting for traffic)", n, u.port)
 	return true

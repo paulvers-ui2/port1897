@@ -309,9 +309,9 @@ select.fld-input { background: var(--row); }
 
 /* ---- firewall screens (firewall.js) ---- */
 .pad { padding: 12px 20px; }
-.row.clickable { cursor: pointer; }
-.row.clickable:hover { background: color-mix(in srgb, var(--line) 60%, transparent); }
-.row.clickable:focus-visible { outline: 2px solid var(--good); outline-offset: -2px; }
+.row.clickable, .stat-row.clickable { cursor: pointer; }
+.row.clickable:hover, .stat-row.clickable:hover { background: color-mix(in srgb, var(--line) 60%, transparent); }
+.row.clickable:focus-visible, .stat-row.clickable:focus-visible { outline: 2px solid var(--good); outline-offset: -2px; }
 .chips { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 4px; }
 .chip {
   display: inline-flex;

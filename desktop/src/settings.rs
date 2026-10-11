@@ -67,10 +67,10 @@ pub fn defaults() -> &'static S {
             // Network and firewall
             "mode": "both",
             "full": true,
-            "killSwitch": false,
+            "killSwitch": true,
             "allowLan": true,
             "rules": { "apps": {}, "ips": [], "domains": [] },
-            "universal": { "udp": false, "icmp": true, "http": false, "unknown": false, "dnsBypass": false, "newApps": false, "locked": false, "lockdown": false, "outgoingOnly": false },
+            "universal": { "udp": false, "icmp": true, "http": false, "unknown": false, "dnsBypass": false, "newApps": false, "locked": false, "lockdown": false, "outgoingOnly": true },
             "dnsTypesAuto": true,
             "dnsTypes": [1, 28, 5, 65, 64, 45],
             "knownApps": [],
