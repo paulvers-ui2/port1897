@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 // The control API lets the app window (which runs without admin rights) read
@@ -71,8 +73,41 @@ type fwStat struct {
 }
 
 type trafStat struct {
-	Rx int64 `json:"rx"` // bytes, closed connections only
+	Rx int64 `json:"rx"` // bytes to the PC: the adapter's count, or closed connections' if more
 	Tx int64 `json:"tx"`
+}
+
+// GetIfEntry2Ex came with Windows 10 1703; x/sys panics when a function is
+// missing, so it is looked up first.
+var procGetIfEntry2Ex = windows.NewLazySystemDLL("iphlpapi.dll").NewProc("GetIfEntry2Ex")
+
+// adapterBytes is what the adapter received (rx: from the tunnel, for the
+// PC's programs) and sent, from Windows' own counters, which run live. The
+// adapter is made new at each start, so they count from it.
+func adapterBytes(luid uint64) (rx, tx int64, ok bool) {
+	if luid == 0 || procGetIfEntry2Ex.Find() != nil {
+		return 0, 0, false
+	}
+	row := windows.MibIfRow2{InterfaceLuid: luid}
+	if windows.GetIfEntry2Ex(windows.MibIfEntryNormal, &row) != nil {
+		return 0, 0, false
+	}
+	return int64(row.InOctets), int64(row.OutOctets), true //nolint:gosec // G115: byte counts, far below 2^63
+}
+
+// adapterCounts is adapterBytes; tests replace it.
+var adapterCounts = adapterBytes
+
+// trafficOf is the traffic to show: closed connections count their bytes
+// only when they close (a download that ran for an hour showed nothing until
+// it ended), the adapter's counters run live and also count DNS and packet
+// headers. Whichever is more, so the total never falls back when the
+// adapter cannot be read.
+func trafficOf(closedRx, closedTx int64, luid uint64) trafStat {
+	if rx, tx, ok := adapterCounts(luid); ok && rx+tx > closedRx+closedTx {
+		return trafStat{Rx: rx, Tx: tx}
+	}
+	return trafStat{Rx: closedRx, Tx: closedTx}
 }
 
 type apiServer struct {
@@ -311,7 +346,7 @@ func statusOf(b *bridge, o options, started time.Time, exitID, dnsLabel string) 
 			BlockedApps: b.blockedApps(),
 			AppsSeen:    l.appsSeen(),
 		},
-		Traffic:   trafStat{Rx: l.rx.Load(), Tx: l.tx.Load()},
+		Traffic:   trafficOf(l.rx.Load(), l.tx.Load(), b.luid),
 		Dial:      o.dialStrategy,
 		Conflicts: append([]string{}, o.conflicts...),
 	}

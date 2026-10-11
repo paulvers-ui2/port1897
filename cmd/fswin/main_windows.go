@@ -402,6 +402,7 @@ func run(o options) error {
 	}
 	b := newBridge(binder, initial, o.block)
 	b.kill = kill
+	b.luid = luid
 	b.dnsDirect = o.dnsDirect
 	b.dnsCache = o.dnsCache
 	b.dnssec = o.dnssec

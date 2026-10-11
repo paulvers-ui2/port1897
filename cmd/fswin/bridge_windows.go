@@ -91,6 +91,7 @@ type bridge struct {
 	selfuid   int32
 	exit      atomic.Value // string: proxy id for allowed flows and DNS
 	kill      *killSwitch  // set once before the API starts; nil without Wintun
+	luid      uint64       // the adapter, for its byte counters; 0 if unknown
 }
 
 var _ intra.Bridge = (*bridge)(nil)
