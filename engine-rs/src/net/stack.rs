@@ -175,6 +175,26 @@ impl TcpFlow {
     pub fn was_reset(&self) -> bool {
         lock(&self.conn).reset
     }
+
+    /// A handle that resets the connection later, once the stream itself
+    /// is split into halves for the relay.
+    pub fn aborter(&self) -> Aborter {
+        Aborter { conn: self.conn.clone(), notify: self.notify.clone() }
+    }
+}
+
+/// Resets a TCP connection whose stream is elsewhere.
+#[derive(Clone)]
+pub struct Aborter {
+    conn: Arc<Mutex<Conn>>,
+    notify: Arc<Notify>,
+}
+
+impl Aborter {
+    pub fn abort(&self) {
+        lock(&self.conn).abort = true;
+        self.notify.notify_one();
+    }
 }
 
 impl AsyncRead for TcpFlow {
