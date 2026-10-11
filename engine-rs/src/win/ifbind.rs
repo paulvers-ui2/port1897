@@ -261,11 +261,10 @@ fn on_link_prefixes(skip: u32) -> Vec<Prefix> {
             // SAFETY: a list in the adapters buffer, as for_each_adapter's
             let ua = unsafe { &*u };
             // SAFETY: Windows' address of the family it says
-            if let Some(ip) = unsafe { sockaddr_ip(ua.Address.lpSockaddr) } {
-                if let Some(p) = on_link_prefix(ip, ua.OnLinkPrefixLength) {
+            if let Some(ip) = unsafe { sockaddr_ip(ua.Address.lpSockaddr) }
+                && let Some(p) = on_link_prefix(ip, ua.OnLinkPrefixLength) {
                     out.push(p);
                 }
-            }
             u = ua.Next;
         }
         true
@@ -299,11 +298,10 @@ impl Binder {
     /// The current IPv4 and IPv6 default interfaces (0 if none).
     pub fn indexes(&self) -> (u32, u32) {
         let mut c = self.lock();
-        if let Some((a, b, at)) = c.idx {
-            if at.elapsed() < REFRESH {
+        if let Some((a, b, at)) = c.idx
+            && at.elapsed() < REFRESH {
                 return (a, b);
             }
-        }
         let (a, b) = (default_index(AF_INET, self.skip), default_index(AF_INET6, self.skip));
         c.idx = Some((a, b, Instant::now()));
         (a, b)

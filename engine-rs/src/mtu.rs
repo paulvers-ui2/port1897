@@ -129,11 +129,10 @@ pub fn plan_mtu(link: i64, link_why: &str, exit_id: &str, cfg: &str, usque_extra
 /// is "auto".
 pub fn uapi_mtu(cfg: &str) -> i64 {
     for line in cfg.lines() {
-        if let Some(v) = golike::trim_space(line).strip_prefix("mtu=") {
-            if let Some(m) = parse_mtu(v).filter(|m| *m > 0) {
+        if let Some(v) = golike::trim_space(line).strip_prefix("mtu=")
+            && let Some(m) = parse_mtu(v).filter(|m| *m > 0) {
                 return m;
             }
-        }
     }
     0
 }

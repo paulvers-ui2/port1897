@@ -22,6 +22,7 @@ pub mod gojson;
 pub mod golike;
 pub mod killswitch;
 pub mod mtu;
+pub mod net;
 pub mod netaddr;
 pub mod nrpt;
 pub mod rules;

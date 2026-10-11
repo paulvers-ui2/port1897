@@ -60,11 +60,10 @@ fn partition_point(n: usize, pred: impl Fn(usize) -> bool) -> usize {
 /// The country of the first address in a DNS answer (a csv of rdata).
 pub fn answer_country(rdata: &str) -> String {
     for a in rdata.split(',') {
-        if let Some(ip) = netaddr::parse_addr(a.trim()) {
-            if !ip.is_unspecified() {
+        if let Some(ip) = netaddr::parse_addr(a.trim())
+            && !ip.is_unspecified() {
                 return country(Some(ip));
             }
-        }
     }
     String::new()
 }

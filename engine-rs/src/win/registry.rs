@@ -108,7 +108,7 @@ impl Registry for WinRegistry {
                 _ => return None,
             }
         }
-        let u16s: Vec<u16> = buf.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let u16s: Vec<u16> = buf.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
         match typ {
             REG_DWORD if buf.len() == 4 => Some(RegValue::Dword(u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]))),
             REG_SZ => Some(RegValue::Sz(super::from_wide(&u16s))),
