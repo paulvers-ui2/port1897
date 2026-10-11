@@ -117,7 +117,8 @@ function Events() { @(Api '/api/events?after=0&max=2000') | ForEach-Object { $_ 
 function FailedLookups() { @(Events | Where-Object { $_.kind -eq 'dns' -and $_.error }) }
 
 function Note-Background([string]$scenario, $failed, [string]$mine) {
-  $others = @($failed | Where-Object { $_.domain -ne $mine })
+  # $null when nothing failed: a pipeline would pass it on as one item
+  $others = @($failed | Where-Object { $_ -and $_.domain -ne $mine })
   if ($others.Count) {
     Note $scenario 'background lookups that failed (not the script''s)' (($others | ForEach-Object { "$($_.domain) ($($_.app)): $($_.error)" }) -join '; ')
   }
