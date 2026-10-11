@@ -274,10 +274,9 @@ fn main() {
             // "Block all apps when the PC is locked"
             winutil::watch_lock(|locked| {
                 rules::SCREEN_LOCKED.store(locked, Ordering::Relaxed);
-                let s = settings::read();
-                if settings::sub_bool(&s, "universal", "locked") {
-                    tauri::async_runtime::spawn(async move {
-                        rules::push_rules(&s).await;
+                if settings::sub_bool(&settings::read(), "universal", "locked") {
+                    tauri::async_runtime::spawn(async {
+                        rules::push_rules().await;
                     });
                 }
             });

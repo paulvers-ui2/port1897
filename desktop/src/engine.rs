@@ -186,7 +186,7 @@ pub fn engine_args(s: &S) -> Vec<String> {
         }
         _ => {}
     }
-    rules::write_rules(s);
+    // written by start_once (rules::save_rules), from the newest settings
     a.extend(["-rules".into(), p(paths::rules_file())]);
     let routes = rules::routes_of(s);
     if !routes.is_empty() {
@@ -371,6 +371,7 @@ async fn start_once() -> Value {
             Err(_) => break,
         }
     }
+    rules::save_rules().await;
     let args = engine_args(&s);
     let pid = match service_call(&json!({ "cmd": "start", "args": args })).await {
         Some(r) if r.get("ok").and_then(Value::as_bool) == Some(true) => {

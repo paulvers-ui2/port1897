@@ -46,7 +46,7 @@ pub async fn settings_set(patch: Value) -> Value {
         *s = settings::migrate(std::mem::take(s));
     });
     if rules::RULE_KEYS.iter().any(|k| p.contains_key(*k)) {
-        rules::push_rules(&merged).await;
+        rules::push_rules().await;
     }
     obj(merged)
 }
@@ -61,7 +61,7 @@ pub async fn rules_set(patch: Value) -> Value {
         }
         *s = settings::migrate(std::mem::take(s));
     });
-    let r = rules::push_rules(&s).await;
+    let r = rules::push_rules().await;
     json!({ "settings": s, "warnings": r.get("warnings").cloned().unwrap_or(json!("")) })
 }
 
@@ -98,7 +98,7 @@ pub async fn engine_block(app: Value, block: bool) -> Value {
             apps.insert(name.clone(), Value::Object(a));
         }
     });
-    rules::push_rules(&s).await;
+    rules::push_rules().await;
     obj(s)
 }
 

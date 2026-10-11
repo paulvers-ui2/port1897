@@ -94,8 +94,17 @@ async fn run(app: AppHandle) {
             if let Some(st) = &st {
                 let p = history::pump(st, &s).await;
                 fresh = p.fresh;
-                if let Some(ps) = p.learned.push {
-                    rules::push_rules(&ps).await;
+                if p.learned.changed {
+                    // beside the loop: a push may wait its turn behind one
+                    // from the window, and sends the newest rules then
+                    let push = p.learned.push;
+                    tauri::async_runtime::spawn(async move {
+                        if push {
+                            rules::push_rules().await;
+                        } else {
+                            rules::save_rules().await;
+                        }
+                    });
                 }
                 if let Some(n) = p.learned.notice {
                     notify(&app, &n);
