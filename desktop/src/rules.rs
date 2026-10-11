@@ -135,10 +135,22 @@ fn write_rule_set(rs: &Value) {
 // last change is what the engine and rules.json end up with.
 static PUSH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// rules.json for the next start, from the settings as they are now.
-pub async fn save_rules() {
+/// rules.json for the next start, from the settings as they are now; returns
+/// what it wrote, for push_if_changed once the engine is up.
+pub async fn save_rules() -> Value {
     let _g = PUSH.lock().await;
-    write_rule_set(&rule_set(&settings::read()));
+    let rs = rule_set(&settings::read());
+    write_rule_set(&rs);
+    rs
+}
+
+/// A change made while the engine started could miss it: written after the
+/// engine read rules.json, and pushed before its API was up. Once it is up,
+/// this sends the rules again if they are not the ones it started with.
+pub async fn push_if_changed(started_with: &Value) {
+    if rule_set(&settings::read()) != *started_with {
+        push_rules().await;
+    }
 }
 
 /// Rules apply at once: the file for the next start, the API for now. Call

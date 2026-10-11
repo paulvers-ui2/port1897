@@ -371,7 +371,7 @@ async fn start_once() -> Value {
             Err(_) => break,
         }
     }
-    rules::save_rules().await;
+    let started_rules = rules::save_rules().await;
     let args = engine_args(&s);
     let pid = match service_call(&json!({ "cmd": "start", "args": args })).await {
         Some(r) if r.get("ok").and_then(Value::as_bool) == Some(true) => {
@@ -401,6 +401,7 @@ async fn start_once() -> Value {
             settings::update(|s| {
                 s.insert("wasRunning".into(), json!(true));
             });
+            tokio::spawn(async move { rules::push_if_changed(&started_rules).await });
             return json!({ "ok": true });
         }
         if !winutil::alive(pid) {
