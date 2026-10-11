@@ -14,12 +14,14 @@
 //! with the reason: they run on the admin CI runner, never on a PC whose
 //! VPN they could break.
 
+pub mod asuser;
 pub mod ifbind;
 pub mod ipconf;
 pub mod owner;
 pub mod proc;
 pub mod registry;
 pub mod stdio;
+pub mod svc;
 pub mod sys;
 pub mod wfp;
 pub mod wintun;

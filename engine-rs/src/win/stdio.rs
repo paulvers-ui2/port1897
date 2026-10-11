@@ -14,16 +14,10 @@ use windows_sys::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
 use windows_sys::Win32::System::Console::{STD_ERROR_HANDLE, STD_OUTPUT_HANDLE, SetStdHandle};
 use windows_sys::Win32::System::Threading::{INFINITE, WaitForSingleObject};
 
-/// Sends stdout and stderr to path (created, or emptied), as Go's
-/// redirectOutput. Rust's stdout looks the handle up on every write, so
-/// SetStdHandle is enough; the file stays open for the process's life.
-pub fn redirect_output(path: &str) -> Result<(), String> {
-    let f = std::fs::OpenOptions::new().create(true).write(true).truncate(true).open(crate::golike::clean(path)).map_err(|e| format!("open {path}: {e}"))?;
-    redirect_to(f)
-}
-
-/// Sends stdout and stderr to an open file (one the service's user token
-/// opened, say).
+/// Sends stdout and stderr to the -logfile, opened with the user's rights
+/// (asuser), as Go's redirectOutput. Rust's stdout looks the handle up on
+/// every write, so SetStdHandle is enough; the file stays open for the
+/// process's life.
 pub fn redirect_to(f: std::fs::File) -> Result<(), String> {
     let h = f.into_raw_handle() as HANDLE;
     // SAFETY: h is an open file handle we never close

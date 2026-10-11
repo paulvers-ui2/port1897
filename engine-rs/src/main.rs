@@ -59,15 +59,24 @@ fn engine(o: flags::Options) -> ExitCode {
     use tokio::sync::watch;
 
     if !o.service.is_empty() {
-        eprintln!("fswin: -service: AuroraVPN Service is not part of this engine yet (fswin-rs); use fswin.exe");
-        return ExitCode::FAILURE;
+        if let Err(e) = win::svc::service_main(&o.service, &o.service_app, VERSION) {
+            eprintln!("fswin: -service: {e}");
+            return ExitCode::FAILURE;
+        }
+        return ExitCode::SUCCESS;
     }
-    if o.user_token != 0 {
-        eprintln!("fswin: -user-token is not supported by this engine yet (fswin-rs); use fswin.exe");
-        return ExitCode::FAILURE;
-    }
+    // the app's files are opened with the user's rights: those of the user
+    // who asked the service, or else the engine's own, lowered
+    let tok = if o.user_token != 0 { win::asuser::UserToken::from_handle(o.user_token) } else { win::asuser::UserToken::own() };
+    let tok = match tok {
+        Ok(t) => Arc::new(t),
+        Err(e) => {
+            eprintln!("fswin: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     if !o.log_file.is_empty()
-        && let Err(e) = win::stdio::redirect_output(&o.log_file)
+        && let Err(e) = tok.create_file(&o.log_file).and_then(win::stdio::redirect_to)
     {
         eprintln!("fswin: -logfile: {e}");
         return ExitCode::FAILURE;
@@ -80,7 +89,10 @@ fn engine(o: flags::Options) -> ExitCode {
         }
     };
     let dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_string_lossy().into_owned())).unwrap_or_default();
-    let sys: Arc<dyn run::Sys> = Arc::new(win::sys::WinSys::new(&dir, Box::new(|p| std::fs::read(p).map_err(|e| format!("open {p}: {e}")))));
+    let sys: Arc<dyn run::Sys> = Arc::new(win::sys::WinSys::new(&dir, {
+        let tok = tok.clone();
+        Box::new(move |p| tok.read_file(p))
+    }));
     let stop_tx = Arc::new(watch::channel(None).0);
     // AuroraVPN Service asks the engine it started to stop with an event
     if o.stop_handle != 0 {
