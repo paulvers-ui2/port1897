@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use tokio::net::{TcpSocket, TcpStream, UdpSocket};
 
-use crate::dns::{self, BoxFuture, BoxStream};
+use crate::dns::{self, BoxDatagram, BoxFuture, BoxStream};
 use crate::exit::BASE;
 
 /// How long a connect may take: a dial that never answers would hold the
@@ -34,9 +34,10 @@ pub trait Protect: Send + Sync {
 
 /// Opens the sockets of the flows the engine allows.
 pub trait Dialer: Send + Sync {
-    fn tcp(&self, dst: SocketAddr) -> BoxFuture<'_, io::Result<TcpStream>>;
-    /// A UDP socket connected to dst.
-    fn udp(&self, dst: SocketAddr) -> BoxFuture<'_, io::Result<UdpSocket>>;
+    /// A stream to dst: a socket, or a proxy's tunnel to it.
+    fn tcp(&self, dst: SocketAddr) -> BoxFuture<'_, io::Result<BoxStream>>;
+    /// A datagram socket connected to dst.
+    fn udp(&self, dst: SocketAddr) -> BoxFuture<'_, io::Result<BoxDatagram>>;
 }
 
 /// Sockets on the physical interface; without a Protect, plain ones (DNS
@@ -88,12 +89,12 @@ fn raw<S: std::os::fd::AsRawFd>(s: &S) -> u64 {
 }
 
 impl Dialer for Direct {
-    fn tcp(&self, dst: SocketAddr) -> BoxFuture<'_, io::Result<TcpStream>> {
-        Box::pin(self.connect_tcp(dst))
+    fn tcp(&self, dst: SocketAddr) -> BoxFuture<'_, io::Result<BoxStream>> {
+        Box::pin(async move { Ok(Box::new(self.connect_tcp(dst).await?) as BoxStream) })
     }
 
-    fn udp(&self, dst: SocketAddr) -> BoxFuture<'_, io::Result<UdpSocket>> {
-        Box::pin(self.connect_udp(dst))
+    fn udp(&self, dst: SocketAddr) -> BoxFuture<'_, io::Result<BoxDatagram>> {
+        Box::pin(async move { Ok(Box::new(self.connect_udp(dst).await?) as BoxDatagram) })
     }
 }
 
@@ -108,12 +109,12 @@ impl dns::Dialer for Direct {
         })
     }
 
-    fn dial_udp<'a>(&'a self, pid: &'a str, addr: SocketAddr) -> BoxFuture<'a, io::Result<UdpSocket>> {
+    fn dial_udp<'a>(&'a self, pid: &'a str, addr: SocketAddr) -> BoxFuture<'a, io::Result<BoxDatagram>> {
         Box::pin(async move {
             if !pid.is_empty() && pid != BASE {
                 return Err(io::Error::other(format!("dial {addr}: exit {pid} is not supported yet")));
             }
-            self.connect_udp(addr).await
+            Ok(Box::new(self.connect_udp(addr).await?) as BoxDatagram)
         })
     }
 }
@@ -171,7 +172,7 @@ mod tests {
 
         let u = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let ua = u.local_addr().unwrap();
-        let s = d.udp(ua).await.unwrap();
+        let s = d.connect_udp(ua).await.unwrap();
         s.send(b"x").await.unwrap();
         let (n, from) = u.recv_from(&mut b).await.unwrap();
         assert_eq!((n, from), (1, s.local_addr().unwrap()));

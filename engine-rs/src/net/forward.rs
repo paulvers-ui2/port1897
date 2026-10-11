@@ -22,7 +22,7 @@ use tokio::sync::{Notify, mpsc};
 
 use super::dial::Dialer;
 use super::stack::{Flow, TcpFlow, TcpRequest, UdpFlow};
-use crate::dns::{Resolver, msg};
+use crate::dns::{BoxStream, Resolver, msg};
 use crate::engine::{Closer, Engine, FAKEDNS4, Mark, Owners, SocketSummary, UNKNOWN_UID};
 use crate::exit::{BASE, BLOCK};
 
@@ -87,7 +87,10 @@ impl Owners for NoOwners {
 pub struct Forwarder {
     engine: Arc<Engine>,
     owners: Arc<dyn Owners>,
-    dialer: Arc<dyn Dialer>,
+    /// Base: the physical interface
+    direct: Arc<dyn Dialer>,
+    /// the exits (and later the routes) by proxy id
+    exits: Mutex<HashMap<String, Arc<dyn Dialer>>>,
     resolver: Arc<dyn Resolver>,
     pub domains: DomainMap,
     /// open connections by id, each with what ends it
@@ -102,13 +105,27 @@ impl Forwarder {
         Forwarder {
             engine,
             owners,
-            dialer,
+            direct: dialer,
+            exits: Mutex::new(HashMap::new()),
             resolver,
             domains: DomainMap::default(),
             live: Mutex::new(HashMap::new()),
             udp_idle: UDP_IDLE,
             fake_dns,
         }
+    }
+
+    /// Sends the flows the engine marks with proxy id through d.
+    pub fn add_exit(&self, id: &str, d: Arc<dyn Dialer>) {
+        self.exits.lock().unwrap_or_else(|e| e.into_inner()).insert(id.to_string(), d);
+    }
+
+    /// The dialer for a flow's proxy id; None for an exit that is not here.
+    fn dialer(&self, pid: &str) -> Option<Arc<dyn Dialer>> {
+        if pid == BASE {
+            return Some(self.direct.clone());
+        }
+        self.exits.lock().unwrap_or_else(|e| e.into_inner()).get(pid).cloned()
     }
 
     /// The tunnel's CloseConns for the engine: closes the connections in a
@@ -215,14 +232,14 @@ impl Forwarder {
             return;
         }
         let began = Instant::now();
-        if m.pid != BASE {
+        let Some(dialer) = self.dialer(&m.pid) else {
             req.refuse();
             self.closed("tcp", &m, dst, (0, 0), began, &format!("exit {} is not supported yet", m.pid));
             return;
-        }
+        };
         let stop = self.track(&m.cid);
         let remote = tokio::select! {
-            r = self.dialer.tcp(dst) => r,
+            r = dialer.tcp(dst) => r,
             _ = stop.notified() => Err(io::Error::other("closed")),
         };
         let remote = match remote {
@@ -253,12 +270,12 @@ impl Forwarder {
             while let Ok(Some(_)) = tokio::time::timeout(self.udp_idle, f.recv()).await {}
             return;
         }
-        if m.pid != BASE {
+        let Some(dialer) = self.dialer(&m.pid) else {
             self.closed("udp", &m, dst, (0, 0), began, &format!("exit {} is not supported yet", m.pid));
             return;
-        }
+        };
         let stop = self.track(&m.cid);
-        let sock = match self.dialer.udp(dst).await {
+        let sock = match dialer.udp(dst).await {
             Ok(s) => s,
             Err(e) => {
                 self.closed("udp", &m, dst, (0, 0), began, &e.to_string());
@@ -363,10 +380,10 @@ async fn pump<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(mut r: R, mut w: W, n
 /// Copies a program's connection and the remote one both ways until both
 /// are done, one fails (the program then gets a reset, as from firestack),
 /// or stop says so. Returns why it ended early, "" if it did not.
-async fn relay(flow: TcpFlow, remote: tokio::net::TcpStream, stop: &Notify, tx: &AtomicI64, rx: &AtomicI64) -> String {
+async fn relay(flow: TcpFlow, remote: BoxStream, stop: &Notify, tx: &AtomicI64, rx: &AtomicI64) -> String {
     let aborter = flow.aborter();
     let (fr, fw) = tokio::io::split(flow);
-    let (rr, rw) = remote.into_split();
+    let (rr, rw) = tokio::io::split(remote);
     let both = async { tokio::try_join!(pump(fr, rw, tx), pump(rr, fw, rx)) };
     let why = tokio::select! {
         r = both => match r {
