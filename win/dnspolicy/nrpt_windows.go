@@ -42,9 +42,14 @@ var (
 
 const (
 	// our rule's key: one fixed id, so a rule left by a crash is found and
-	// replaced, never doubled
-	ruleKey = "{4A0F3C2E-8B71-4D5A-9E26-AF1D7C3B5E90}"
-	tag     = "AuroraVPN"
+	// replaced, never doubled. Of two catch-all (".") rules Windows applies
+	// the one whose registry key sorts first, whichever was created first, so
+	// ours starts with zeros: another VPN's random GUID sorts after it and
+	// ours wins (TestRuleKeySortsFirst).
+	ruleKey = "{00000000-AE0A-4D5A-9E26-AF1D7C3B5E90}"
+	// the key used before that; a rule left under it is still ours, to remove
+	oldRuleKey = "{4A0F3C2E-8B71-4D5A-9E26-AF1D7C3B5E90}"
+	tag        = "AuroraVPN"
 	// ConfigOptions 0x8: answer from GenericDNSServers. Version 2 is what
 	// Add-DnsClientNrptRule writes.
 	configGenericServers = 0x8
@@ -56,10 +61,11 @@ const (
 // next change of DNS settings applies it).
 var ErrNotApplied = errors.New("dnspolicy: the DNS Client did not confirm the change")
 
-// ours tells our rules apart: the fixed key, or the comment of one that
-// PowerShell made ("port1897": the app's name before 0.3).
+// ours tells our rules apart: the fixed key (or the one used before it), or
+// the comment of one that PowerShell made ("port1897": the app's name before 0.3).
 func ours(r rule) bool {
-	return strings.EqualFold(r.key, ruleKey) || r.comment == tag || r.comment == "port1897" ||
+	return strings.EqualFold(r.key, ruleKey) || strings.EqualFold(r.key, oldRuleKey) ||
+		r.comment == tag || r.comment == "port1897" ||
 		r.display == tag || r.display == "port1897"
 }
 
