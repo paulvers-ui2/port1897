@@ -331,11 +331,12 @@ func (e *wendpoint) readLoop(w *wdev) {
 				continue
 			}
 			w.read.Add(int64(sz))
-			// netstack keeps the payload; bufs[i] is reused next read.
-			b := make([]byte, sz)
-			copy(b, bufs[i][:sz])
+			// MakeWithData copies into netstack's own pooled buffer, so the
+			// packet holds no reference to bufs[i] once it returns and bufs[i]
+			// is free to be reused on the next Read. Passing the read buffer
+			// straight in drops a heap allocation and a copy per inbound packet.
 			pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{
-				Payload: buffer.MakeWithData(b),
+				Payload: buffer.MakeWithData(bufs[i][:sz]),
 			})
 			m.queuePacket(pkt, false)
 			pkt.DecRef()
