@@ -12,12 +12,14 @@
 
 pub mod conns;
 pub mod dnssec;
+pub mod engine;
 pub mod events;
 pub mod exit;
 pub mod flags;
 pub mod geoip;
 pub mod gojson;
 pub mod golike;
+pub mod killswitch;
 pub mod mtu;
 pub mod netaddr;
 pub mod rules;

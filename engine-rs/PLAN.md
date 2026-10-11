@@ -160,7 +160,7 @@ Legend: **P1..P4** = phase. Effort is for the Rust side only.
 | Go | Rust approach | Phase | Effort |
 |---|---|---|---|
 | `rules_windows.go` (modes, IP/domain rules per app and global, universal rules, outgoing only, pause, screen locked, DNS query types, known apps) | faithful port with its tests (`rules.rs`) | P1 | done |
-| `bridge_windows.go` decisions (Flow, Inflow, OnSocketClosed, OnQuery, OnUpstreamAnswer, OnResponse, enforce on rule change, close by app/ids, app uid table) | engine core in `engine.rs`, independent of the stack; the netstack glue calls it | P1 | done (logic) |
+| `bridge_windows.go` decisions (Flow, Inflow, OnSocketClosed, OnQuery, OnUpstreamAnswer, OnResponse, enforce on rule change, close by app/ids, app uid table) | engine core in `engine.rs`, independent of the stack; the netstack glue calls it. Not ported: Bind4/Bind6/Protect (they belong to the dialer, `win/ifbind`) | P1 | done (logic) |
 | `events_windows.go` journal (2000-event ring, counters, top apps/domains) | `events.rs` | P1 | done |
 | `conns_windows.go` (open connection table, why-cache for blocked DNS) | `conns.rs` | P1 | done |
 | `geoip` (embedded db-ip tables) | `include_bytes!` of the same files, same binary search (`geoip.rs`) | P1 | done |
@@ -216,10 +216,15 @@ Started in this branch (no admin needed, all unit-tested):
 - done: `mtu.rs` the MTU plan, with `mtu_windows_test.go` ported; `exit.rs`
   (wg-quick to the exit's config, WARP account config, exit names; Go's
   base64 decoder and 64 KiB line limit copied so errors match)
-- next: `engine.rs` the bridge's decisions and counters, with the bridge tests ported
+- done: `engine.rs` the bridge's decisions and counters (flow, inflow, socket
+  closed, DNS query/upstream answer/response, rule updates that close
+  connections, close by app or id, owner lookup and proxy stats behind
+  `Owners` / `Proxies` traits), with `bridge_windows_test.go` ported
+- started: `killswitch.rs` the kill switch state machine behind a `Firewall`
+  trait with a fake; next: the WFP filter plan and fixed keys
 - next: `api.rs` the control API (same paths, guard, JSON) over the engine
 - next: `usque.rs` (flag checks, defaults), `service.rs` (engine-arg checks, paths)
-- next: `killswitch.rs` and `nrpt.rs` behind `Firewall` / `Registry` traits with fakes
+- next: `nrpt.rs` behind a `Registry` trait with a fake
 - next: `wintun.rs` adapter create/close wrapper (Windows only, not run here)
 
 Exit criteria: `tools/sim/e2e-windows.ps1` and `tools/sim/service-windows.ps1`
