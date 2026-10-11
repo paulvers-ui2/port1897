@@ -12,6 +12,7 @@
 
 pub mod api;
 pub mod conns;
+pub mod dns;
 pub mod dnssec;
 pub mod engine;
 pub mod events;
