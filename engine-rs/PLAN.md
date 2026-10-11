@@ -237,7 +237,9 @@ Started in this branch (no admin needed, all unit-tested):
   (5 s) and body (15 s) read timeouts are in. Several servers on several
   tokio runtimes in one test process stalled for 10 s now and then on this
   PC, so the API tests run one server at a time; one server with 64
-  parallel clients does not stall (to be re-checked on the CI runner)
+  parallel clients does not stall. The stall did not come back after a
+  clean build (that build had corrupt rlibs); the lock stays as cheap
+  insurance
 - done: `usque.rs` the `-usque-flags` checks (core flags, pflag shorthand
   bundles, subcommands), `usqueDefaults`, the start and register argument
   lists, the SOCKS URL, exit-code wording, the "tunnel lost" log trigger and
@@ -316,6 +318,11 @@ real networks does not shrink as much.
 - **Property tests / fuzzing**: the Go fuzz targets (`FuzzRules`,
   `FuzzCountry`) become `cargo fuzz` targets (nightly, CI only) and
   stable-toolchain property tests on random inputs.
+- **CI now**: `.github/workflows/engine-rs.yml` (windows-latest, Rust
+  1.99.0): build, clippy `-D warnings`, unit tests, then the `#[ignore]`d
+  system tests one at a time with the pinned Wintun 0.14.1. Not yet: a
+  `cargo fmt --check` (the code is not rustfmt-formatted), the e2e scripts
+  below (no engine binary yet), `cargo deny`.
 - **Integration on GitHub's Windows runners** (admin, like
   `.github/workflows/sim.yml`): a new job builds `fswin-rs.exe`, downloads
   Wintun 0.14.1 with the pinned SHA-256, copies the binary in as

@@ -1,0 +1,61 @@
+name: engine-rs
+
+on:
+  push:
+    paths:
+      - "engine-rs/**"
+      - ".github/workflows/engine-rs.yml"
+  pull_request:
+    paths:
+      - "engine-rs/**"
+      - ".github/workflows/engine-rs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (windows/amd64)
+    runs-on: windows-latest # admin: the ignored tests change WFP, HKLM and adapters
+    defaults:
+      run:
+        shell: bash
+        working-directory: engine-rs
+    env:
+      RUST_TOOLCHAIN: "1.99.0"
+      CARGO_TERM_COLOR: always
+      WINTUN_SHA256: 07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component clippy
+          rustup override set "$RUST_TOOLCHAIN"
+          rustc --version
+      - name: Build
+        run: cargo build --locked --all-targets
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Unit tests
+        run: cargo test --locked
+      # Wintun 0.14.1 with the same pinned hash as windows.yml, in a folder
+      # of its own; the adapter test loads it by full path.
+      - name: Wintun
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir wintun-dl && cd wintun-dl
+          curl -sSfL -o wintun.zip https://www.wintun.net/builds/wintun-0.14.1.zip
+          echo "$WINTUN_SHA256  wintun.zip" | sha256sum -c -
+          unzip -q wintun.zip
+          mkdir -p ../wintun-amd64
+          cp wintun/bin/amd64/wintun.dll ../wintun-amd64/
+      # The tests that change the system (registry nudge, NRPT under HKLM,
+      # WFP in an aborted transaction and a dynamic kill switch, a Wintun
+      # adapter); one at a time, as they share the system.
+      - name: System tests (admin)
+        env:
+          FSWIN_WINTUN_DIR: ${{ runner.temp }}\wintun-amd64
+        run: cargo test --locked --lib -- --ignored --test-threads=1
