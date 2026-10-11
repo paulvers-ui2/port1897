@@ -27,6 +27,7 @@ pub mod mtu;
 pub mod net;
 pub mod netaddr;
 pub mod nrpt;
+pub mod routes;
 pub mod rules;
 pub mod run;
 pub mod service;
