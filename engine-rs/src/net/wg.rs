@@ -460,7 +460,7 @@ impl Core {
                 }
                 _ if now.duration_since(t) > LINGER => {
                     s.abort();
-                    keep.push((h, now - LINGER));
+                    keep.push((h, t));
                 }
                 _ => keep.push((h, t)),
             }
