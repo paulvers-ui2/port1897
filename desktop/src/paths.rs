@@ -22,9 +22,19 @@ pub fn init(resource_dir: Option<PathBuf>) {
     let dir = std::env::var_os("FSWIN_PATH")
         .map(PathBuf::from)
         .and_then(|p| p.parent().map(PathBuf::from))
-        .or_else(|| resource_dir.map(|r| r.join("engine")).filter(|d| d.join("fswin.exe").exists()))
+        .or_else(|| resource_dir.map(|r| plain(r).join("engine")).filter(|d| d.join("fswin.exe").exists()))
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("ui").join("engine"));
     let _ = ENGINE_DIR.set(dir);
+}
+
+/// Tauri's resource folder is canonical, \\?\C:\...; the engine is started
+/// (UAC prompt included) and logged by its plain C:\... path. Long paths
+/// and \\?\UNC\ ones keep the prefix they need.
+fn plain(p: PathBuf) -> PathBuf {
+    match p.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(rest) if rest.len() < 230 && rest.as_bytes().get(1) == Some(&b':') && rest.as_bytes().get(2) == Some(&b'\\') => PathBuf::from(rest),
+        _ => p,
+    }
 }
 
 pub fn engine_dir() -> PathBuf {
@@ -104,4 +114,19 @@ pub fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> 
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, data)?;
     std::fs::rename(&tmp, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plain;
+    use std::path::PathBuf;
+
+    #[test]
+    fn verbatim_drive_paths_become_plain() {
+        assert_eq!(plain(PathBuf::from(r"\\?\C:\Program Files\AuroraVPN")), PathBuf::from(r"C:\Program Files\AuroraVPN"));
+        assert_eq!(plain(PathBuf::from(r"C:\AuroraVPN")), PathBuf::from(r"C:\AuroraVPN"));
+        assert_eq!(plain(PathBuf::from(r"\\?\UNC\server\share\AuroraVPN")), PathBuf::from(r"\\?\UNC\server\share\AuroraVPN"));
+        let long = format!(r"\\?\C:\{}", "a".repeat(300));
+        assert_eq!(plain(PathBuf::from(&long)), PathBuf::from(&long));
+    }
 }
