@@ -14,6 +14,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -136,7 +137,9 @@ func TestProbe(t *testing.T) {
 }
 
 // The user's report: the chain failed and did not come back. A usque that
-// dies is back within a second, on the same port, so the exit keeps working.
+// dies is back within a second, on the same port and credentials, and the
+// exit is re-pointed at it (same URL) so firestack rebuilds its proxy rather
+// than keep a dialer onto the dead process.
 func TestSupervisorRestartsUsqueThatDies(t *testing.T) {
 	t.Setenv(fakeUsqueEnv, "ok")
 	s := fakeSetup(t)
@@ -144,7 +147,8 @@ func TestSupervisorRestartsUsqueThatDies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sv := supervise(s, u, 0, func(string) error { t.Error("the exit moved, though its port was free"); return nil })
+	var readdURL atomic.Value // the URL the exit was last re-pointed at
+	sv := supervise(s, u, 0, func(url string) error { readdURL.Store(url); return nil })
 	defer sv.stop()
 
 	killed := time.Now()
@@ -161,6 +165,16 @@ func TestSupervisorRestartsUsqueThatDies(t *testing.T) {
 			}
 			if restarts, _ := sv.status(); restarts != 1 {
 				t.Errorf("restarts = %d, want 1", restarts)
+			}
+			// the exit is re-pointed even on the same port (same URL), so
+			// firestack drops its stale dialer onto the dead usque
+			deadline := time.Now().Add(3 * time.Second)
+			for readdURL.Load() != u.url {
+				if time.Now().After(deadline) {
+					t.Errorf("exit re-pointed at %v, want the unchanged URL %q", readdURL.Load(), u.url)
+					break
+				}
+				time.Sleep(20 * time.Millisecond)
 			}
 			return
 		}
