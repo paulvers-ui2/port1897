@@ -11,6 +11,7 @@
 //! provides with sockets bound to the physical interface.
 
 pub mod cache;
+pub mod dns53;
 pub mod doh;
 pub mod dot;
 pub mod fake;
@@ -21,7 +22,7 @@ pub mod tls;
 
 use std::future::Future;
 use std::io;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -47,6 +48,18 @@ pub type BoxStream = Box<dyn Stream>;
 /// Base sockets to the physical interface so they stay out of the tunnel.
 pub trait Dialer: Send + Sync {
     fn dial_tcp<'a>(&'a self, pid: &'a str, addr: SocketAddr) -> BoxFuture<'a, io::Result<BoxStream>>;
+
+    /// A UDP socket connected to addr. The default binds an unbound
+    /// socket of addr's family, which is all the tests need; the stack's
+    /// dialer binds it to the physical interface as it does TCP.
+    fn dial_udp<'a>(&'a self, _pid: &'a str, addr: SocketAddr) -> BoxFuture<'a, io::Result<tokio::net::UdpSocket>> {
+        Box::pin(async move {
+            let local: SocketAddr = if addr.is_ipv4() { (Ipv4Addr::UNSPECIFIED, 0).into() } else { (Ipv6Addr::UNSPECIFIED, 0).into() };
+            let s = tokio::net::UdpSocket::bind(local).await?;
+            s.connect(addr).await?;
+            Ok(s)
+        })
+    }
 }
 
 /// A plain tokio dialer, for tests and tools: no interface binding.
