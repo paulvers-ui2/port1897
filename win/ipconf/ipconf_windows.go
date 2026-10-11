@@ -147,6 +147,18 @@ const (
 // registering its name through it, as netsh's "set dnsservers
 // register=none". ErrNoDNSAPI on a Windows too old for it.
 func SetDNS(luid uint64, server netip.Addr) error {
+	// RegistrationEnabled and RegisterAdapterName stay 0: off
+	return setDNS(luid, server.String(), dnsSettingNameServer|dnsSettingRegistrationEnabled|dnsSettingRegisterAdapterName)
+}
+
+// ClearDNS takes the adapter's IPv4 DNS servers away, as wireguard-windows
+// does with an empty list. Like any change of an adapter's DNS settings, it
+// makes Windows' DNS Client reload them, NRPT rules among them.
+func ClearDNS(luid uint64) error {
+	return setDNS(luid, "", dnsSettingNameServer)
+}
+
+func setDNS(luid uint64, servers string, flags uint64) error {
 	if procSetInterfaceDnsSettings.Find() != nil {
 		return ErrNoDNSAPI
 	}
@@ -154,15 +166,11 @@ func SetDNS(luid uint64, server netip.Addr) error {
 	if err := call(procConvertInterfaceLuidToGuid, uintptr(unsafe.Pointer(&luid)), uintptr(unsafe.Pointer(&guid))); err != nil { //nolint:gosec // G103: a netioapi row
 		return fmt.Errorf("ipconf: interface guid: %w", err)
 	}
-	ns, err := windows.UTF16PtrFromString(server.String())
+	ns, err := windows.UTF16PtrFromString(servers)
 	if err != nil {
 		return err
 	}
-	s := dnsInterfaceSettings{
-		Version:    1,
-		Flags:      dnsSettingNameServer | dnsSettingRegistrationEnabled | dnsSettingRegisterAdapterName,
-		NameServer: ns, // RegistrationEnabled and RegisterAdapterName stay 0: off
-	}
+	s := dnsInterfaceSettings{Version: 1, Flags: flags, NameServer: ns}
 	err = call(procSetInterfaceDnsSettings, uintptr(unsafe.Pointer(&guid)), uintptr(unsafe.Pointer(&s))) //nolint:gosec // G103: a netioapi row
 	runtime.KeepAlive(ns)
 	if err != nil {

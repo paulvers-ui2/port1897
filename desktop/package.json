@@ -1,0 +1,12 @@
+{
+  "name": "auroravpn-desktop",
+  "private": true,
+  "license": "MPL-2.0",
+  "scripts": {
+    "tauri": "tauri",
+    "dist": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.5"
+  }
+}

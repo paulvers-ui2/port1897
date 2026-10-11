@@ -15,7 +15,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -25,8 +27,9 @@ import (
 // NRPT rules (the Name Resolution Policy Table) are registry keys, one per
 // rule, as Tailscale writes them. Windows' DNS Client does not read them
 // again by itself (the Simulate run showed the rule written but not in
-// force), so apply has it take the change in, as Tailscale does: ipconfig
-// /registerdns, which makes Windows notice changed DNS settings. This
+// force). It does when an adapter's DNS settings change, and Nudge has it
+// take the change in, as Tailscale does: ipconfig /registerdns, which makes
+// Windows notice changed DNS settings. This
 // package used to run PowerShell's Add-DnsClientNrptRule instead: about
 // 1.5 s a call, two calls per start and one per stop.
 var (
@@ -61,8 +64,10 @@ func ours(r rule) bool {
 }
 
 // Add replaces any of our rules with one sending all names (".") to server,
-// then flushes the DNS cache. If the process dies without Remove, the rule
-// stays and DNS fails until Remove (or Add) runs again.
+// then flushes the DNS cache. The DNS Client takes the rule in when an
+// adapter's DNS settings change next (fswin sets its adapter's DNS server
+// right after), and Nudge makes sure of it. If the process dies without
+// Remove, the rule stays and DNS fails until Remove (or Add) runs again.
 func Add(server netip.Addr) error {
 	if err := removeOurs(); err != nil {
 		return err
@@ -85,14 +90,29 @@ func Add(server netip.Addr) error {
 		_ = registry.DeleteKey(root, localRules+`\`+ruleKey)
 		return fmt.Errorf("dnspolicy: add: %w", err)
 	}
-	return nudge(false)
+	flush()
+	return nil
 }
 
 // Remove deletes our rules, and has the DNS Client drop them: a rule left in
 // force after the engine stops would send every lookup to an address no one
-// answers.
+// answers. It waits for the nudge, at most 5 s (for fswin -cleanup).
 func Remove() error {
-	return errors.Join(removeOurs(), nudge(true))
+	n, err := Drop()
+	n.Wait(5 * time.Second)
+	return err
+}
+
+// Drop deletes our rules and starts the nudge without waiting for it. The
+// engine's stop goes on to clear its adapter's DNS server and remove the
+// adapter, either of which makes the DNS Client reload; the nudge, the
+// backup, is a process of its own and finishes after the engine has gone.
+// Waiting up to 5 s for it held every stop up (fswin: stop: NRPT rule
+// removed after 7249 ms).
+func Drop() (*Nudging, error) {
+	errRemove := removeOurs()
+	n, errNudge := Nudge()
+	return n, errors.Join(errRemove, errNudge)
 }
 
 // Others lists catch-all (".") rules that are not ours, such as another
@@ -166,40 +186,53 @@ func list(path string) ([]rule, error) {
 	return rules, nil
 }
 
-// applyHook replaces nudge in tests, which write rules under HKCU.
+// applyHook replaces the nudge (and the cache flushes) in tests, which write
+// rules under HKCU.
 var applyHook func() error
 
-// nudge has the DNS Client take a rule change in, and empties its cache:
-// ipconfig /registerdns makes Windows notice changed DNS settings (about
-// 3 s on the Simulate runner). fswin writes its rule before the adapter gets
-// its DNS server, which makes the DNS Client reload too; this is the backup,
-// and does not hold the start up (wait false). At a stop (wait true) it is
-// waited for, at most 5 s: the rule must be out of force once fswin is gone,
-// and a nudge still running when the next start nudges kept that one from
-// taking effect (Simulate, PR #28).
-func nudge(wait bool) error {
+// Nudge has the DNS Client take a rule change in, and empties its cache:
+// ipconfig /registerdns makes Windows notice changed DNS settings (about 3 s
+// on the Simulate runner; it also renews every adapter's DHCP lease and
+// registers the PC's names). It is the backup to an adapter's DNS change,
+// which makes the DNS Client reload too, and returns at once. Wait on the
+// result closes it; it never returns nil.
+func Nudge() (*Nudging, error) {
 	if applyHook != nil {
-		return applyHook()
+		return &Nudging{}, applyHook()
 	}
 	flush()
 	h, err := startHidden(systemTool("ipconfig.exe"), "/registerdns")
 	if err != nil {
-		return fmt.Errorf("%w: ipconfig /registerdns: %w", ErrNotApplied, err)
+		return &Nudging{}, fmt.Errorf("%w: ipconfig /registerdns: %w", ErrNotApplied, err)
 	}
-	done := func() {
-		_ = windows.CloseHandle(h)
-		flush() // once more after it, for answers cached meanwhile
-	}
-	if wait {
-		_, _ = windows.WaitForSingleObject(h, 5000)
-		done()
-		return nil
-	}
-	go func() {
-		_, _ = windows.WaitForSingleObject(h, windows.INFINITE)
-		done()
-	}()
-	return nil
+	return &Nudging{h: h}, nil
+}
+
+// Nudging is a nudge (ipconfig /registerdns) under way.
+type Nudging struct {
+	once sync.Once
+	h    windows.Handle // the ipconfig process; 0 if it did not start
+}
+
+// Wait waits up to d (forever if d < 0) for the nudge to end, then empties
+// the DNS cache once more, for answers cached meanwhile; it reports whether
+// the nudge ended. One that has not goes on by itself: ipconfig is a
+// process of its own. Only the first Wait waits.
+func (n *Nudging) Wait(d time.Duration) (ended bool) {
+	ended = true
+	n.once.Do(func() {
+		if n.h != 0 {
+			ms := uint32(windows.INFINITE)
+			if d >= 0 {
+				ms = uint32(min(d.Milliseconds(), 1<<31)) //nolint:gosec // G115: bounded above
+			}
+			ev, err := windows.WaitForSingleObject(n.h, ms)
+			ended = err == nil && ev == windows.WAIT_OBJECT_0
+			_ = windows.CloseHandle(n.h)
+		}
+		flush()
+	})
+	return ended
 }
 
 // startHidden starts exe, a full path, with fixed args, hidden: through
@@ -241,6 +274,9 @@ var procDnsFlushResolverCache = windows.NewLazySystemDLL("dnsapi.dll").NewProc("
 // flush empties the DNS cache, as ipconfig /flushdns does, so no answer from
 // before the change is used after it.
 func flush() {
+	if applyHook != nil {
+		return // a test: leave this PC's cache alone
+	}
 	if procDnsFlushResolverCache.Find() == nil {
 		_, _, _ = syscall.SyscallN(procDnsFlushResolverCache.Addr())
 	}

@@ -61,17 +61,22 @@ function Start-Fswin([string]$name, [string[]]$extra) {
       # how long fswin took to come up, from its own "up on ... in N ms" line
       $up = Select-String -Path $log -Pattern ' in (\d+) ms ' -ErrorAction SilentlyContinue | Select-Object -First 1
       if ($up) { Note $name 'engine start' "$($up.Matches[0].Groups[1].Value) ms" }
-      return [pscustomobject]@{ Proc = $p; Log = $log }
+      return [pscustomobject]@{ Proc = $p; Log = $log; Name = $name }
     } catch {}
     if ($p.HasExited) { break }
   }
   throw "fswin ($name) did not come up (exit $($p.ExitCode)); log:`n$(Get-Content $log -Raw -ErrorAction SilentlyContinue)"
 }
 
-function Stop-Fswin($f) {
+# -NoCleanup leaves fswin -cleanup to the caller, to check what the stop
+# itself undid first (-cleanup removes the NRPT rule too, and waits for
+# Windows to drop it).
+function Stop-Fswin($f, [switch]$NoCleanup) {
+  $sw = [Diagnostics.Stopwatch]::StartNew()
   try { $null = Api '/api/stop' 'POST' } catch {}
   if (-not $f.Proc.WaitForExit(45000)) { Stop-Process -Id $f.Proc.Id -Force -ErrorAction SilentlyContinue }
-  & $fswin -cleanup | Out-Null
+  Note $f.Name 'engine stop' "$($sw.ElapsedMilliseconds) ms"
+  if (-not $NoCleanup) { & $fswin -cleanup | Out-Null }
 }
 
 function Start-FakeDns([string]$addr, [string]$mode) {
@@ -194,7 +199,9 @@ try {
     $sys = Resolve-DnsName example.com -Type A -DnsOnly -QuickTimeout -ErrorAction Stop | Where-Object Type -eq 'A' | ForEach-Object IPAddress
     Note $s 'a normal Windows lookup with both rules' ($sys -join ',')
   } catch { Note $s 'a normal Windows lookup with both rules' "error: $($_.Exception.Message)" }
-  Stop-Fswin $f
+  # the stop alone, without -cleanup: it no longer waits for ipconfig
+  # /registerdns, which runs on after fswin has gone
+  Stop-Fswin $f -NoCleanup
   $left = @(Get-DnsClientNrptRule | Where-Object { $_.Comment -in 'AuroraVPN', 'port1897' -or $_.DisplayName -in 'AuroraVPN', 'port1897' })
   Check $s "fswin removed its own NRPT rule on stop" ($left.Count -eq 0) "$($left.Count) left"
   # and the DNS Client dropped it: a rule left in force sends every lookup
@@ -206,6 +213,17 @@ try {
     Start-Sleep -Milliseconds 100
   } while ($sw.ElapsedMilliseconds -lt 5000)
   Check $s 'the DNS Client no longer applies it' ($stale.Count -eq 0) "after $($sw.ElapsedMilliseconds) ms more: $((Get-DnsClientNrptPolicy | ForEach-Object { "$($_.Namespace) -> $($_.NameServers)" }) -join '; ')"
+  # a start right after the stop, while the stop's ipconfig may still run,
+  # must have its rule in force as quickly
+  $f = Start-Fswin "$s-again" @('-dns', 'doh', '-nrpt')
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  do {
+    $ours = @(Get-DnsClientNrptPolicy | Where-Object { $_.Namespace -eq '.' -and @($_.NameServers) -contains '10.111.222.3' })
+    if ($ours.Count) { break }
+    Start-Sleep -Milliseconds 100
+  } while ($sw.ElapsedMilliseconds -lt 5000)
+  Check $s 'a start right after the stop has its NRPT rule applied' ($ours.Count -gt 0) "after $($sw.ElapsedMilliseconds) ms more"
+  Stop-Fswin $f
   Remove-SimRules
 
   # ---------- a plain DNS upstream that misbehaves ----------

@@ -912,11 +912,23 @@ function lastLogLines(n) {
 let expectedStop = false;
 let enginePid = 0; // the engine this app started, 0 if not known
 
-async function startEngine() {
-  const s = readSettings();
-  const r = await startEngineOnce();
-  appLog(r.ok ? 'engine running' : `engine did not start: ${r.error}`, `(mode ${s.mode}, DNS ${s.dnsType}, exit ${s.exit}, kill switch ${s.killSwitch ? 'on' : 'off'})`, r.log ? '\n' + r.log : '');
+// Starts and stops run one at a time. A resume at sign-in and a click both
+// started: the second renamed engine.log under the first, which then read the
+// new engine's log and reported it as its own failure (2026-10-11 05:21).
+let engineOp = Promise.resolve();
+function oneAtATime(fn) {
+  const r = engineOp.then(fn, fn);
+  engineOp = r.catch(() => {});
   return r;
+}
+
+function startEngine() {
+  return oneAtATime(async () => {
+    const s = readSettings();
+    const r = await startEngineOnce();
+    appLog(r.ok ? 'engine running' : `engine did not start: ${r.error}`, `(mode ${s.mode}, DNS ${s.dnsType}, exit ${s.exit}, kill switch ${s.killSwitch ? 'on' : 'off'})`, r.log ? '\n' + r.log : '');
+    return r;
+  });
 }
 
 async function startEngineOnce() {
@@ -983,10 +995,12 @@ async function startEngineOnce() {
   return { ok: false, error: 'The engine did not start in 60 seconds.', log: lastLogLines(15) };
 }
 
-async function stopEngine(byUser = true) {
-  const r = await stopEngineOnce(byUser);
-  appLog(r.ok ? 'engine stopped' : `engine did not stop: ${r.error}`, byUser ? '(by the user)' : '');
-  return r;
+function stopEngine(byUser = true) {
+  return oneAtATime(async () => {
+    const r = await stopEngineOnce(byUser);
+    appLog(r.ok ? 'engine stopped' : `engine did not stop: ${r.error}`, byUser ? '(by the user)' : '');
+    return r;
+  });
 }
 
 async function stopEngineOnce(byUser) {
@@ -1369,9 +1383,16 @@ function notify(body) {
 }
 
 let autoDisabledFor = 0;
+let statusMisses = 0;
 
 async function statusLoop() {
-  const st = await engineStatus();
+  let st = await engineStatus();
+  // One unanswered status call (3 s timeout) is not a stop, unless the engine
+  // we started is gone: with Proton VPN connected, single misses showed
+  // "Protection stopped unexpectedly" six times in 3 minutes (2026-10-10).
+  if (st || !lastStatus || expectedStop || (enginePid && !alive(enginePid))) statusMisses = 0;
+  else if (++statusMisses < 2) st = lastStatus;
+  else statusMisses = 0;
   const s = readSettings();
   const was = !!lastStatus;
   lastStatus = st;
