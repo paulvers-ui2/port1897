@@ -15,6 +15,16 @@ use windows_sys::Win32::System::Threading::{
 use super::{err_text, wide};
 use crate::{golike, service};
 
+/// A kernel handle, closed on drop.
+pub struct OwnedHandle(pub HANDLE);
+
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        // SAFETY: the handle is owned here and closed once
+        unsafe { CloseHandle(self.0) };
+    }
+}
+
 /// A process handle, closed on drop.
 pub struct Process {
     h: HANDLE,

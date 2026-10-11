@@ -17,6 +17,17 @@
 pub mod owner;
 pub mod proc;
 pub mod registry;
+pub mod wfp;
+
+/// A handle closed on drop.
+pub struct OwnedHandle(pub windows_sys::Win32::Foundation::HANDLE);
+
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        // SAFETY: the handle is ours and closed once
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+    }
+}
 
 /// s as a NUL-terminated UTF-16 string.
 pub fn wide(s: &str) -> Vec<u16> {
@@ -32,12 +43,28 @@ pub fn from_wide(b: &[u16]) -> String {
 /// A Win32 error code in Windows' words, as Go's syscall.Errno prints it
 /// ("Access is denied.").
 pub fn err_text(code: u32) -> String {
-    let s = std::io::Error::from_raw_os_error(code as i32).to_string();
-    // Rust adds " (os error N)"; Go does not
-    match s.rfind(" (os error ") {
-        Some(i) => s[..i].to_string(),
-        None => s,
+    use windows_sys::Win32::System::Diagnostics::Debug::{FORMAT_MESSAGE_ARGUMENT_ARRAY, FORMAT_MESSAGE_FROM_SYSTEM, FORMAT_MESSAGE_IGNORE_INSERTS, FormatMessageW};
+    let flags = FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ARGUMENT_ARRAY | FORMAT_MESSAGE_IGNORE_INSERTS;
+    let mut b = [0u16; 300];
+    // English (United States) first, then any language, as Go
+    for lang in [0x0409, 0] {
+        // SAFETY: b holds b.len() characters; no source, no arguments
+        let n = unsafe { FormatMessageW(flags, std::ptr::null(), code, lang, b.as_mut_ptr(), b.len() as u32, std::ptr::null()) } as usize;
+        if n > 0 {
+            let mut n = n.min(b.len());
+            while n > 0 && (b[n - 1] == u16::from(b'\n') || b[n - 1] == u16::from(b'\r')) {
+                n -= 1;
+            }
+            return String::from_utf16_lossy(&b[..n]);
+        }
     }
+    // codes with no text, such as WFP's 0x8032xxxx ones on some systems
+    format!("winapi error #{code}")
+}
+
+/// The calling thread's last Win32 error, in words.
+pub fn last_error() -> String {
+    err_text(std::io::Error::last_os_error().raw_os_error().unwrap_or(0) as u32)
 }
 
 /// A program in System32, never one found through PATH, which the user's
