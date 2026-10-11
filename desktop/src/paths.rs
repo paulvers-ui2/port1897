@@ -29,7 +29,10 @@ pub fn init(resource_dir: Option<PathBuf>) {
             .or_else(|| packaged.clone().filter(|d| d.join("fswin.exe").exists()))
             .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("ui").join("engine"))
     } else {
-        packaged.unwrap_or_default()
+        // never a relative path, which would mean the current folder
+        packaged
+            .or_else(|| std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("engine"))))
+            .unwrap_or_default()
     };
     let _ = ENGINE_DIR.set(dir);
 }

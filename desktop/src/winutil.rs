@@ -55,15 +55,25 @@ pub fn win_quote(arg: &str) -> String {
 /// Starts exe as admin (a UAC prompt), hidden, and returns its process id.
 /// The prompt waits for the user, so this runs on a thread of its own.
 pub async fn launch_elevated(exe: &Path, args: &[String]) -> Result<u32, String> {
+    // only a full path: a bare name would be looked up from the current
+    // folder, which is no place to pick what runs as admin
+    if !exe.is_absolute() {
+        return Err(format!("Engine not found at {}", exe.display()));
+    }
     let (exe, args) = (exe.to_path_buf(), args.to_vec());
     tokio::task::spawn_blocking(move || {
+        use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize};
         // ShellExecuteEx wants COM on its thread (Microsoft's docs)
-        // SAFETY: once per call on this pool thread; a thread that has COM
-        // already gets S_FALSE or RPC_E_CHANGED_MODE, both harmless here
-        unsafe {
-            let _ = windows::Win32::System::Com::CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED | windows::Win32::System::Com::COINIT_DISABLE_OLE1DDE);
+        // SAFETY: on this pool thread; a thread that has COM already gets
+        // S_FALSE (counted, so undone below too) or RPC_E_CHANGED_MODE
+        let com = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) }.is_ok();
+        let r = launch_elevated_blocking(&exe, &args);
+        if com {
+            // SAFETY: pairs the successful CoInitializeEx above, so the pool
+            // thread goes back without COM for whatever runs on it next
+            unsafe { CoUninitialize() };
         }
-        launch_elevated_blocking(&exe, &args)
+        r
     })
     .await
     .map_err(|e| e.to_string())?

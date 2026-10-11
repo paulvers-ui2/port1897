@@ -347,7 +347,7 @@ async fn start_once() -> Value {
     engine_exited(Duration::from_secs(20)).await;
 
     let exe = paths::engine_path();
-    if !exe.exists() {
+    if !exe.is_absolute() || !exe.exists() {
         return fail(format!("Engine not found at {}", exe.display()));
     }
     let s = settings::read();
