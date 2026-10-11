@@ -10,8 +10,8 @@ name: Security
 #   govulncheck     known vulnerabilities reachable from the Windows code
 #   Semgrep         community security rules for Go, JS and workflows
 #   Electronegativity  Electron security settings of the app (ui/)
-#   OSV-Scanner     known vulnerabilities in Go modules and npm packages
-#                   (go.mod and ui/package-lock.json)
+#   OSV-Scanner     known vulnerabilities in Go modules, npm packages and Rust
+#                   crates (go.mod and the lockfiles in ui/ and desktop/)
 #   Gitleaks        secrets committed anywhere in history
 #   zizmor          GitHub Actions security (injection, pinning, tokens)
 #   PSScriptAnalyzer  PowerShell scripts (tools/)
@@ -82,6 +82,7 @@ jobs:
     timeout-minutes: 40
     permissions:
       contents: read
+      pull-requests: read # only-new-issues reads the pull request's diff
       security-events: write
     strategy:
       fail-fast: false
@@ -103,14 +104,11 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         # pull requests fail on new issues, shown as annotations; on main and
         # the weekly run the whole backlog goes to code scanning and the job
-        # summary only, not hundreds of annotations. New is against the base
-        # commit, from the git history (fetch-depth 0): the action's
-        # only-new-issues reads the pull request's diff from the API, which
-        # GitHub refuses past 20000 lines, and then lints everything.
+        # summary only, not hundreds of annotations
         with:
           version: v2.14.0
+          only-new-issues: ${{ github.event_name == 'pull_request' }}
           args: >-
-            ${{ github.event_name == 'pull_request' && format('--new-from-rev={0}', github.event.pull_request.base.sha) || '' }}
             --config=.github/golangci-security.yml
             --output.text.path=${{ github.event_name == 'pull_request' && 'stdout' || format('golangci-{0}.txt', matrix.goos) }}
             --output.sarif.path=golangci-${{ matrix.goos }}.sarif

@@ -45,28 +45,15 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
   or proxy, the rest through the main VPN.
 - **Kill switch** (`-killswitch`): Windows Filtering Platform rules block everything
   outside the tunnel, and keep blocking if the engine crashes.
-- **The app** (`ui/`): an Electron app styled after the Android home screen, with
+- **App window** (`ui/`): an Electron app styled after the Android home screen, with
   a tray icon. Download the installer or the portable exe from the
   [latest release](https://github.com/paulvers-ui2/port1897/releases/latest);
   every change merged into `main` is published there as a new version.
-- **AuroraVPN Service:** installed with the app, it starts protection for any
-  Windows user without an admin prompt.
 
-Not yet: IPv6. See the [roadmap](#roadmap).
+Not yet: a background service, IPv6, country and network-provider stats.
+See the [roadmap](#roadmap).
 
-## Install
-
-1. Download **AuroraVPN-Setup-&lt;version&gt;.exe** from the
-   [latest release](https://github.com/paulvers-ui2/port1897/releases/latest)
-   (or the portable exe, which asks for admin rights at each start).
-2. Disconnect any other VPN (Proton VPN, NordVPN, ...). They fight over the same
-   network settings.
-3. Run the installer, open AuroraVPN and press Start.
-
-Uninstalling and upgrading keep your settings, logs and WARP identities in
-`%APPDATA%\AuroraVPN`; delete that folder to remove them too.
-
-## Try the engine on its own
+## Try it
 
 1. Open the latest successful
    [Windows build](https://github.com/paulvers-ui2/port1897/actions/workflows/windows.yml?query=branch%3Amain+is%3Asuccess)
@@ -144,14 +131,11 @@ Please tell us how it went with a
 | Phase | What | Status |
 |---|---|---|
 | 1 | firestack builds on Windows; Wintun network adapter; `fswin` test tool | done |
-| 2 | Firewall core: program lookup, blocking, DNS leak fix, kill switch, rules engine | done |
-| 3 | WireGuard, WARP, WARP over MASQUE and the WARP chain | done |
-| 4 | App window and tray icon, installer, AuroraVPN Service | done |
-| 5 | The engine in Rust, a drop-in for `fswin.exe` | stopped; the Go engine ships (see [MAINTAINERS.md](MAINTAINERS.md#the-rust-attempt)) |
-| 6 | Code signing, auto-update, IPv6 | planned |
+| 2 | Firewall core: program lookup, blocking, DNS leak fix, kill switch, rules engine and SQLite storage | in progress |
+| 3 | WireGuard and WARP (MASQUE) inside the service | planned |
+| 4 | App window and tray icon, installer, code signing, auto-update | planned |
 
-The original design is in [PORT.md](PORT.md). To keep the project going, see
-[MAINTAINERS.md](MAINTAINERS.md).
+The design and the details of every phase are in [PORT.md](PORT.md).
 
 ## How it is put together
 
@@ -160,8 +144,7 @@ The original design is in [PORT.md](PORT.md). To keep the project going, see
 | `intra/`, `tunnel/` | firestack, the engine (from [celzero/firestack](https://github.com/celzero/firestack) via [paulvers-ui/firestack](https://github.com/paulvers-ui/firestack)). Linux-only parts sit in `_linux.go` files with `_windows.go` counterparts. |
 | `intra/netstack/wintun_windows.go` | Connects firestack's network stack to a Wintun adapter |
 | `win/` | Windows-only pieces: `ifbind` (keep firestack's own traffic out of the tunnel), `owner` (which program owns a connection), `dnspolicy` (DNS leak fix) |
-| `cmd/fswin` | The engine (`fswin.exe`) and AuroraVPN Service |
-| `ui/` | The app (Electron); its screens are in `ui/renderer`, its installer step in `ui/build/installer.nsh` |
+| `cmd/fswin` | The test tool |
 | `third_party/gotrie` | A patched copy of a firestack dependency, with Windows support |
 
 Builds run on GitHub Actions: every push builds Windows x64 and ARM64 and checks

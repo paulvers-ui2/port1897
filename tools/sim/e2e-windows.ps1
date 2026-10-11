@@ -110,20 +110,6 @@ function Wait-DnsEvent([string]$domain, [int]$seconds) {
 
 function Events() { @(Api '/api/events?after=0&max=2000') | ForEach-Object { $_ } }
 
-# The failed lookups in the journal. Windows on the runner sends its own
-# background lookups through the engine too, and the engine makes one of its
-# own at start (ipv4only.arpa), so a status count of 0 depends on the runner;
-# the checks look at the script's names, and the others are listed.
-function FailedLookups() { @(Events | Where-Object { $_.kind -eq 'dns' -and $_.error }) }
-
-function Note-Background([string]$scenario, $failed, [string]$mine) {
-  # $null when nothing failed: a pipeline would pass it on as one item
-  $others = @($failed | Where-Object { $_ -and $_.domain -ne $mine })
-  if ($others.Count) {
-    Note $scenario 'background lookups that failed (not the script''s)' (($others | ForEach-Object { "$($_.domain) ($($_.app)): $($_.error)" }) -join '; ')
-  }
-}
-
 function LogHas($f, [string]$pattern) { [bool](Select-String -Path $f.Log -Pattern $pattern -Quiet) }
 
 function Rand([string]$tag) { "sim-$tag-$([guid]::NewGuid().ToString('N').Substring(0, 8)).example.com" }
@@ -149,10 +135,7 @@ try {
   Check $s "queries to ${fake4}:53 are not logged as flows" ($flows.Count -eq 0) "$($flows.Count) flow events"
   $st = Api '/api/status'
   Check $s 'status has an empty conflicts list' (($st.PSObject.Properties.Name -contains 'conflicts') -and @($st.conflicts).Count -eq 0) (($st.conflicts | ConvertTo-Json -Compress))
-  $bad = FailedLookups
-  Check $s 'no failed lookup of example.com' (-not ($bad | Where-Object domain -eq 'example.com')) "queries $($st.dns.queries), failed $($st.dns.failed)"
-  Check $s 'status counts every failed lookup the DNS log shows' ($st.dns.failed -ge $bad.Count) "status $($st.dns.failed), log $($bad.Count)"
-  Note-Background $s $bad 'example.com'
+  Check $s 'status counts no failed lookups' ($st.dns.failed -eq 0) "queries $($st.dns.queries), failed $($st.dns.failed)"
   Check $s 'engine log names the adapter firestack uses' (LogHas $f "own traffic leaves via interface #\d+ \S") ''
   Check $s "firestack's own log lines reach engine.log, with timestamps" (LogHas $f '^\d\d:\d\d:\d\d\.\d{6} ') ''
   $env:SIM_LIVE = '1'; $env:SIM_TUN = 'AuroraVPN'
@@ -265,9 +248,7 @@ try {
       Check $s "the DNS log says '$($c.want)'" ($ev -and $ev.error -match [regex]::Escape($c.want)) ($ev | ConvertTo-Json -Compress)
       Check $s 'status counts it as failed' ($st.dns.failed -ge 1) "failed $($st.dns.failed)"
     } else {
-      $bad = FailedLookups
-      Check $s 'NXDOMAIN is an answer, not a failure' ($ev -and -not $ev.error -and -not ($bad | Where-Object domain -eq $name)) "event $($ev | ConvertTo-Json -Compress); failed $($st.dns.failed)"
-      Note-Background $s $bad $name
+      Check $s 'NXDOMAIN is an answer, not a failure' ($ev -and -not $ev.error -and $st.dns.failed -eq 0) "event $($ev | ConvertTo-Json -Compress); failed $($st.dns.failed)"
     }
     Check $s 'fakedns received the query' ([bool](Select-String -Path (Join-Path $Out "fakedns-$($c.mode).log") -Pattern 'sim-' -Quiet)) ''
     Stop-Fswin $f
