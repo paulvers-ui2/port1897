@@ -33,3 +33,10 @@ targetRules = ["generic-api-key"]
 condition = "AND"
 commits = ["6f65ed0a37d6b201b0b16b195aae3e31fc383521"]
 paths = ['''^intra/ipn/warp/agw\.go$''']
+
+[[allowlists]]
+description = "The wg(8) man page's example WireGuard keys in engine-rs test fixtures (routes and run tests), written as literal config lines in these two commits; constants since 4aceb3e, as exit.rs's tests keep them"
+targetRules = ["generic-api-key"]
+condition = "AND"
+commits = ["37cb6d67b8083849abcf1b5e664b1ff33ed8aaac", "4ee9afea4eec2bee02b1cdf519d01ef82fe98a8f"]
+paths = ['''^engine-rs/src/(routes|run)\.rs$''']

@@ -5,8 +5,12 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 //! TLS client settings for DoH and DoT: rustls on ring, TLS 1.2 or 1.3 as
-//! Go's MinVersion, server certificates checked by Windows (as Go's
-//! crypto/x509 does on Windows), session resumption on.
+//! Go's MinVersion, session resumption on. Server certificates are checked
+//! by rustls (webpki) against the system's root store and Mozilla's roots,
+//! without an online revocation check, as Go's crypto/x509 does. Windows'
+//! own chain check (rustls-platform-verifier) fetched OCSP and CRLs: those
+//! lookups go through Windows DNS, which in the tunnel is this very DoH
+//! client, so the first handshake stalled for seconds (the e2e baseline).
 
 use std::sync::Arc;
 
@@ -18,7 +22,7 @@ use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme
 /// Whom to trust for server certificates.
 #[derive(Clone, Default)]
 pub enum Trust {
-    /// The system's roots and checks (rustls-platform-verifier).
+    /// The system's roots and Mozilla's.
     #[default]
     System,
     /// Only these roots (tests).
@@ -40,10 +44,7 @@ pub fn client_config(trust: &Trust, skip_verify: bool, alpn: &[&[u8]]) -> Result
         b.dangerous().with_custom_certificate_verifier(Arc::new(NoVerify(p))).with_no_client_auth()
     } else {
         match trust {
-            Trust::System => {
-                let v = rustls_platform_verifier::Verifier::new(p).map_err(|e| format!("tls: {e}"))?;
-                b.dangerous().with_custom_certificate_verifier(Arc::new(v)).with_no_client_auth()
-            }
+            Trust::System => b.with_root_certificates(system_roots()).with_no_client_auth(),
             Trust::Roots(certs) => {
                 let mut roots = RootCertStore::empty();
                 for c in certs {
@@ -55,6 +56,22 @@ pub fn client_config(trust: &Trust, skip_verify: bool, alpn: &[&[u8]]) -> Result
     };
     c.alpn_protocols = alpn.iter().map(|a| a.to_vec()).collect();
     Ok(Arc::new(c))
+}
+
+/// The system's root store (read once) with Mozilla's roots added: a
+/// store some program trimmed, or one Windows has not filled in yet (it
+/// fetches roots on demand), still knows the public CAs.
+fn system_roots() -> Arc<RootCertStore> {
+    static ROOTS: std::sync::OnceLock<Arc<RootCertStore>> = std::sync::OnceLock::new();
+    ROOTS
+        .get_or_init(|| {
+            let mut roots = RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
+            // unreadable or unparsable system certificates are skipped
+            let native = rustls_native_certs::load_native_certs();
+            let _ = roots.add_parsable_certificates(native.certs);
+            Arc::new(roots)
+        })
+        .clone()
 }
 
 /// The server name for SNI and the certificate check: a DNS name, or an IP
@@ -190,5 +207,14 @@ mod tests {
         assert!(server_name("127.0.0.1").is_ok());
         assert!(server_name("[::1]").is_ok());
         assert!(server_name("bad name").is_err());
+    }
+
+    /// The public CAs are known even with an empty system store, and the
+    /// store is read once.
+    #[test]
+    fn system_roots_include_mozillas() {
+        let r = system_roots();
+        assert!(r.len() >= webpki_roots::TLS_SERVER_ROOTS.len());
+        assert!(Arc::ptr_eq(&r, &system_roots()));
     }
 }

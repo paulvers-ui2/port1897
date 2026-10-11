@@ -434,8 +434,8 @@ pub fn clean(path: &str) -> String {
     // postClean: keep a relative path with a colon in its first element, or
     // one starting \??\, from turning into a volume
     let mut prefix: &[u8] = b"";
-    if vol_len == 0 {
-        if let Some(buf) = &out.buf {
+    if vol_len == 0
+        && let Some(buf) = &out.buf {
             let body = &buf[..out.w];
             let first_colon = body.iter().take_while(|&&c| !is_sep(c)).any(|&c| c == b':');
             if first_colon {
@@ -444,7 +444,6 @@ pub fn clean(path: &str) -> String {
                 prefix = b"\\.";
             }
         }
-    }
     let body: Vec<u8> = match &out.buf {
         Some(buf) => buf[..out.w].to_vec(),
         None => p[..out.w].to_vec(),

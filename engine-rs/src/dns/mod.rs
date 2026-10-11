@@ -11,6 +11,7 @@
 //! provides with sockets bound to the physical interface.
 
 pub mod cache;
+pub mod dns53;
 pub mod doh;
 pub mod dot;
 pub mod fake;
@@ -21,7 +22,7 @@ pub mod tls;
 
 use std::future::Future;
 use std::io;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -42,11 +43,44 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send + 'static> Stream for T {}
 
 pub type BoxStream = Box<dyn Stream>;
 
+/// A connected datagram socket: a UDP socket, or a SOCKS5 UDP association
+/// that wraps each datagram in the proxy's header.
+pub trait Datagram: Send + Sync {
+    /// Sends one datagram to the peer.
+    fn send<'a>(&'a self, b: &'a [u8]) -> BoxFuture<'a, io::Result<usize>>;
+    /// Receives one datagram from the peer. Cancel-safe: a receive dropped
+    /// before it completes loses nothing.
+    fn recv<'a>(&'a self, b: &'a mut [u8]) -> BoxFuture<'a, io::Result<usize>>;
+}
+
+pub type BoxDatagram = Box<dyn Datagram>;
+
+impl Datagram for tokio::net::UdpSocket {
+    fn send<'a>(&'a self, b: &'a [u8]) -> BoxFuture<'a, io::Result<usize>> {
+        Box::pin(tokio::net::UdpSocket::send(self, b))
+    }
+    fn recv<'a>(&'a self, b: &'a mut [u8]) -> BoxFuture<'a, io::Result<usize>> {
+        Box::pin(tokio::net::UdpSocket::recv(self, b))
+    }
+}
+
 /// Opens the transports' connections. `pid` is the exit the query was
 /// given ("Base" for the physical interface); the stack's dialer binds
 /// Base sockets to the physical interface so they stay out of the tunnel.
 pub trait Dialer: Send + Sync {
     fn dial_tcp<'a>(&'a self, pid: &'a str, addr: SocketAddr) -> BoxFuture<'a, io::Result<BoxStream>>;
+
+    /// A UDP socket connected to addr. The default binds an unbound
+    /// socket of addr's family, which is all the tests need; the stack's
+    /// dialer binds it to the physical interface as it does TCP.
+    fn dial_udp<'a>(&'a self, _pid: &'a str, addr: SocketAddr) -> BoxFuture<'a, io::Result<BoxDatagram>> {
+        Box::pin(async move {
+            let local: SocketAddr = if addr.is_ipv4() { (Ipv4Addr::UNSPECIFIED, 0).into() } else { (Ipv6Addr::UNSPECIFIED, 0).into() };
+            let s = tokio::net::UdpSocket::bind(local).await?;
+            s.connect(addr).await?;
+            Ok(Box::new(s) as BoxDatagram)
+        })
+    }
 }
 
 /// A plain tokio dialer, for tests and tools: no interface binding.
@@ -155,11 +189,10 @@ pub fn bootstrap_addrs(host: &str, port: u16, ips_csv: &str) -> Vec<SocketAddr> 
             _ => {}
         }
     }
-    if out.is_empty() {
-        if let Ok(ip) = host.trim_matches(|c| c == '[' || c == ']').parse::<IpAddr>() {
+    if out.is_empty()
+        && let Ok(ip) = host.trim_matches(|c| c == '[' || c == ']').parse::<IpAddr>() {
             out.push(SocketAddr::new(ip, port));
         }
-    }
     out
 }
 

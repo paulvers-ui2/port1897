@@ -177,11 +177,10 @@ impl FakeDns {
         }
         // -dns-fallback: the bootstrap server has a go when the chosen
         // transport could not answer
-        if answer.is_none() && self.fallback.load(Ordering::Relaxed) && !tried.iter().any(|t| t == DEFAULT) {
-            if let Some(wire) = self.query_one(DEFAULT, pid, q, &query, &mut smm).await {
+        if answer.is_none() && self.fallback.load(Ordering::Relaxed) && !tried.iter().any(|t| t == DEFAULT)
+            && let Some(wire) = self.query_one(DEFAULT, pid, q, &query, &mut smm).await {
                 answer = Some(wire);
             }
-        }
 
         let wire = match answer {
             Some(wire) => wire,

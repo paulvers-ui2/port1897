@@ -253,8 +253,8 @@ fn add_filter(s: &Session, f: &FilterSpec, pk: &mut GUID, me: &AppSelf) -> Resul
     let mut conds: Vec<FWPM_FILTER_CONDITION0> = Vec::new();
     for c in &f.conds {
         conds.push(condition(c, &mut arena, me)?);
-        if *c == Cond::AppSelf {
-            if let Some(sd) = &me.sd {
+        if *c == Cond::AppSelf
+            && let Some(sd) = &me.sd {
                 // a Windows service: its SID keeps other services in the
                 // same exe from matching
                 let mut sd_blob = Box::new(FWP_BYTE_BLOB { size: sd.len() as u32, data: sd.as_ptr() as *mut u8 });
@@ -263,7 +263,6 @@ fn add_filter(s: &Session, f: &FilterSpec, pk: &mut GUID, me: &AppSelf) -> Resul
                 conds.push(FWPM_FILTER_CONDITION0 { fieldKey: FWPM_CONDITION_ALE_USER_ID, matchType: FWP_MATCH_EQUAL, conditionValue: v });
                 arena.blobs.push(sd_blob);
             }
-        }
     }
     let name = wide(&f.name);
     let desc = wide("");

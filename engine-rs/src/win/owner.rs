@@ -64,11 +64,10 @@ impl WinOwners {
             Kind::Udp => &self.udp,
         };
         let mut s = snap.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((buf, at)) = s.as_ref() {
-            if !fresh && at.elapsed() < SNAP_TTL {
+        if let Some((buf, at)) = s.as_ref()
+            && !fresh && at.elapsed() < SNAP_TTL {
                 return Ok(buf.clone());
             }
-        }
         let buf = table(kind)?;
         *s = Some((buf.clone(), Instant::now()));
         Ok(buf)
@@ -82,11 +81,10 @@ impl Owners for WinOwners {
         }
         // a recent copy answers only for this very connection
         let buf = self.table_copy(Kind::Tcp, false)?;
-        if let (pid, true) = tcp_lookup(&buf, local, remote) {
-            if pid != 0 {
+        if let (pid, true) = tcp_lookup(&buf, local, remote)
+            && pid != 0 {
                 return Ok(pid);
             }
-        }
         let buf = self.table_copy(Kind::Tcp, true)?;
         match tcp_lookup(&buf, local, remote) {
             (pid, exact) if exact || pid != 0 => Ok(pid),
@@ -117,11 +115,10 @@ impl Owners for WinOwners {
             4 => return Ok("System".into()),
             _ => {}
         }
-        if let Some((p, at)) = self.paths.lock().unwrap_or_else(|e| e.into_inner()).get(&pid) {
-            if at.elapsed() < PATH_TTL {
+        if let Some((p, at)) = self.paths.lock().unwrap_or_else(|e| e.into_inner()).get(&pid)
+            && at.elapsed() < PATH_TTL {
                 return Ok(p.clone());
             }
-        }
         let path = process_path(pid)?;
         let mut m = self.paths.lock().unwrap_or_else(|e| e.into_inner());
         if m.len() > 4096 {

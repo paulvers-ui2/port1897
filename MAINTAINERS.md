@@ -62,12 +62,19 @@ Service e2e run the real engine with admin rights, and catch most breakage.
 
 ## What is left
 
-- **The Rust engine** (`engine-rs/`): done so far are the pure parts
-  (flags, rules, API, events, MTU, exits, DNS layer) and the Windows parts
-  (WFP kill switch, NRPT, IP Helper, Wintun, owner lookup), all tested in CI.
-  Left are the userspace network stack, the start/stop sequence, WireGuard and
-  WARP exits, then MASQUE through usque. Until it matches `fswin.exe`, the
-  Go engine ships. Details and estimates are in `engine-rs/PLAN.md`.
+- **The Rust engine** (`engine-rs/`, binary `fswin-rs.exe`): it now runs
+  with `fswin.exe`'s command line: the userspace network stack, the direct
+  exit, the DNS layer (DoH, DoT, plain DNS, cache), the start and stop order,
+  the API, the kill switch, NRPT, AuroraVPN Service, the `-proxy` and `-wg`
+  exits and per-app `-routes`.
+  CI runs the same end-to-end scripts against it as against the Go engine
+  (`engine-rs.yml`, job "End to end with fswin-rs as fswin.exe").
+  Flags it cannot serve yet are refused at start with a clear error. Left:
+  `-warp` (WARP needs a patched boringtun), `-pcap`,
+  MASQUE and the chain through usque, DNSCrypt, ODoH, on-device blocklists,
+  the anti-censorship dialers, and a throughput comparison with the Go
+  engine. Until it matches `fswin.exe`, the Go engine ships. Details and
+  estimates are in `engine-rs/PLAN.md`.
 - **Code signing:** the installer is not signed, so SmartScreen warns. A free
   option for open-source projects is [SignPath Foundation](https://signpath.org).
 - **IPv6** inside the tunnel.

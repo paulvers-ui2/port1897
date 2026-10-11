@@ -74,6 +74,20 @@ impl Tun {
     }
 }
 
+/// The session as the tunnel's device. Its receive blocks until a packet
+/// comes or the session is shut down.
+pub struct SessionDevice(pub Arc<Session>);
+
+impl crate::net::tunnel::Device for SessionDevice {
+    fn recv(&self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.recv(buf)
+    }
+
+    fn send(&self, p: &[u8]) -> std::io::Result<()> {
+        self.0.send(p).map(|_| ())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

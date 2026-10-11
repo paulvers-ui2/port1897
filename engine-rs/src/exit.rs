@@ -272,14 +272,13 @@ impl WarpAccount {
         cfg.push_str(&format!("mtu={}\n", WARP_MTU + WG_OVERHEAD));
         // WARP wants its 3-byte client id in the reserved header bytes; as
         // the header words h1..h4 of the four message types
-        if let Ok(id) = base64_std_decode(&self.client_id) {
-            if id.len() == 3 {
+        if let Ok(id) = base64_std_decode(&self.client_id)
+            && id.len() == 3 {
                 for (i, typ) in [1u8, 2, 3, 4].iter().enumerate() {
                     let h = u32::from_le_bytes([*typ, id[0], id[1], id[2]]);
                     cfg.push_str(&format!("h{}={h}\n", i + 1));
                 }
             }
-        }
         cfg.push_str(&format!("public_key={pk}\nendpoint={}\n", self.endpoint4));
         cfg.push_str("allowed_ip=0.0.0.0/0\npersistent_keepalive_interval=25\n");
         Ok(cfg)

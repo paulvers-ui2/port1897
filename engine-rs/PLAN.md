@@ -36,10 +36,11 @@ are where they are most likely to slip.
 | Wintun | wintun-bindings | 0.7.40 (2026-08-17) | MIT | in use (`src/win/wintun.rs`), default features off; brings libloading 0.9.0 (ISC), log 0.4 and thiserror 2 (MIT/Apache). Maintained (tun2proxy org); `wintun` 0.5.1 is stale since 2025-01. `tun-rs` 2.8.11 (Apache-2.0) is the fallback. Its netsh helpers find netsh through PATH: not used |
 | Userspace TCP/IP | netstack-smoltcp (on smoltcp 0.14, 0BSD) | 0.2.4 | MIT/Apache | alternatives: ipstack 1.0.1 (Apache-2.0, own TCP, used by tun2proxy), own glue on smoltcp. Behind a trait so it can be swapped |
 | Packet parsing | etherparse | 0.21.0 | MIT/Apache | owner lookup, pcap, ICMP |
-| WireGuard | boringtun | 0.7.1 | BSD-3 | Cloudflare; sans-IO `Tunn`. gotatun 0.9.2 (Mullvad fork, MPL-2.0) is the alternative. Neither does WARP's reserved header bytes (see gaps) |
+| WireGuard | boringtun | 0.7.1 (2026-05-01) | BSD-3 | in use (`net/wg.rs`), default features off (no `device` module, no tun): only the sans-IO `noise::Tunn`; brings x25519-dalek 2, chacha20poly1305, blake2, hmac, ip_network(_table), parking_lot, tracing (unused: no subscriber) and nix on Unix (MIT/Apache/BSD); ring 0.17 was already there. Cloudflare. gotatun 0.9.2 (Mullvad fork, MPL-2.0) is the alternative. Neither does WARP's reserved header bytes (see gaps) |
 | X25519 for WARP registration | x25519-dalek | 3.0.0 | BSD-3 | |
 | HTTPS client (DoH, WARP API) | hyper + hyper-rustls / reqwest | 0.27.10 / 0.13.5 | Apache/ISC/MIT | rustls 0.23.45 with ring or aws-lc-rs |
 | TLS (DoT) | tokio-rustls | 0.26.5 | MIT/Apache | |
+| TLS roots | rustls-native-certs + webpki-roots | 0.8.4 / 1.0.9 | Apache-2.0/ISC/MIT; CDLA-Permissive-2.0 | in use (`dns/tls.rs`): the system store plus Mozilla's roots, checked by webpki without online revocation, as Go does. rustls-platform-verifier was dropped: its OCSP/CRL fetches resolve through our own DNS and stalled the first DoH handshake |
 | DNS messages | hickory-proto | 0.26.3 | MIT/Apache | parse/build only; firestack is a forwarding proxy, not a stub resolver, so hickory-resolver is not a fit for the main path |
 | DNS stamps (sdns://) | dnsstamps | 0.1.11 | ISC | jedisct1 |
 | DNSCrypt | own client on `crypto_box`/`chacha20poly1305` (RustCrypto) | | MIT/Apache | `dnscrypt` 0.3.0 exists but is four months old with 170 downloads: not yet |
@@ -47,7 +48,7 @@ are where they are most likely to slip.
 | SOCKS5 client | tokio-socks | 0.5.3 | MIT | TCP; UDP ASSOCIATE needs own code (fast-socks5 1.0.0 has some) |
 | Win32 | windows-sys | 0.61.2 | MIT/Apache | in use (`src/win/`): registry, processes, WFP, IP Helper; already in the lock file through tokio |
 | WFP | wfp (Mullvad) | 0.2.0 | MIT/Apache | evaluate; fallback is a port of `win/wfp` (from wireguard-windows, MIT) on `windows-sys` |
-| Windows service | windows-service (Mullvad) | 0.8.1 | MIT/Apache | |
+| Windows service | raw `windows-sys` (no extra crate) | 0.61.2 | MIT/Apache | in use (`src/win/svc.rs`); `windows-service` 0.8.1 (Mullvad, MIT/Apache) was the alternative |
 | MASQUE | none mature | | | quinn 0.11.12 + h3 0.0.8 (+ h3-datagram) could carry CONNECT-IP (RFC 9484); keep `usque.exe` as a child process |
 
 ## Contract notes the Rust code must keep
@@ -148,10 +149,10 @@ Legend: **P1..P4** = phase. Effort is for the Rust side only.
 | Go | Rust approach | Phase | Effort |
 |---|---|---|---|
 | "direct" exit (Base): sockets bound to the physical interface | dialer with IP_UNICAST_IF | P1 | in the stack estimate |
-| `-wg` wg-quick file → config | parser ported in P1 (`exit.rs`, same validation and output keys); boringtun `Tunn` + own UDP loop + a second smoltcp/netstack instance (or IP-packet relay) for the inner side | P2 | 3 ew |
+| `-wg` wg-quick file → config | done (`net/wg.rs`): the P1 parser (`exit.rs`), then firestack's wgIfConfigOf checks with its wording; one boringtun `Tunn` per peer, a UDP socket to the endpoint from the Direct dialer (endpoint resolved before the tunnel is up), timers every 250 ms, and a smoltcp client stack inside the tunnel that dials TCP and opens UDP from the config's addresses, within AllowedIPs. Status TOK after a handshake, TKO when one goes unanswered (10 s) or the socket fails; rx/tx are bytes on the wire, last_ok the last handshake. Not yet: more than one `[Peer]` (refused), the config's DNS servers are kept but not used (as in the Go engine, DNS goes to the -dns transport through the exit), endpoint re-resolution on failure, ICMP inside the tunnel | P2 | done; Windows runner test to come |
 | `-warp` (register at api.cloudflareclient.com, save account JSON as the user, WireGuard with client id in reserved bytes h1..h4, MTU 1280) | reqwest/hyper + x25519-dalek for registration; boringtun **patched** for the header bytes (see gaps) | P2 | 1.5 ew + the patch |
-| `-proxy socks5://` / `http://` | tokio-socks (TCP); UDP ASSOCIATE own; HTTP CONNECT own (~100 lines); UDP over an HTTP proxy is impossible (Go behaviour to be checked and copied) | P2 | 1 ew |
-| `-routes` per-app WireGuard/proxy routes (ids `wgapp*`, `pxsocks`, `pxhttp`), `/api/proxies` stats | route table in the engine (P1 has the decision side and the stats shape); one exit instance per route | P2 | 1 ew |
+| `-proxy socks5://` / `http://` | done (`net/proxy.rs`): own SOCKS5 client (CONNECT, UDP ASSOCIATE, user/password) and HTTP CONNECT (Basic auth, one answer to a 407); UDP over an HTTP proxy fails and marks the exit failing, as firestack's http1 does. Unlike firestack's zero stats, /api/proxies gets real rx/tx | P2 | done |
+| `-routes` per-app WireGuard/proxy routes (ids `wgapp*`, `pxsocks`, `pxhttp`), `/api/proxies` stats | proxy routes done (`routes.rs`): the file read and checked with Go's wording, one `ProxyExit` per route registered with the forwarder under its id, `ProxyTable` answering /api/proxies for the exit and every route, loaded after DNS and making the tunnel full as in Go. WireGuard routes each get a `WgExit` (`net/wg.rs`) under their id, the inner MTU from their config (else 1500 less WireGuard's 80) | P2 | done (unit-tested; not yet on the runner) |
 | `-masque` (usque socks child), `-chain` (usque chain: WARP2 → wg0 → WARP1), `-usque`, `-usque-dir`, `-usque-flags` | keep **usque.exe as a child**: random port/user/pass, job object kill-on-close, started as the user after the routes, output piped to the log, bypass of its own flows, supervisor (restart backoff 1 s → 60 s, SOCKS probe to 1.1.1.1:80 every 15 s, 30 s start grace, network-change check, "Tunnel connection lost" log trigger). Flag checks and defaults ported in P1 (`usque.rs`) | P3 | 2 ew |
 | native MASQUE (WARP over CONNECT-IP, HTTP/3 with HTTP/2 fallback, Cloudflare enrolment + client cert) | quinn + h3 + h3-datagram + own CONNECT-IP capsules; HTTP/2 extended CONNECT via h2 | later | 6 to 10 ew; not planned before parity |
 
@@ -188,7 +189,9 @@ Legend: **P1..P4** = phase. Effort is for the Rust side only.
 5. **gVisor-grade TCP.** smoltcp/ipstack lack some of gVisor's TCP (SACK
    recovery, RACK, mature congestion control, large receive windows tuned for
    gigabit). Throughput and loss behaviour must be measured early (phase 1
-   exit criterion), not assumed.
+   exit criterion), not assumed. The -wg exit puts a second smoltcp (as a
+   TCP client) inside the tunnel, so a WireGuard connection crosses two
+   smoltcp TCP stacks: measure it on the runner as well.
 6. **Anti-censorship dialers** (split TCP / TLS record fragmentation): own code.
 
 ## Phases
@@ -225,8 +228,8 @@ Started in this branch (no admin needed, all unit-tested):
   (the 27 + 4 per allowed program (+4 LAN) filters in Go's order, names,
   layers, weights, conditions, the 160-key limit with Go's error wording),
   the fixed provider/sublayer/filter GUIDs shared with the Go engine, and
-  the leftover removal. The `windows-sys` backend that executes the plan
-  (FwpmEngineOpen0, transactions, app ids) is still to write
+  the leftover removal; the `windows-sys` backend that executes it is
+  `win/wfp.rs` (below)
 - done: `api.rs` the control API over the engine on hyper: the guard
   (Origin, Host incl. absolute-form, constant-time bearer), Go 1.22 ServeMux
   behaviour (HEAD on GET routes, 405 with Allow, 404, 301 to the clean path,
@@ -248,14 +251,14 @@ Started in this branch (no admin needed, all unit-tested):
 - done: `service.rs` the pipe protocol (request decoding as Go's Decoder,
   reply encoding), the request dispatch behind an `EngineControl` trait,
   `checkEngineArgs`, `samePath`, `installRoot`, `validAdapterName`, and
-  x/sys `ComposeCommandLine` / `EscapeArg` (compared with Go's output). The
-  SCM, pipe ACL, impersonation and `CreateProcess` are still to write
+  x/sys `ComposeCommandLine` / `EscapeArg` (compared with Go's output); the
+  Windows side is `win/svc.rs` and `win/asuser.rs` (below)
 - done: `nrpt.rs` win/dnspolicy behind a `Registry` trait with a fake
   registry and a nudge function: add (replace ours, the seven values,
   not-applied vs failed), remove, `Others()` over local and group-policy
   rules, our-rule detection (fixed key in any case, "AuroraVPN" and
-  "port1897" tags), with `nrpt_windows_test.go` ported. The HKLM backend,
-  ipconfig /registerdns and DnsFlushResolverCache are still to write
+  "port1897" tags), with `nrpt_windows_test.go` ported; the HKLM backend
+  and the nudge are `win/registry.rs`
 - done: the Win32 backends in `src/win/` (Windows only; tests that change
   the system are `#[ignore]`d with the reason, for the admin CI runner):
   - `registry.rs` the `Registry` trait over the real registry (values as
@@ -289,8 +292,44 @@ Started in this branch (no admin needed, all unit-tested):
     wrapper made on demand, `-dns-fallback` to `Default`, the DNSSEC
     switch's second verdict on the answer, and `on_response` either
     way. SERVFAIL goes back to the asker as firestack does
-  - the DNS53/System transport, the undelegated domains and the
-    blocklists are phases 2 and 4, as below
+  - `dns53.rs` plain DNS over UDP (TCP when truncated) for `-dns proxy`
+    and the System transport (`-dns system`): servers tried in order,
+    the one that answered first next time, Go's timeout wording
+  - the undelegated domains and the blocklists are phases 2 and 4
+- done: `net/` the data path (firestack's netstack handlers):
+  - `stack.rs` the userspace TCP/IP stack on smoltcp 0.14: a SYN held
+    until the engine has decided and dialled, then SYN-ACK or RST; UDP
+    per 5-tuple
+  - `forward.rs` each flow: owner (Preflow), verdict (Flow), then refused,
+    answered by the fake DNS resolver (10.111.222.3:53, UDP and TCP), or
+    dialled and copied both ways with half closes; the close goes to
+    OnSocketClosed with the bytes each way; rule changes close flows by
+    id (CloseConns); a per-address map of DNS answers gives flows their
+    domains for the domain rules
+  - `dial.rs` the direct exit: sockets pinned to the physical interface
+    (win/ifbind) unless the destination is on-link; the DNS transports'
+    connections too
+  - `tunnel.rs` the adapter's packets in (a reading thread on the Wintun
+    session) and out; tests run it on a device in memory against echo
+    servers on 127.0.0.1
+- done: `run.rs` main_windows.go's run() and stopTunnel behind a `Sys`
+  trait (`win/sys.rs` on Windows, a recording fake in the tests): the
+  refusal of flags not served yet (exits, -routes, -pcap, blocklists,
+  -undelegated, dial strategies other than never, -tcp-keepalive, -eim,
+  DNSCrypt, ODoH; -filetag is accepted and reported, as the app always
+  passes it), the API preflight, the network wait, the MTU plan, adapter,
+  NRPT, address and DNS, kill switch, stack and DNS, conflicts (also every
+  15 s), NRPT nudge, routes, API; the stop in Go's order. `main.rs` runs
+  it: `-logfile` (opened as the user), `-stop-handle`, `-cleanup`,
+  Ctrl+C, `-service`. Go's log lines are kept word for word where the app
+  or the scripts read them; the network layer writes firestack-style
+  timestamped lines (`logline.rs`)
+- done: `win/svc.rs` AuroraVPN Service (SCM install/uninstall/run with
+  restart actions, the locked-down folder, the pipe with its SDDL, the
+  client's path check, impersonation for the user's token, the engine
+  started with only its stop event and token inheritable, the 15 s stop,
+  service.log) and `win/asuser.rs` (the user's token, or the engine's own
+  lowered; files opened impersonated on a thread of their own)
 
 Exit criteria: `tools/sim/e2e-windows.ps1` and `tools/sim/service-windows.ps1`
 pass with `fswin-rs.exe` copied in as `dist/fswin.exe`; iperf-style throughput
@@ -349,9 +388,11 @@ real networks does not shrink as much.
   tests faster and keep them off the firewall's radar.
 - **CI now**: `.github/workflows/engine-rs.yml` (windows-latest, Rust
   1.99.0): build, clippy `-D warnings`, unit tests, then the `#[ignore]`d
-  system tests one at a time with the pinned Wintun 0.14.1. Not yet: a
-  `cargo fmt --check` (the code is not rustfmt-formatted), the e2e scripts
-  below (no engine binary yet), `cargo deny`.
+  system tests one at a time with the pinned Wintun 0.14.1. Its `e2e` job
+  builds `fswin-rs.exe`, copies it in as `dist/fswin.exe` and runs
+  `tools/sim/e2e-windows.ps1` and `tools/sim/service-windows.ps1`
+  unchanged (see the PR for which checks pass). Not yet: a
+  `cargo fmt --check` (the code is not rustfmt-formatted), `cargo deny`.
 - **Integration on GitHub's Windows runners** (admin, like
   `.github/workflows/sim.yml`): a new job builds `fswin-rs.exe`, downloads
   Wintun 0.14.1 with the pinned SHA-256, copies the binary in as
