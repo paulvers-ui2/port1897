@@ -205,6 +205,10 @@ impl Forwarder {
 
     async fn tcp(self: Arc<Self>, req: TcpRequest) {
         let (src, dst) = (req.src, req.dst);
+        if link_local(dst.ip()) {
+            req.refuse();
+            return;
+        }
         let m = self.decide(6, src, dst).await;
         if m.pid == BLOCK {
             req.refuse();
@@ -241,6 +245,9 @@ impl Forwarder {
 
     async fn udp(self: Arc<Self>, mut f: UdpFlow) {
         let (src, dst) = (f.src, f.dst);
+        if link_local(dst.ip()) {
+            return; // dropped, unjournaled
+        }
         let m = self.decide(17, src, dst).await;
         if dst == self.fake_dns && m.pid != BLOCK {
             self.dns_udp(f, &m.uid).await;
@@ -343,6 +350,18 @@ impl Forwarder {
                 return;
             }
         }
+    }
+}
+
+/// Whether dst is for the tunnel's own link only: multicast (LLMNR, mDNS,
+/// SSDP), the limited broadcast and the tunnel subnet's broadcast. Sent on
+/// again, Windows routes them straight back into the tunnel, whose adapter
+/// has the lowest metric, and every round makes a new flow (a storm of
+/// LLMNR flows from the engine itself on the CI runner).
+pub fn link_local(dst: IpAddr) -> bool {
+    match dst {
+        IpAddr::V4(a) => a.is_multicast() || a.is_broadcast() || a.octets() == [10, 111, 222, 255],
+        IpAddr::V6(a) => a.is_multicast(),
     }
 }
 
@@ -566,6 +585,28 @@ mod tests {
         .await;
         assert_eq!((got[0], got[1], got[4]), (0, 12, 0x81));
         assert!(e.log.since(0, 10).iter().all(|v| v.kind != "flow"));
+    }
+
+    #[test]
+    fn link_local_traffic_stays_on_the_tunnel() {
+        for ip in ["224.0.0.252", "239.255.255.250", "255.255.255.255", "10.111.222.255", "ff02::1:3"] {
+            assert!(link_local(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in ["10.111.222.3", "1.1.1.1", "192.168.1.255", "2606:4700::1111"] {
+            assert!(!link_local(ip.parse().unwrap()), "{ip}");
+        }
+    }
+
+    /// A multicast datagram makes no flow and is not sent on.
+    #[tokio::test]
+    async fn multicast_is_dropped() {
+        let e = engine();
+        let (to_stack, _from_stack, f) = start(e.clone());
+        let me: SocketAddr = "10.111.222.1:5355".parse().unwrap();
+        to_stack.send(build_udp(me, "224.0.0.252:5355".parse().unwrap(), b"llmnr").unwrap()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(f.open(), 0);
+        assert!(e.log.since(0, 10).is_empty());
     }
 
     #[test]
