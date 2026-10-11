@@ -104,6 +104,15 @@ jobs:
         if: ${{ !cancelled() }}
         shell: pwsh
         run: ./tools/sim/service-windows.ps1 -Dist dist -Out sim-out
+      # the engine's own logs, in the job log too (the artifact is a zip)
+      - name: Engine logs
+        if: always()
+        shell: pwsh
+        run: |
+          Get-ChildItem sim-out -Filter *.log -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "===== $($_.Name)"
+            Get-Content $_.FullName -TotalCount 80 | Write-Host
+          }
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always()
         with:

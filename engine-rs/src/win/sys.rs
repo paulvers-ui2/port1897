@@ -125,7 +125,10 @@ impl Sys for WinSys {
     }
 
     fn nrpt_add(&self) -> Result<(), String> {
-        self.nrpt().add(IpAddr::V4(fake_dns4())).map_err(|e| e.to_string())
+        self.nrpt().add(IpAddr::V4(fake_dns4())).map_err(|e| e.to_string())?;
+        // as Go's dnspolicy.Add: no answer from before the rule is used after it
+        registry::flush_dns_cache();
+        Ok(())
     }
 
     fn nrpt_drop(&self) -> Result<(), String> {

@@ -40,6 +40,7 @@ are where they are most likely to slip.
 | X25519 for WARP registration | x25519-dalek | 3.0.0 | BSD-3 | |
 | HTTPS client (DoH, WARP API) | hyper + hyper-rustls / reqwest | 0.27.10 / 0.13.5 | Apache/ISC/MIT | rustls 0.23.45 with ring or aws-lc-rs |
 | TLS (DoT) | tokio-rustls | 0.26.5 | MIT/Apache | |
+| TLS roots | rustls-native-certs + webpki-roots | 0.8.4 / 1.0.9 | Apache-2.0/ISC/MIT; CDLA-Permissive-2.0 | in use (`dns/tls.rs`): the system store plus Mozilla's roots, checked by webpki without online revocation, as Go does. rustls-platform-verifier was dropped: its OCSP/CRL fetches resolve through our own DNS and stalled the first DoH handshake |
 | DNS messages | hickory-proto | 0.26.3 | MIT/Apache | parse/build only; firestack is a forwarding proxy, not a stub resolver, so hickory-resolver is not a fit for the main path |
 | DNS stamps (sdns://) | dnsstamps | 0.1.11 | ISC | jedisct1 |
 | DNSCrypt | own client on `crypto_box`/`chacha20poly1305` (RustCrypto) | | MIT/Apache | `dnscrypt` 0.3.0 exists but is four months old with 170 downloads: not yet |
