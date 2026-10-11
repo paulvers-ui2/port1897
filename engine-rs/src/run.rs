@@ -42,9 +42,10 @@ use crate::golike;
 use crate::killswitch::{Firewall, KillSwitch, WfpOptions};
 use crate::mtu::{self, MtuPlan};
 use crate::net::dial::{Direct, Protect};
-use crate::exit::{EXIT_PROXY, exit_name};
+use crate::exit::{EXIT_PROXY, EXIT_WG, exit_name};
 use crate::net::forward::Forwarder;
 use crate::net::proxy::{ProxyExit, ProxyUrl};
+use crate::net::wg::{WgConfig, WgExit, WgOptions};
 use crate::net::stack::StackConfig;
 use crate::net::tunnel::{Device, Tunnel};
 use crate::routes::{self, ProxyTable};
@@ -134,7 +135,6 @@ pub fn check_supported(o: &Options) -> Result<(), String> {
     }
     let not_yet = |what: &str| Err(format!("{what} is not supported by this engine yet (fswin-rs); use fswin.exe"));
     let set = [
-        (!o.wg.is_empty(), "-wg"),
         (o.warp, "-warp"),
         (o.masque, "-masque"),
         (!o.chain.is_empty(), "-chain"),
@@ -155,17 +155,40 @@ pub fn check_supported(o: &Options) -> Result<(), String> {
     Ok(())
 }
 
+/// An exit as the engine uses it: the flows' dialer, the DNS transports'
+/// and its state for /api/proxies.
+trait Exit: crate::net::dial::Dialer + crate::dns::Dialer + crate::engine::Proxies {}
+impl<T: crate::net::dial::Dialer + crate::dns::Dialer + crate::engine::Proxies> Exit for T {}
+
+/// What an exit needs to start, read before the tunnel is up.
+pub enum ExitSetup {
+    /// -proxy: its URL and addresses
+    Proxy(ProxyUrl, Vec<SocketAddr>),
+    /// -wg: the config and its endpoint's address
+    Wg(WgConfig, SocketAddr),
+}
+
 /// Go's prepareExit for the exits this engine has: the exit's id ("" for
-/// direct), its config, and for -proxy its URL and addresses. The proxy's
-/// name is looked up here, before the tunnel takes the PC's DNS. Errors
-/// past the scheme check read as Go's from AddProxy.
-pub async fn prepare_exit(o: &Options) -> Result<(String, String, Option<(ProxyUrl, Vec<SocketAddr>)>), String> {
+/// direct), its config, and what starting it takes. Names (the proxy's,
+/// the WireGuard endpoint's) are looked up here, before the tunnel takes
+/// the PC's DNS. Errors past the file and scheme checks read as Go's from
+/// AddProxy.
+pub async fn prepare_exit(o: &Options, sys: &dyn Sys) -> Result<(String, String, Option<ExitSetup>), String> {
+    if !o.wg.is_empty() {
+        // read with the user's rights: the app's file, not the service's
+        let b = sys.read_user_file(&o.wg)?;
+        let cfg = crate::exit::wg_quick_to_uapi(&String::from_utf8_lossy(&b))?;
+        let add = |e: String| format!("add exit {EXIT_WG}: {e}");
+        let wg = WgConfig::parse(EXIT_WG, &cfg).map_err(add)?;
+        let endpoint = wg.resolve().await.map_err(add)?;
+        return Ok((EXIT_WG.to_string(), cfg, Some(ExitSetup::Wg(wg, endpoint))));
+    }
     if o.proxy.is_empty() {
         return Ok((String::new(), String::new(), None));
     }
     let url = ProxyUrl::parse(&o.proxy).map_err(|e| if e.starts_with("-proxy") { e } else { format!("add exit {EXIT_PROXY}: {e}") })?;
     let servers = url.resolve().await.map_err(|e| format!("add exit {EXIT_PROXY}: {e}"))?;
-    Ok((EXIT_PROXY.to_string(), o.proxy.clone(), Some((url, servers))))
+    Ok((EXIT_PROXY.to_string(), o.proxy.clone(), Some(ExitSetup::Proxy(url, servers))))
 }
 
 /// Go's apiPreflight: fail before changing anything on the PC if the app
@@ -350,8 +373,8 @@ async fn start(o: &Options, sys: &dyn Sys, version: &str, stop_tx: &Arc<watch::S
     if (o.full || o.kill) && !wait_for_network(sys, NETWORK_WAIT, stops).await && stops.borrow().is_some() {
         return Ok(false);
     }
-    // Go's prepareExit: -proxy is the only exit check_supported lets by
-    let (exit_id, exit_cfg, proxy) = prepare_exit(&o).await?;
+    // Go's prepareExit: -proxy and -wg are the exits check_supported lets by
+    let (exit_id, exit_cfg, setup) = prepare_exit(&o, sys).await?;
     let (link, link_why) = sys.link_mtu();
     let plan: MtuPlan = mtu::plan_mtu(link, &link_why, &exit_id, &exit_cfg, None, o.mtu);
     sys.say(&format!("fswin: MTU: {plan}"));
@@ -426,8 +449,17 @@ async fn start(o: &Options, sys: &dyn Sys, version: &str, stop_tx: &Arc<watch::S
 
     let direct = Arc::new(Direct::new(phys.protect()));
     // the exit is there before the first flow, so none waits for it or
-    // leaves direct; DNS transports dial through it for the queries given it
-    let exit = proxy.map(|(url, servers)| Arc::new(ProxyExit::new(&exit_id, url, servers, (*direct).clone())));
+    // leaves direct; DNS transports dial through it for the queries given it.
+    // WireGuard's socket opens here, after the kill switch, which lets the
+    // engine's own sockets out
+    let exit: Option<Arc<dyn Exit>> = match setup {
+        Some(ExitSetup::Proxy(url, servers)) => Some(Arc::new(ProxyExit::new(&exit_id, url, servers, (*direct).clone()))),
+        Some(ExitSetup::Wg(cfg, endpoint)) => {
+            let x = WgExit::start(&exit_id, cfg, endpoint, &direct, WgOptions::new(plan.exit.max(mtu::MIN_MTU) as usize)).await.map_err(|e| format!("add exit {exit_id}: {e}"))?;
+            Some(Arc::new(x))
+        }
+        None => None,
+    };
     let dns_dialer: Arc<dyn crate::dns::Dialer> = match &exit {
         Some(x) => x.clone(),
         None => direct.clone(),
@@ -624,6 +656,8 @@ mod tests {
         one_app: bool,
         /// the adapter's packets: what the "programs" send, what they get
         wire: Mutex<Option<Wire>>,
+        /// the user's wg.conf
+        wg_conf: Option<String>,
     }
 
     type Wire = (smpsc::Sender<Vec<u8>>, tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>);
@@ -766,6 +800,9 @@ mod tests {
             if path == "token" {
                 return Ok(b"0123456789abcdef0123".to_vec());
             }
+            if let ("wg.conf", Some(c)) = (path, &self.0.wg_conf) {
+                return Ok(c.as_bytes().to_vec());
+            }
             match self.0.files.iter().find(|(p, _)| *p == path) {
                 Some((_, data)) => Ok(data.as_bytes().to_vec()),
                 None => Err(format!("open {path}: not found")),
@@ -849,8 +886,7 @@ mod tests {
     #[tokio::test]
     async fn unsupported_flags_are_refused_before_anything_changes() {
         for (args, want) in [
-            (&["-wg", "x.conf"][..], "-wg is not supported by this engine yet (fswin-rs); use fswin.exe"),
-            (&["-warp"][..], "-warp is not supported"),
+            (&["-warp"][..], "-warp is not supported by this engine yet (fswin-rs); use fswin.exe"),
             (&["-dns", "odoh"][..], "-dns odoh is not supported"),
             (&["-dial-strategy", "split-tls"][..], "-dial-strategy other than never is not supported"),
             (&["-dial-strategy", "fast"][..], "-dial-strategy must be never, auto, split-tcp or split-tls, not \"fast\""),
@@ -934,7 +970,7 @@ mod tests {
         // the /1 routes are added though neither -full nor an exit was given
         assert_eq!(f.steps(), ["adapter", "configure", "routes", "adapter closed"]);
         for want in [
-            "fswin: routes: route wgapp1: WireGuard routes are not supported by this engine yet\nroute x: kind must be wg or proxy, not \"tor\"",
+            "fswin: routes: route x: kind must be wg or proxy, not \"tor\"",
             "(all IPv4; firestack's own traffic leaves via interface #3); DNS 10.111.222.3:53 -> https://cloudflare-dns.com/dns-query.",
         ] {
             assert!(f.has_line(want), "no line {want:?} in {:#?}", f.lines.lock().unwrap());
@@ -971,11 +1007,64 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_exit_gives_the_proxy() {
-        let (id, cfg, px) = prepare_exit(&opts(&["-proxy", "http://127.0.0.1:3128"])).await.unwrap();
+        let sys = S(Arc::new(Fake::default()));
+        let (id, cfg, px) = prepare_exit(&opts(&["-proxy", "http://127.0.0.1:3128"]), &sys).await.unwrap();
         assert_eq!((id.as_str(), cfg.as_str()), ("socks", "http://127.0.0.1:3128"));
-        assert_eq!(px.unwrap().1, vec!["127.0.0.1:3128".parse::<SocketAddr>().unwrap()]);
-        let (id, _, px) = prepare_exit(&opts(&[])).await.unwrap();
+        let Some(ExitSetup::Proxy(_, servers)) = px else { panic!("not a proxy") };
+        assert_eq!(servers, vec!["127.0.0.1:3128".parse::<SocketAddr>().unwrap()]);
+        let (id, _, px) = prepare_exit(&opts(&[]), &sys).await.unwrap();
         assert!(id.is_empty() && px.is_none());
+    }
+
+    /// -wg: the file is read as the user, the tunnel comes up full, and a
+    /// program's datagram goes through it to the peer's echo and back.
+    #[tokio::test]
+    async fn wg_exit_starts_full_and_says_so() {
+        use crate::net::stack::{Parsed, build_udp, parse};
+        use crate::net::wg::tests::{conf, server};
+        let srv = server(1, 2).await;
+        let f = Arc::new(Fake { wg_conf: Some(conf(2, 1, srv.addr, "0.0.0.0/0")), ..Default::default() });
+        let o = opts(&["-wg", "wg.conf", "-api", "127.0.0.1:0", "-token-file", "token"]);
+        run_while_up(f.clone(), o, async |f: Arc<Fake>| {
+            let (input, mut out) = f.wire.lock().unwrap().take().unwrap();
+            let me: SocketAddr = "10.111.222.1:7000".parse().unwrap();
+            let echo: SocketAddr = "10.9.0.1:7".parse().unwrap();
+            input.send(build_udp(me, echo, b"through").unwrap()).unwrap();
+            let p = loop {
+                let p = tokio::time::timeout(Duration::from_secs(5), out.recv()).await.unwrap().unwrap();
+                if matches!(parse(&p), Parsed::Udp { .. }) {
+                    break p;
+                }
+            };
+            let Parsed::Udp { src, payload, .. } = parse(&p) else { unreachable!() };
+            assert_eq!((src, &p[payload]), (echo, &b"through"[..]));
+        })
+        .await
+        .unwrap();
+        assert_eq!(f.steps(), ["adapter", "configure", "routes", "adapter closed"]);
+        for want in [
+            "fswin: MTU: adapter 1420 (automatic), from Ethernet 1500, WireGuard 1420",
+            "(all IPv4; firestack's own traffic leaves via interface #3; exit: WireGuard); DNS 10.111.222.3:53 -> https://cloudflare-dns.com/dns-query.",
+        ] {
+            assert!(f.has_line(want), "no line {want:?} in {:#?}", f.lines.lock().unwrap());
+        }
+    }
+
+    #[tokio::test]
+    async fn wg_files_are_checked_before_the_adapter() {
+        let k = crate::exit::base64_std_encode(&[1; 32]);
+        for (file, want) in [
+            (None, "open wg.conf: not found"),
+            (Some("[Interface]\nPrivateKey = x\n".to_string()), "wg: PrivateKey: illegal base64 data at input byte 0"),
+            (Some(format!("[Interface]\nPrivateKey = {k}\n[Peer]\nPublicKey = {k}\nEndpoint = 127.0.0.1:1\n")), "add exit wgconf: proxy: invalid config"),
+            (Some(format!("[Interface]\nPrivateKey = {k}\nAddress = 10.0.0.2/33\n[Peer]\nPublicKey = {k}\n")), "add exit wgconf: netip.ParsePrefix(\"10.0.0.2/33\"): prefix length out of range"),
+            (Some(format!("[Interface]\nPrivateKey = {k}\nAddress = 10.0.0.2\n[Peer]\nPublicKey = {k}\nEndpoint = vpn.example\n")), "add exit wgconf: endpoint \"vpn.example\": missing port in address"),
+        ] {
+            let f = Arc::new(Fake { wg_conf: file, ..Default::default() });
+            let e = run_until_up(f.clone(), opts(&["-wg", "wg.conf"])).await.unwrap_err();
+            assert_eq!(e, want);
+            assert!(f.steps().is_empty(), "{want}: {:?}", f.steps());
+        }
     }
 
     #[tokio::test]

@@ -19,7 +19,9 @@ use crate::exit;
 use crate::gojson::{self, JValue, Obj};
 use crate::golike;
 use crate::net::dial::{Dialer, Direct};
+use crate::mtu;
 use crate::net::proxy::{ProxyExit, ProxyUrl};
+use crate::net::wg::{WgConfig, WgExit, WgOptions};
 
 /// One entry of the routes file.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -151,9 +153,16 @@ async fn add(id: &str, cfg: &RouteCfg, direct: &Direct) -> Result<RouteExit, Str
         return Err("proxy: add failed".into());
     }
     match cfg {
-        // the WireGuard exit is not in this engine yet; the config is
-        // ready for it
-        RouteCfg::Wg(_) => Err("WireGuard routes are not supported by this engine yet".into()),
+        RouteCfg::Wg(uapi) => {
+            let cfg = WgConfig::parse(id, uapi)?;
+            let endpoint = cfg.resolve().await?;
+            // the route's packets fit its config's MTU, else a 1500 link's,
+            // less WireGuard's overhead; never under the minimum
+            let m = mtu::uapi_mtu(uapi);
+            let inner = if m > 0 { m - mtu::WG_OVERHEAD } else { mtu::MAX_MTU - mtu::WG_OVERHEAD };
+            let x = Arc::new(WgExit::start(id, cfg, endpoint, direct, WgOptions::new(inner.max(mtu::MIN_MTU) as usize)).await?);
+            Ok(RouteExit { dialer: x.clone(), proxies: x })
+        }
         RouteCfg::Proxy(url) => {
             // firestack takes any id starting with wg (or gsro) for
             // WireGuard and reads the URL as a WireGuard config
@@ -261,7 +270,6 @@ pub(crate) mod tests {
                 "route pxnoport: parse \"socks5://127.0.0.1\": missing port",
                 "route office: WireGuard ids start with wgapp",
                 "route wgapp1: open missing.conf: The system cannot find the file specified.",
-                "route wgapp2: WireGuard routes are not supported by this engine yet",
                 "route wgx: proxy: wg: wgx failed to parse line \"socks5://127.0.0.1:1\"",
                 "route pxrpn: proxy: cannot add rpn proxy",
                 "route : proxy: add failed",
@@ -270,9 +278,9 @@ pub(crate) mod tests {
             .join("\n")
         );
         // names default to the id
-        assert_eq!(l.names, HashMap::from([("pxsocks".to_string(), "Home proxy".to_string()), ("pxhttp".to_string(), "pxhttp".to_string())]));
+        assert_eq!(l.names, HashMap::from([("pxsocks".to_string(), "Home proxy".to_string()), ("pxhttp".to_string(), "pxhttp".to_string()), ("wgapp2".to_string(), "Away".to_string())]));
         let ids: Vec<&str> = l.exits.iter().map(|(id, _)| id.as_str()).collect();
-        assert_eq!(ids, ["pxsocks", "pxhttp"]);
+        assert_eq!(ids, ["pxsocks", "pxhttp", "wgapp2"]);
         assert_eq!(l.exits[0].1.proxies.get("pxsocks").unwrap().status, TZZ);
     }
 
@@ -300,13 +308,14 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn the_table_answers_for_the_exit_and_every_route() {
         let (l, err) = load_str(r#"[{"id":"pxsocks","name":"Home proxy","kind":"proxy","url":"socks5://127.0.0.1:1080"},{"id":"pxhttp","name":"Away","kind":"proxy","url":"http://127.0.0.1:3128"},{"id":"wgapp1","name":"Office","kind":"wg","file":"wg.conf"}]"#).await;
-        assert!(err.unwrap().starts_with("route wgapp1: "));
+        // the WireGuard route loads too: its exit starts, its handshake comes later
+        assert_eq!(err, None);
         let t = Arc::new(ProxyTable::default());
         t.add(EXIT_PROXY, Arc::new(proxy_exit("socks5://127.0.0.1:1", "127.0.0.1:1".parse().unwrap())));
         for (id, x) in &l.exits {
             t.add(id, x.proxies.clone());
         }
-        assert!(t.get("wgapp1").is_none() && t.get("Base").is_none());
+        assert!(t.get("wgapp1").is_some() && t.get("Base").is_none());
         let e = Engine::with_self(None, "", "C:\\fswin.exe", Box::new(|_| {}));
         e.set_exit(EXIT_PROXY);
         e.set_proxies(t);
@@ -316,12 +325,19 @@ pub(crate) mod tests {
         let rows: Vec<(String, String, String)> = v.as_array().unwrap().iter().map(|r| (r["id"].as_str().unwrap().into(), r["name"].as_str().unwrap().into(), r["status"].as_str().unwrap().into())).collect();
         assert_eq!(
             rows,
-            [("pxhttp".into(), "Away".into(), "idle".into()), ("pxsocks".into(), "Home proxy".into(), "idle".into()), (EXIT_PROXY.to_string(), "proxy".into(), "idle".into())]
+            [
+                ("pxhttp".into(), "Away".into(), "idle".into()),
+                ("pxsocks".into(), "Home proxy".into(), "idle".into()),
+                ("wgapp1".into(), "Office".into(), "up".into()),
+                (EXIT_PROXY.to_string(), "proxy".into(), "idle".into())
+            ]
         );
         // the keys in Go's order; no addrs or lastOK before a good dial
-        for (s, (id, name, _)) in st.iter().zip(&rows) {
+        for (s, (id, name, status)) in st.iter().zip(&rows) {
             let j = serde_json::to_string(s).unwrap();
-            let head = format!(r#"{{"id":"{id}","name":"{name}","status":"idle","rx":0,"tx":0,"since":"#);
+            // a WireGuard route shows its interface addresses as firestack does
+            let addrs = if id == "wgapp1" { r#""addrs":"10.2.0.2/32","# } else { "" };
+            let head = format!(r#"{{"id":"{id}","name":"{name}","status":"{status}",{addrs}"rx":0,"tx":0,"since":"#);
             assert!(j.starts_with(&head) && j.ends_with('}') && !j[head.len()..].contains(','), "{j}");
         }
     }

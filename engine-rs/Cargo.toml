@@ -24,7 +24,10 @@ hyper = { version = "1.11.1", features = ["http1", "server", "client", "http2"] 
 hyper-util = { version = "0.1.21", features = ["tokio"] }
 http-body-util = "0.1.5"
 bytes = "1.12.1"
-smoltcp = { version = "0.14.0", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp"] }
+smoltcp = { version = "0.14.0", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp", "socket-udp", "async"] }
+# WireGuard (BSD-3-Clause): only the sans-IO noise::Tunn; default features
+# (the device module with its tun and threads) off
+boringtun = { version = "0.7.1", default-features = false }
 # DNS: messages, DoH/DoT over rustls (ring, no aws-lc build), the system's
 # roots and Mozilla's (webpki-roots, CDLA-Permissive-2.0)
 hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }

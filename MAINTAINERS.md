@@ -65,11 +65,12 @@ Service e2e run the real engine with admin rights, and catch most breakage.
 - **The Rust engine** (`engine-rs/`, binary `fswin-rs.exe`): it now runs
   with `fswin.exe`'s command line: the userspace network stack, the direct
   exit, the DNS layer (DoH, DoT, plain DNS, cache), the start and stop order,
-  the API, the kill switch, NRPT, AuroraVPN Service and the `-proxy` exit.
+  the API, the kill switch, NRPT, AuroraVPN Service, the `-proxy` and `-wg`
+  exits and per-app `-routes`.
   CI runs the same end-to-end scripts against it as against the Go engine
   (`engine-rs.yml`, job "End to end with fswin-rs as fswin.exe").
   Flags it cannot serve yet are refused at start with a clear error. Left:
-  `-wg`, `-warp` (WARP needs a patched boringtun), `-routes`, `-pcap`,
+  `-warp` (WARP needs a patched boringtun), `-pcap`,
   MASQUE and the chain through usque, DNSCrypt, ODoH, on-device blocklists,
   the anti-censorship dialers, and a throughput comparison with the Go
   engine. Until it matches `fswin.exe`, the Go engine ships. Details and

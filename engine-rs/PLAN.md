@@ -36,7 +36,7 @@ are where they are most likely to slip.
 | Wintun | wintun-bindings | 0.7.40 (2026-08-17) | MIT | in use (`src/win/wintun.rs`), default features off; brings libloading 0.9.0 (ISC), log 0.4 and thiserror 2 (MIT/Apache). Maintained (tun2proxy org); `wintun` 0.5.1 is stale since 2025-01. `tun-rs` 2.8.11 (Apache-2.0) is the fallback. Its netsh helpers find netsh through PATH: not used |
 | Userspace TCP/IP | netstack-smoltcp (on smoltcp 0.14, 0BSD) | 0.2.4 | MIT/Apache | alternatives: ipstack 1.0.1 (Apache-2.0, own TCP, used by tun2proxy), own glue on smoltcp. Behind a trait so it can be swapped |
 | Packet parsing | etherparse | 0.21.0 | MIT/Apache | owner lookup, pcap, ICMP |
-| WireGuard | boringtun | 0.7.1 | BSD-3 | Cloudflare; sans-IO `Tunn`. gotatun 0.9.2 (Mullvad fork, MPL-2.0) is the alternative. Neither does WARP's reserved header bytes (see gaps) |
+| WireGuard | boringtun | 0.7.1 (2026-05-01) | BSD-3 | in use (`net/wg.rs`), default features off (no `device` module, no tun): only the sans-IO `noise::Tunn`; brings x25519-dalek 2, chacha20poly1305, blake2, hmac, ip_network(_table), parking_lot, tracing (unused: no subscriber) and nix on Unix (MIT/Apache/BSD); ring 0.17 was already there. Cloudflare. gotatun 0.9.2 (Mullvad fork, MPL-2.0) is the alternative. Neither does WARP's reserved header bytes (see gaps) |
 | X25519 for WARP registration | x25519-dalek | 3.0.0 | BSD-3 | |
 | HTTPS client (DoH, WARP API) | hyper + hyper-rustls / reqwest | 0.27.10 / 0.13.5 | Apache/ISC/MIT | rustls 0.23.45 with ring or aws-lc-rs |
 | TLS (DoT) | tokio-rustls | 0.26.5 | MIT/Apache | |
@@ -149,10 +149,10 @@ Legend: **P1..P4** = phase. Effort is for the Rust side only.
 | Go | Rust approach | Phase | Effort |
 |---|---|---|---|
 | "direct" exit (Base): sockets bound to the physical interface | dialer with IP_UNICAST_IF | P1 | in the stack estimate |
-| `-wg` wg-quick file → config | parser ported in P1 (`exit.rs`, same validation and output keys); boringtun `Tunn` + own UDP loop + a second smoltcp/netstack instance (or IP-packet relay) for the inner side | P2 | 3 ew |
+| `-wg` wg-quick file → config | done (`net/wg.rs`): the P1 parser (`exit.rs`), then firestack's wgIfConfigOf checks with its wording; one boringtun `Tunn` per peer, a UDP socket to the endpoint from the Direct dialer (endpoint resolved before the tunnel is up), timers every 250 ms, and a smoltcp client stack inside the tunnel that dials TCP and opens UDP from the config's addresses, within AllowedIPs. Status TOK after a handshake, TKO when one goes unanswered (10 s) or the socket fails; rx/tx are bytes on the wire, last_ok the last handshake. Not yet: more than one `[Peer]` (refused), the config's DNS servers are kept but not used (as in the Go engine, DNS goes to the -dns transport through the exit), endpoint re-resolution on failure, ICMP inside the tunnel | P2 | done; Windows runner test to come |
 | `-warp` (register at api.cloudflareclient.com, save account JSON as the user, WireGuard with client id in reserved bytes h1..h4, MTU 1280) | reqwest/hyper + x25519-dalek for registration; boringtun **patched** for the header bytes (see gaps) | P2 | 1.5 ew + the patch |
 | `-proxy socks5://` / `http://` | done (`net/proxy.rs`): own SOCKS5 client (CONNECT, UDP ASSOCIATE, user/password) and HTTP CONNECT (Basic auth, one answer to a 407); UDP over an HTTP proxy fails and marks the exit failing, as firestack's http1 does. Unlike firestack's zero stats, /api/proxies gets real rx/tx | P2 | done |
-| `-routes` per-app WireGuard/proxy routes (ids `wgapp*`, `pxsocks`, `pxhttp`), `/api/proxies` stats | proxy routes done (`routes.rs`): the file read and checked with Go's wording, one `ProxyExit` per route registered with the forwarder under its id, `ProxyTable` answering /api/proxies for the exit and every route, loaded after DNS and making the tunnel full as in Go. WireGuard routes are checked and their config built, then reported as not supported until the WireGuard exit lands | P2 | proxies done; WireGuard routes wait for the exit |
+| `-routes` per-app WireGuard/proxy routes (ids `wgapp*`, `pxsocks`, `pxhttp`), `/api/proxies` stats | proxy routes done (`routes.rs`): the file read and checked with Go's wording, one `ProxyExit` per route registered with the forwarder under its id, `ProxyTable` answering /api/proxies for the exit and every route, loaded after DNS and making the tunnel full as in Go. WireGuard routes each get a `WgExit` (`net/wg.rs`) under their id, the inner MTU from their config (else 1500 less WireGuard's 80) | P2 | done (unit-tested; not yet on the runner) |
 | `-masque` (usque socks child), `-chain` (usque chain: WARP2 → wg0 → WARP1), `-usque`, `-usque-dir`, `-usque-flags` | keep **usque.exe as a child**: random port/user/pass, job object kill-on-close, started as the user after the routes, output piped to the log, bypass of its own flows, supervisor (restart backoff 1 s → 60 s, SOCKS probe to 1.1.1.1:80 every 15 s, 30 s start grace, network-change check, "Tunnel connection lost" log trigger). Flag checks and defaults ported in P1 (`usque.rs`) | P3 | 2 ew |
 | native MASQUE (WARP over CONNECT-IP, HTTP/3 with HTTP/2 fallback, Cloudflare enrolment + client cert) | quinn + h3 + h3-datagram + own CONNECT-IP capsules; HTTP/2 extended CONNECT via h2 | later | 6 to 10 ew; not planned before parity |
 
@@ -189,7 +189,9 @@ Legend: **P1..P4** = phase. Effort is for the Rust side only.
 5. **gVisor-grade TCP.** smoltcp/ipstack lack some of gVisor's TCP (SACK
    recovery, RACK, mature congestion control, large receive windows tuned for
    gigabit). Throughput and loss behaviour must be measured early (phase 1
-   exit criterion), not assumed.
+   exit criterion), not assumed. The -wg exit puts a second smoltcp (as a
+   TCP client) inside the tunnel, so a WireGuard connection crosses two
+   smoltcp TCP stacks: measure it on the runner as well.
 6. **Anti-censorship dialers** (split TCP / TLS record fragmentation): own code.
 
 ## Phases
