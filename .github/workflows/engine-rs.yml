@@ -104,6 +104,22 @@ jobs:
         if: ${{ !cancelled() }}
         shell: pwsh
         run: ./tools/sim/service-windows.ps1 -Dist dist -Out sim-out
+      # what the engine's NRPT rule looks like to Windows while it runs
+      - name: NRPT diagnosis
+        if: always()
+        shell: pwsh
+        run: |
+          $tok = Join-Path $PWD 'sim-out\diag-token'
+          [IO.File]::WriteAllText($tok, 'diag' + [guid]::NewGuid().ToString('N'))
+          $p = Start-Process -FilePath dist\fswin.exe -ArgumentList @('-api', '127.0.0.1:47897', '-token-file', $tok, '-logfile', (Join-Path $PWD 'sim-out\diag.engine.log'), '-dns', 'doh', '-nrpt') -PassThru -WindowStyle Hidden
+          Start-Sleep -Seconds 4
+          reg query 'HKLM\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters\DnsPolicyConfig' /s
+          Get-DnsClientNrptRule | Format-List | Out-String | Write-Host
+          Get-DnsClientNrptPolicy | Format-List | Out-String | Write-Host
+          Get-DnsClientServerAddress -InterfaceAlias AuroraVPN -ErrorAction SilentlyContinue | Format-List | Out-String | Write-Host
+          Stop-Process -Id $p.Id -Force
+          Start-Sleep -Seconds 1
+          & dist\fswin.exe -cleanup
       # the engine's own logs, in the job log too (the artifact is a zip)
       - name: Engine logs
         if: always()
