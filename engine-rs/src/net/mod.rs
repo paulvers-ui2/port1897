@@ -7,10 +7,12 @@
 //! The data path: the userspace stack behind the adapter (`stack`), the
 //! engine's decision per flow, the copying and the DNS trap (`forward`),
 //! the sockets that leave by the physical interface (`dial`), the -proxy
-//! exit (`proxy`), and the adapter's packets in and out (`tunnel`).
+//! exit (`proxy`), the -wg exit (`wg`), and the adapter's packets in and
+//! out (`tunnel`).
 
 pub mod dial;
 pub mod forward;
 pub mod proxy;
 pub mod stack;
 pub mod tunnel;
+pub mod wg;
