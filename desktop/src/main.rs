@@ -47,16 +47,29 @@ fn is_automation(a: &str) -> bool {
     matches!(a, "--start" | "--stop" | "--resume" | "--pause") || a.strip_prefix("--pause=").is_some_and(|m| !m.is_empty() && m.bytes().all(|b| b.is_ascii_digit()))
 }
 
+/// Where Tauri serves the app's page on Windows (http, as use_https_scheme
+/// is off).
+const APP_ORIGIN: &str = "http://tauri.localhost";
+
+/// Whether the window may go to url: the app's own origin exactly (not
+/// https, another port such as the engine's API, or a look-alike host), or
+/// in a debug build the dev server's, when one is set.
+fn own_page(url: &tauri::Url, dev: Option<&tauri::Url>) -> bool {
+    let app = tauri::Url::parse(APP_ORIGIN).expect("app origin");
+    url.username().is_empty() && url.password().is_none() && (url.origin() == app.origin() || dev.is_some_and(|d| url.origin() == d.origin()))
+}
+
 /// The main window: hidden on close (the app stays in the tray), never
 /// navigating away from the app's own page.
 fn create_window(app: &AppHandle, show: bool) -> tauri::Result<()> {
+    let dev = if cfg!(debug_assertions) { app.config().build.dev_url.clone() } else { None };
     let w = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("AuroraVPN")
         .inner_size(1100.0, 820.0)
         .min_inner_size(720.0, 600.0)
         .visible(show)
         .background_color(tauri::window::Color(0x0e, 0x1b, 0x21, 0xff))
-        .on_navigation(|url| matches!(url.scheme(), "http" | "https") && url.host_str() == Some("tauri.localhost"))
+        .on_navigation(move |url| own_page(url, dev.as_ref()))
         .disable_drag_drop_handler()
         .build()?;
     // Most WebView2 settings apply from the next page load. On the main
@@ -345,5 +358,17 @@ mod tests {
         assert!(is_automation("--pause=30"));
         assert!(!is_automation("--pause=x"));
         assert!(!is_automation("--autostart"));
+    }
+
+    #[test]
+    fn the_window_stays_on_the_apps_own_origin() {
+        let u = |t: &str| tauri::Url::parse(t).unwrap();
+        assert!(own_page(&u("http://tauri.localhost/"), None));
+        assert!(own_page(&u("http://tauri.localhost/index.html#stats"), None));
+        assert!(own_page(&u("http://tauri.localhost:80/"), None));
+        for bad in ["https://tauri.localhost/", "http://tauri.localhost:47897/api/status", "http://tauri.localhost.example.com/", "http://user@tauri.localhost/", "tauri://localhost/", "file:///C:/Windows/", "about:blank", "http://localhost:1420/"] {
+            assert!(!own_page(&u(bad), None), "{bad}");
+        }
+        assert!(own_page(&u("http://localhost:1420/x"), Some(&u("http://localhost:1420"))));
     }
 }
