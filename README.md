@@ -7,7 +7,7 @@ app for everyone.
 
 > **Early test software.** Installing it needs administrator rights once;
 > after that, any Windows user turns protection on without an admin prompt
-> (through AuroraVPN Service, as with Proton VPN). The portable zip asks for
+> (through AuroraVPN Service, as with Proton VPN). The portable exe asks for
 > admin rights each time. It changes network settings while it runs. Do not
 > rely on it for privacy or security yet.
 
@@ -45,9 +45,8 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
   or proxy, the rest through the main VPN.
 - **Kill switch** (`-killswitch`): Windows Filtering Platform rules block everything
   outside the tunnel, and keep blocking if the engine crashes.
-- **The app** (`desktop/`, screens in `ui/renderer`): written in Rust on
-  [Tauri](https://tauri.app), styled after the Android home screen, with a tray
-  icon. Download the installer or the portable zip from the
+- **The app** (`ui/`): an Electron app styled after the Android home screen, with
+  a tray icon. Download the installer or the portable exe from the
   [latest release](https://github.com/paulvers-ui2/port1897/releases/latest);
   every change merged into `main` is published there as a new version.
 - **AuroraVPN Service:** installed with the app, it starts protection for any
@@ -59,13 +58,13 @@ Not yet: IPv6. See the [roadmap](#roadmap).
 
 1. Download **AuroraVPN-Setup-&lt;version&gt;.exe** from the
    [latest release](https://github.com/paulvers-ui2/port1897/releases/latest)
-   (or the portable zip, which asks for admin rights at each start).
+   (or the portable exe, which asks for admin rights at each start).
 2. Disconnect any other VPN (Proton VPN, NordVPN, ...). They fight over the same
    network settings.
 3. Run the installer, open AuroraVPN and press Start.
 
-Uninstalling asks whether to also delete your settings, logs and WARP identities
-(unticked by default); upgrades keep everything.
+Uninstalling and upgrading keep your settings, logs and WARP identities in
+`%APPDATA%\AuroraVPN`; delete that folder to remove them too.
 
 ## Try the engine on its own
 
@@ -147,7 +146,7 @@ Please tell us how it went with a
 | 1 | firestack builds on Windows; Wintun network adapter; `fswin` test tool | done |
 | 2 | Firewall core: program lookup, blocking, DNS leak fix, kill switch, rules engine | done |
 | 3 | WireGuard, WARP, WARP over MASQUE and the WARP chain | done |
-| 4 | App window and tray icon, installer, AuroraVPN Service | done (app in Rust since 0.3) |
+| 4 | App window and tray icon, installer, AuroraVPN Service | done |
 | 5 | The engine in Rust (`engine-rs/`, branch `feature/engine-rust`), a drop-in for `fswin.exe` | in progress, see its PLAN.md |
 | 6 | Code signing, auto-update, IPv6 | planned |
 
@@ -162,8 +161,8 @@ The original design is in [PORT.md](PORT.md). To keep the project going, see
 | `intra/netstack/wintun_windows.go` | Connects firestack's network stack to a Wintun adapter |
 | `win/` | Windows-only pieces: `ifbind` (keep firestack's own traffic out of the tunnel), `owner` (which program owns a connection), `dnspolicy` (DNS leak fix) |
 | `cmd/fswin` | The engine (`fswin.exe`) and AuroraVPN Service |
-| `desktop/` | The app, in Rust on Tauri; its installer hooks are in `desktop/nsis/` |
-| `ui/renderer` | The app's screens (HTML/JS), shared with the old Electron app in `ui/` |
+| `ui/` | The app (Electron); its screens are in `ui/renderer`, its installer step in `ui/build/installer.nsh` |
+| `desktop/` | The same app in Rust on Tauri, shipped from 0.2.28 to 0.2.30, parked and not built |
 | `engine-rs/` | The engine being rewritten in Rust, a drop-in for `fswin.exe` once it matches it; see its PLAN.md |
 | `third_party/gotrie` | A patched copy of a firestack dependency, with Windows support |
 
