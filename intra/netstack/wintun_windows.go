@@ -403,14 +403,27 @@ func (e *wendpoint) WritePackets(pkts stack.PacketBufferList) (int, tcpip.Error)
 		return 0, &tcpip.ErrNoSuchFile{}
 	}
 
+	// Assemble each outbound packet into a pooled buffer. NativeTun.Write
+	// copies every buffer into the Wintun send ring before it returns and
+	// keeps no reference after, so the buffers go back to the pool here --
+	// no per-packet heap allocation on the write path.
 	bufs := make([][]byte, 0, total)
+	regions := make([]*[]byte, 0, total)
+	defer func() {
+		for _, p := range regions {
+			core.Recycle(p)
+		}
+	}()
 	var sz int64
 	for _, pkt := range pkts.AsSlice() {
-		b := make([]byte, 0, pkt.Size())
+		p := core.AllocRegion(pkt.Size())
+		b := (*p)[:0]
 		for _, v := range pkt.AsSlices() {
 			b = append(b, v...)
 		}
+		*p = b
 		bufs = append(bufs, b)
+		regions = append(regions, p)
 		sz += int64(len(b))
 	}
 
