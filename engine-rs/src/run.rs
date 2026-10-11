@@ -607,6 +607,10 @@ mod tests {
     use crate::net::tunnel::tests::MemDevice;
     use std::sync::mpsc as smpsc;
 
+    // the wg(8) man page's example keys, as in exit.rs's tests
+    const K1: &str = "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=";
+    const K2: &str = "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=";
+
     /// A system that records what it is asked, in order.
     #[derive(Default)]
     struct Fake {
@@ -906,7 +910,7 @@ mod tests {
         let routes = format!(
             r#"[{{"id":"pxsocks","name":"Home proxy","kind":"proxy","url":"socks5://{px}"}},{{"id":"wgapp1","name":"Office","kind":"wg","file":"wg.conf"}},{{"id":"x","kind":"tor"}}]"#
         );
-        let f = Arc::new(Fake { files: vec![("routes.json", routes), ("rules.json", r#"{"apps":{"app.exe":{"route":"pxsocks"}}}"#.into()), ("wg.conf", "[Interface]\nPrivateKey = yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=\nAddress = 10.2.0.2/32\n\n[Peer]\nPublicKey = xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=\nAllowedIPs = 0.0.0.0/0\nEndpoint = 192.0.2.1:51820\n".into())], one_app: true, ..Default::default() });
+        let f = Arc::new(Fake { files: vec![("routes.json", routes), ("rules.json", r#"{"apps":{"app.exe":{"route":"pxsocks"}}}"#.into()), ("wg.conf", format!("[Interface]\nPrivateKey = {K1}\nAddress = 10.2.0.2/32\n\n[Peer]\nPublicKey = {K2}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 192.0.2.1:51820\n"))], one_app: true, ..Default::default() });
         let api = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
         let o = opts(&["-routes", "routes.json", "-rules", "rules.json", "-api", &api.to_string(), "-token-file", "token"]);
         let got = Arc::new(Mutex::new(String::new()));

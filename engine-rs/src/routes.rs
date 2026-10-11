@@ -197,11 +197,17 @@ pub(crate) mod tests {
     use crate::net::proxy::tests::{Behaviour, echo_tcp, exit as proxy_exit, socks_server};
     use std::net::SocketAddr;
 
-    const WG_CONF: &str = "[Interface]\nPrivateKey = yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=\nAddress = 10.2.0.2/32\nDNS = 10.2.0.1\n\n[Peer]\nPublicKey = xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=\nAllowedIPs = 0.0.0.0/0\nEndpoint = 192.0.2.1:51820\n";
+    // the wg(8) man page's example keys, as in exit.rs's tests
+    const K1: &str = "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=";
+    const K2: &str = "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=";
+
+    fn wg_conf() -> String {
+        format!("[Interface]\nPrivateKey = {K1}\nAddress = 10.2.0.2/32\nDNS = 10.2.0.1\n\n[Peer]\nPublicKey = {K2}\nAllowedIPs = 0.0.0.0/0\nEndpoint = 192.0.2.1:51820\n")
+    }
 
     fn files(name: &'static str, data: &'static str) -> impl Fn(&str) -> Result<Vec<u8>, String> + Sync {
         move |p: &str| match p {
-            "wg.conf" => Ok(WG_CONF.as_bytes().to_vec()),
+            "wg.conf" => Ok(wg_conf().into_bytes()),
             p if p == name => Ok(data.as_bytes().to_vec()),
             p => Err(format!("open {p}: The system cannot find the file specified.")),
         }
