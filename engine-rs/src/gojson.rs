@@ -87,7 +87,7 @@ impl<'de> Visitor<'de> for JVisitor {
 
 impl JValue {
     /// Go's name for the JSON kind, as its type errors word it.
-    fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
             JValue::Null => "null",
             JValue::Bool(_) => "bool",

@@ -12,7 +12,8 @@
 //! (before anything changes on the PC), a network is waited for, the MTU is
 //! planned, the adapter made, the NRPT rule set (before the adapter gets its
 //! DNS server), the adapter configured, the kill switch set (before the
-//! engine opens a socket of its own), the stack and DNS started, conflicts
+//! engine opens a socket of its own), the stack and DNS started, the
+//! per-app routes loaded (they make the tunnel full), conflicts
 //! looked for, the NRPT nudge sent, the routes added, and the API served.
 //!
 //! stop: the NRPT rule and the adapter's DNS server go first, then the
@@ -46,6 +47,7 @@ use crate::net::forward::Forwarder;
 use crate::net::proxy::{ProxyExit, ProxyUrl};
 use crate::net::stack::StackConfig;
 use crate::net::tunnel::{Device, Tunnel};
+use crate::routes::{self, ProxyTable};
 use crate::rules;
 
 /// How long a start waits for a network (Go's networkWait): the app
@@ -136,7 +138,6 @@ pub fn check_supported(o: &Options) -> Result<(), String> {
         (o.warp, "-warp"),
         (o.masque, "-masque"),
         (!o.chain.is_empty(), "-chain"),
-        (!o.routes_file.is_empty(), "-routes"),
         (!o.pcap_file.is_empty(), "-pcap"),
         (!o.blocklist_dir.is_empty() || !o.blocklist_stamp.is_empty(), "-blocklists"),
         (o.undelegated, "-undelegated"),
@@ -431,9 +432,12 @@ async fn start(o: &Options, sys: &dyn Sys, version: &str, stop_tx: &Arc<watch::S
         Some(x) => x.clone(),
         None => direct.clone(),
     };
+    // the exit and the per-app routes, by id, for /api/proxies
+    let proxies = Arc::new(ProxyTable::default());
+    engine.set_proxies(proxies.clone());
     if let Some(x) = &exit {
         engine.set_exit(&exit_id);
-        engine.set_proxies(x.clone());
+        proxies.add(&exit_id, x.clone());
     }
     let fake = Arc::new(FakeDns::new(engine.clone()));
     let (fb_url, fb_ips) = if o.fallback_doh.is_empty() { (o.doh.clone(), o.doh_ips.clone()) } else { (o.fallback_doh.clone(), o.fallback_ips.clone()) };
@@ -446,6 +450,7 @@ async fn start(o: &Options, sys: &dyn Sys, version: &str, stop_tx: &Arc<watch::S
         fwd.add_exit(&exit_id, x.clone());
     }
     engine.set_closer(fwd.clone().closer());
+    let fwd_routes = fwd.clone();
     let cfg = StackConfig { mtu: plan.adapter.max(mtu::MIN_MTU) as usize, ..Default::default() };
     up.tunnel = Some(Tunnel::start(dev, cfg, fwd));
     crate::logline::log(crate::logline::INFO, "netstack", &format!("up on {name}, mtu {}", plan.adapter));
@@ -456,6 +461,23 @@ async fn start(o: &Options, sys: &dyn Sys, version: &str, stop_tx: &Arc<watch::S
     let (tid, dns_label) = setup_dns(&fake, &o, &phys.dns_servers(), dns_dialer, &|l| sys.say(l)).map_err(|e| format!("dns: {e}"))?;
     engine.set_dns(&tid);
     start_step(sys, began, "tunnel and DNS ready");
+
+    if !o.routes_file.is_empty() {
+        let (r, err) = routes::load(&|p: &str| sys.read_user_file(p), &o.routes_file, &direct).await;
+        if let Some(e) = err {
+            sys.say(&format!("fswin: routes: {e}"));
+        }
+        for (id, x) in &r.exits {
+            fwd_routes.add_exit(id, x.dialer.clone());
+            proxies.add(id, x.proxies.clone());
+        }
+        let any = !r.names.is_empty();
+        engine.set_routes(r.names);
+        if any {
+            o.full = true; // routes only see traffic in the tunnel
+            kill.set_full(true);
+        }
+    }
 
     let (pname, pdesc, _) = sys.describe(phys4);
     sys.say(&format!("fswin: firestack's own traffic leaves via interface #{phys4} {pname} ({pdesc})"));
@@ -592,6 +614,10 @@ mod tests {
         lines: Mutex<Vec<String>>,
         fail_configure: bool,
         no_route: bool,
+        /// the user's files besides the token, by path
+        files: Vec<(&'static str, String)>,
+        /// every flow is C:\Apps\app.exe's (else no owner is known)
+        one_app: bool,
         /// the adapter's packets: what the "programs" send, what they get
         wire: Mutex<Option<Wire>>,
     }
@@ -723,7 +749,7 @@ mod tests {
             Arc::new(FakeFw(self.0.clone(), Mutex::new(false)))
         }
         fn owners(&self) -> Arc<dyn Owners> {
-            Arc::new(NoOwners)
+            if self.0.one_app { Arc::new(crate::routes::tests::OneApp) } else { Arc::new(NoOwners) }
         }
         fn describe(&self, idx: u32) -> (String, String, bool) {
             (format!("Ethernet{idx}"), "Intel".into(), false)
@@ -733,7 +759,13 @@ mod tests {
             Ok(())
         }
         fn read_user_file(&self, path: &str) -> Result<Vec<u8>, String> {
-            if path == "token" { Ok(b"0123456789abcdef0123".to_vec()) } else { Err(format!("open {path}: not found")) }
+            if path == "token" {
+                return Ok(b"0123456789abcdef0123".to_vec());
+            }
+            match self.0.files.iter().find(|(p, _)| *p == path) {
+                Some((_, data)) => Ok(data.as_bytes().to_vec()),
+                None => Err(format!("open {path}: not found")),
+            }
         }
     }
 
@@ -858,6 +890,64 @@ mod tests {
         ] {
             assert!(f.has_line(want), "no line {want:?} in {:#?}", f.lines.lock().unwrap());
         }
+    }
+
+    /// -routes: the routes load after DNS (a bad one is reported, not
+    /// fatal) and put all traffic in the tunnel; an app's flow leaves by
+    /// its route and /api/proxies lists the route.
+    #[tokio::test]
+    async fn routes_load_after_dns_and_make_the_tunnel_full() {
+        use crate::net::proxy::tests::{Behaviour, echo_udp, socks_server};
+        use crate::net::stack::{Parsed, build_udp, parse};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let b = Behaviour::default();
+        let px = socks_server(b.clone()).await;
+        let echo = echo_udp().await;
+        let routes = format!(
+            r#"[{{"id":"pxsocks","name":"Home proxy","kind":"proxy","url":"socks5://{px}"}},{{"id":"wgapp1","name":"Office","kind":"wg","file":"wg.conf"}},{{"id":"x","kind":"tor"}}]"#
+        );
+        let f = Arc::new(Fake { files: vec![("routes.json", routes), ("rules.json", r#"{"apps":{"app.exe":{"route":"pxsocks"}}}"#.into()), ("wg.conf", "[Interface]\nPrivateKey = yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=\nAddress = 10.2.0.2/32\n\n[Peer]\nPublicKey = xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=\nAllowedIPs = 0.0.0.0/0\nEndpoint = 192.0.2.1:51820\n".into())], one_app: true, ..Default::default() });
+        let api = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        let o = opts(&["-routes", "routes.json", "-rules", "rules.json", "-api", &api.to_string(), "-token-file", "token"]);
+        let got = Arc::new(Mutex::new(String::new()));
+        let g2 = got.clone();
+        run_while_up(f.clone(), o, async move |f: Arc<Fake>| {
+            let (input, mut out) = f.wire.lock().unwrap().take().unwrap();
+            let me: SocketAddr = "10.111.222.1:7001".parse().unwrap();
+            input.send(build_udp(me, echo, b"routed").unwrap()).unwrap();
+            let p = tokio::time::timeout(Duration::from_secs(5), out.recv()).await.unwrap().unwrap();
+            let Parsed::Udp { src, payload, .. } = parse(&p) else { panic!("not udp") };
+            assert_eq!((src, &p[payload]), (echo, &b"routed"[..]));
+            let mut s = tokio::net::TcpStream::connect(api).await.unwrap();
+            s.write_all(format!("GET /api/proxies HTTP/1.1\r\nHost: {api}\r\nAuthorization: Bearer 0123456789abcdef0123\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+            let mut r = String::new();
+            s.read_to_string(&mut r).await.unwrap();
+            *g2.lock().unwrap() = r;
+        })
+        .await
+        .unwrap();
+        assert_eq!(b.conns.load(std::sync::atomic::Ordering::Relaxed), 1, "the app's datagram went by the route's proxy");
+        // the /1 routes are added though neither -full nor an exit was given
+        assert_eq!(f.steps(), ["adapter", "configure", "routes", "adapter closed"]);
+        for want in [
+            "fswin: routes: route wgapp1: WireGuard routes are not supported by this engine yet\nroute x: kind must be wg or proxy, not \"tor\"",
+            "(all IPv4; firestack's own traffic leaves via interface #3); DNS 10.111.222.3:53 -> https://cloudflare-dns.com/dns-query.",
+        ] {
+            assert!(f.has_line(want), "no line {want:?} in {:#?}", f.lines.lock().unwrap());
+        }
+        let r = got.lock().unwrap().clone();
+        let body = &r[r.find("\r\n\r\n").unwrap() + 4..];
+        assert!(r.starts_with("HTTP/1.1 200"), "{r}");
+        assert!(body.starts_with(r#"[{"id":"pxsocks","name":"Home proxy","status":"connected","rx":6,"tx":6,"lastOK":"#), "{body}");
+    }
+
+    #[tokio::test]
+    async fn routes_that_do_not_load_leave_dns_only() {
+        let f = Arc::new(Fake::default());
+        run_until_up(f.clone(), opts(&["-routes", "routes.json"])).await.unwrap();
+        assert!(f.has_line("fswin: routes: open routes.json: not found"));
+        assert_eq!(f.steps(), ["adapter", "configure", "adapter closed"]);
+        assert!(f.has_line("(DNS only); DNS 10.111.222.3:53"));
     }
 
     #[tokio::test]
