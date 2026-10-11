@@ -10,8 +10,8 @@ name: Security
 #   govulncheck     known vulnerabilities reachable from the Windows code
 #   Semgrep         community security rules for Go, JS and workflows
 #   Electronegativity  Electron security settings of the app (ui/)
-#   OSV-Scanner     known vulnerabilities in Go modules, npm packages and Rust
-#                   crates (go.mod and the lockfiles in ui/ and desktop/)
+#   OSV-Scanner     known vulnerabilities in Go modules and npm packages
+#                   (go.mod and ui/package-lock.json)
 #   Gitleaks        secrets committed anywhere in history
 #   zizmor          GitHub Actions security (injection, pinning, tokens)
 #   PSScriptAnalyzer  PowerShell scripts (tools/)

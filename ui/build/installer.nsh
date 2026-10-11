@@ -2,8 +2,9 @@
 ; a UAC prompt each time protection starts. The installer itself runs as
 ; admin (per-machine install), so it sets the service up once.
 
-; AuroraVPN 0.2.28 to 0.2.30 was a Rust app on Tauri (desktop/); Tauri's
-; installer keyed its Apps & Features entry by the product name
+; AuroraVPN 0.2.28 to 0.2.30 was a Rust app on Tauri (desktop/, now in git
+; history only); Tauri's installer keyed its Apps & Features entry by the
+; product name
 !define TAURI_UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\AuroraVPN"
 
 ; Removes the Tauri AuroraVPN before this one goes in, with its own

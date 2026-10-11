@@ -147,7 +147,7 @@ Please tell us how it went with a
 | 2 | Firewall core: program lookup, blocking, DNS leak fix, kill switch, rules engine | done |
 | 3 | WireGuard, WARP, WARP over MASQUE and the WARP chain | done |
 | 4 | App window and tray icon, installer, AuroraVPN Service | done |
-| 5 | The engine in Rust (`engine-rs/`, branch `feature/engine-rust`), a drop-in for `fswin.exe` | in progress, see its PLAN.md |
+| 5 | The engine in Rust, a drop-in for `fswin.exe` | stopped; the Go engine ships (see [MAINTAINERS.md](MAINTAINERS.md#the-rust-attempt)) |
 | 6 | Code signing, auto-update, IPv6 | planned |
 
 The original design is in [PORT.md](PORT.md). To keep the project going, see
@@ -162,8 +162,6 @@ The original design is in [PORT.md](PORT.md). To keep the project going, see
 | `win/` | Windows-only pieces: `ifbind` (keep firestack's own traffic out of the tunnel), `owner` (which program owns a connection), `dnspolicy` (DNS leak fix) |
 | `cmd/fswin` | The engine (`fswin.exe`) and AuroraVPN Service |
 | `ui/` | The app (Electron); its screens are in `ui/renderer`, its installer step in `ui/build/installer.nsh` |
-| `desktop/` | The same app in Rust on Tauri, shipped from 0.2.28 to 0.2.30, parked and not built |
-| `engine-rs/` | The engine being rewritten in Rust, a drop-in for `fswin.exe` once it matches it; see its PLAN.md |
 | `third_party/gotrie` | A patched copy of a firestack dependency, with Windows support |
 
 Builds run on GitHub Actions: every push builds Windows x64 and ARM64 and checks

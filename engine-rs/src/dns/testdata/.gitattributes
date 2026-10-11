@@ -1,3 +1,0 @@
-# DER certificates: never touch the bytes (a mangled fixture fails the
-# TLS tests with an error that says nothing about the cause)
-* binary
