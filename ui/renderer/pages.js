@@ -1329,10 +1329,16 @@ PAGES.stats = () => {
       );
     };
     const maxOf = (items, f) => Math.max(1, ...items.map(f));
-    const appRow = (max, f) => (a) =>
-      h(
+    const appRow = (max, f) => (a) => {
+      // tapping an app opens its App info, as the Apps and Logs screens do
+      const named = a.name && a.name !== '?';
+      const open = () => App.go('app-info', { app: a.name.toLowerCase() });
+      const attrs = named
+        ? { class: 'stat-row clickable', tabindex: '0', onclick: open, onkeydown: (ev) => (ev.key === 'Enter' || ev.key === ' ') && (ev.preventDefault(), open()) }
+        : { class: 'stat-row' };
+      return h(
         'div',
-        { class: 'stat-row' },
+        attrs,
         avatar(a.name),
         h(
           'span',
@@ -1347,6 +1353,7 @@ PAGES.stats = () => {
         ),
         h('span', { class: 'count', text: String(f === 'blocked' ? a.blocked : a.n) })
       );
+    };
     const domRow = (max, blocked) => (d) =>
       h(
         'div',
