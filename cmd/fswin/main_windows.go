@@ -259,6 +259,18 @@ func run(o options) error {
 		}
 	}
 
+	// all traffic in the tunnel needs a network outside it from the start
+	if o.full || o.kill || o.wg != "" || o.warp || o.proxy != "" || o.masque || o.chain != "" {
+		if !waitForNetwork(networkWait, serviceStop) {
+			select {
+			case <-serviceStop:
+				fmt.Println("fswin: stopping (requested by AuroraVPN Service)")
+				return nil
+			default: // the -full check below says why it cannot start
+			}
+		}
+	}
+
 	// prepare the exit first: WARP registers over the normal network
 	exitID, exitCfg, us, err := prepareExit(o)
 	if err != nil {
@@ -604,6 +616,46 @@ func stopStep(what string) {
 // the log to say where.
 func startStep(began time.Time, what string) {
 	fmt.Printf("fswin: start: %s after %d ms\n", what, time.Since(began).Milliseconds())
+}
+
+// networkWait is how long a start waits for a network. The app resumes
+// protection as Windows signs in, before Wi-Fi is up: fswin failed at once
+// with "-full: no IPv4 default route" (app.log 2026-10-10 05:27, twice, and
+// 2026-10-11 05:20), and a start 55 s later worked. The app waits 60 s for
+// the engine.
+const networkWait = 30 * time.Second
+
+// defaultRoute4 is the interface of the IPv4 default route, 0 if none;
+// tests replace it.
+var defaultRoute4 = func() uint32 {
+	_, idx := ifbind.LinkMTU(0)
+	return idx
+}
+
+// waitForNetwork waits up to d for an IPv4 default route; false if none
+// came, or stop closed first.
+func waitForNetwork(d time.Duration, stop <-chan struct{}) bool {
+	if defaultRoute4() != 0 {
+		return true
+	}
+	fmt.Printf("fswin: start: no network yet (no IPv4 default route); waiting up to %s\n", d)
+	began := time.Now()
+	tick := time.NewTicker(250 * time.Millisecond)
+	defer tick.Stop()
+	deadline := time.After(d)
+	for {
+		select {
+		case <-stop:
+			return false
+		case <-deadline:
+			return false
+		case <-tick.C:
+			if defaultRoute4() != 0 {
+				fmt.Printf("fswin: start: network up after %d ms\n", time.Since(began).Milliseconds())
+				return true
+			}
+		}
+	}
 }
 
 // stopTunnel is the stop once the API, the supervisor and usque are gone,

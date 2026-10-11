@@ -14,7 +14,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/celzero/firestack/win/wfp"
 )
@@ -122,5 +124,37 @@ func TestKillSwitchLeftoverCleared(t *testing.T) {
 	var none *killSwitch
 	if cleared, err := none.clearLeftover(); cleared || err != nil {
 		t.Error("a PC without a Wintun kill switch: something cleared")
+	}
+}
+
+// A start before Wi-Fi is up waits for the network instead of failing at
+// once; it gives up after the wait, and at once when asked to stop.
+func TestWaitForNetwork(t *testing.T) {
+	defer func(f func() uint32) { defaultRoute4 = f }(defaultRoute4)
+	var calls atomic.Int32
+	defaultRoute4 = func() uint32 {
+		if calls.Add(1) >= 3 {
+			return 7
+		}
+		return 0
+	}
+	if !waitForNetwork(5*time.Second, nil) {
+		t.Error("the network came up on the 3rd look, but the wait failed")
+	}
+
+	defaultRoute4 = func() uint32 { return 0 }
+	began := time.Now()
+	if waitForNetwork(600*time.Millisecond, nil) {
+		t.Error("no network, but the wait succeeded")
+	}
+	if d := time.Since(began); d < 600*time.Millisecond || d > 3*time.Second {
+		t.Errorf("gave up after %s, want about 600ms", d)
+	}
+
+	stop := make(chan struct{})
+	close(stop)
+	began = time.Now()
+	if waitForNetwork(time.Minute, stop) || time.Since(began) > time.Second {
+		t.Errorf("a stop did not end the wait at once (%s)", time.Since(began))
 	}
 }
