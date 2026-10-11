@@ -1123,6 +1123,20 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn a_persistent_keepalive_brings_the_tunnel_up_at_once() {
+        let srv = server(1, 2).await;
+        let x = exit_with(&format!("{}PersistentKeepalive = 25\n", conf(2, 1, srv.addr, "10.9.0.0/24")), quick()).await;
+        for _ in 0..200 {
+            if x.status() == TOK {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(x.status(), TOK, "no dial, yet a handshake");
+        assert!(x.info().stat.unwrap().last_ok > 0);
+    }
+
+    #[tokio::test]
     async fn dials_outside_the_config_fail_at_once() {
         let srv = server(1, 2).await;
         let x = exit_with(&conf(2, 1, srv.addr, "10.9.0.0/24, ::/0"), quick()).await;
