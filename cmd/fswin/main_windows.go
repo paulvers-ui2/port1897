@@ -483,19 +483,10 @@ func run(o options) error {
 		}
 	}
 
-	// Another VPN that claims all DNS or all traffic breaks ours: its NRPT
-	// rule races ours for every query, and firestack's own traffic leaves
-	// through that VPN's adapter, where it may never get answers.
-	if others, err := dnspolicy.Others(); err == nil {
-		for _, r := range others {
-			o.conflicts = append(o.conflicts, "another VPN sends all DNS elsewhere: "+r)
-		}
-	}
-	physName, physDesc, physVPN := ifbind.Describe(phys4)
+	physName, physDesc, _ := ifbind.Describe(phys4)
 	fmt.Printf("fswin: firestack's own traffic leaves via interface #%d %s (%s)\n", phys4, physName, physDesc)
-	if physVPN {
-		o.conflicts = append(o.conflicts, fmt.Sprintf("internet traffic leaves through another VPN's adapter: %s (%s)", physName, physDesc))
-	}
+	o.conflicts = append(o.conflicts, findConflicts(phys4)...)
+	b.setConflicts(o.conflicts)
 	for _, c := range o.conflicts {
 		fmt.Printf("fswin: warning: %s; disconnect that VPN\n", c)
 	}
@@ -597,8 +588,30 @@ func run(o options) error {
 			if st, err := t.Stat(); err == nil && st != nil {
 				b.logf("tun   %s", st.TUNSt.EpStats)
 			}
+			// a VPN connected after the start (Proton VPN, 2026-10-10)
+			// broke ours with nothing in the status to say why
+			idx, _ := binder.Indexes()
+			for _, c := range b.setConflicts(findConflicts(idx)) {
+				fmt.Printf("fswin: warning: %s; disconnect that VPN\n", c)
+			}
 		}
 	}
+}
+
+// findConflicts lists other VPNs that break ours: one whose NRPT rule claims
+// all DNS races ours for every query, and firestack's own traffic leaving
+// through another VPN's adapter (phys4) may never get answers.
+func findConflicts(phys4 uint32) []string {
+	out := []string{}
+	if others, err := dnspolicy.Others(); err == nil {
+		for _, r := range others {
+			out = append(out, "another VPN sends all DNS elsewhere: "+r)
+		}
+	}
+	if name, desc, vpn := ifbind.Describe(phys4); vpn {
+		out = append(out, fmt.Sprintf("internet traffic leaves through another VPN's adapter: %s (%s)", name, desc))
+	}
+	return out
 }
 
 // stopAt is when a stop was asked for; stopStep logs how long each part of

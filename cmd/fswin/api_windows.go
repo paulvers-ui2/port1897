@@ -350,6 +350,9 @@ func statusOf(b *bridge, o options, started time.Time, exitID, dnsLabel string) 
 		Dial:      o.dialStrategy,
 		Conflicts: append([]string{}, o.conflicts...),
 	}
+	if p := b.conflicts.Load(); p != nil {
+		st.Conflicts = append([]string{}, *p...) // as checked last, while running
+	}
 	if r := b.rules.Load(); r.isPaused(time.Now().UnixMilli()) {
 		st.Paused = r.paused
 	}

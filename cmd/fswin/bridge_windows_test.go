@@ -11,6 +11,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -383,6 +384,33 @@ func TestStatusConflictsIsAlwaysAnArray(t *testing.T) {
 	raw := mustJSON(t, apiStatus{Conflicts: append([]string{}, nil...)})
 	if !strings.Contains(raw, `"conflicts":[]`) {
 		t.Errorf("apiStatus{Conflicts: append([]string{}, nil...)} = %s, want \"conflicts\":[]", raw)
+	}
+}
+
+// Another VPN that connects after the start shows in the status (and the log
+// names it once); one that went goes from the status.
+func TestStatusConflictsFollowTheRun(t *testing.T) {
+	b := newTestBridge(t, "")
+	proton := "internet traffic leaves through another VPN's adapter: ProTUN (Proton VPN Windows Tun)"
+	o := options{conflicts: []string{"at start"}}
+	if got := statusOf(b, o, time.Now(), "", "test").Conflicts; !slices.Equal(got, []string{"at start"}) {
+		t.Errorf("before a check while running: %q, want the start's", got)
+	}
+	if added := b.setConflicts([]string{}); len(added) != 0 {
+		t.Errorf("none: added %q", added)
+	}
+	if added := b.setConflicts([]string{proton}); !slices.Equal(added, []string{proton}) {
+		t.Errorf("Proton connected: added %q", added)
+	}
+	if added := b.setConflicts([]string{proton}); len(added) != 0 {
+		t.Errorf("Proton still connected: added %q again", added)
+	}
+	if got := statusOf(b, o, time.Now(), "", "test").Conflicts; !slices.Equal(got, []string{proton}) {
+		t.Errorf("status conflicts = %q, want Proton's", got)
+	}
+	b.setConflicts([]string{})
+	if raw := mustJSON(t, statusOf(b, o, time.Now(), "", "test")); !strings.Contains(raw, `"conflicts":[]`) {
+		t.Errorf("Proton gone: %s, want \"conflicts\":[]", raw)
 	}
 }
 
