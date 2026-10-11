@@ -155,11 +155,10 @@ pub fn bootstrap_addrs(host: &str, port: u16, ips_csv: &str) -> Vec<SocketAddr> 
             _ => {}
         }
     }
-    if out.is_empty() {
-        if let Ok(ip) = host.trim_matches(|c| c == '[' || c == ']').parse::<IpAddr>() {
+    if out.is_empty()
+        && let Ok(ip) = host.trim_matches(|c| c == '[' || c == ']').parse::<IpAddr>() {
             out.push(SocketAddr::new(ip, port));
         }
-    }
     out
 }
 

@@ -174,8 +174,8 @@ impl Transport for Cached {
                 e
             })?;
             let key = Self::key(&query);
-            if let Some(key) = key.as_ref() {
-                if let Some((answer, server)) = self.hit(key, &query) {
+            if let Some(key) = key.as_ref()
+                && let Some((answer, server)) = self.hit(key, &query) {
                     let wire = msg::pack(&answer).map_err(|e| QueryError::new(engine::DNS_INTERNAL_ERROR, e))?;
                     let r = Ok(wire);
                     super::doh::fill(smm, &server, start, &r);
@@ -183,17 +183,15 @@ impl Transport for Cached {
                     self.status.store(smm.status, Ordering::Relaxed);
                     return r;
                 }
-            }
             let r = self.inner.query(pid, q, smm).await;
             // the inner transport filled the summary; only `cached` is ours
             smm.cached = false;
             self.status.store(smm.status, Ordering::Relaxed);
-            if let (Ok(wire), Some(key)) = (&r, key) {
-                if let Ok(answer) = msg::parse(wire) {
+            if let (Ok(wire), Some(key)) = (&r, key)
+                && let Ok(answer) = msg::parse(wire) {
                     let server = if smm.server.is_empty() { self.inner.addr() } else { smm.server.clone() };
                     self.put(key, &answer, &server);
                 }
-            }
             r
         })
     }
