@@ -25,6 +25,21 @@ hyper-util = { version = "0.1.21", features = ["tokio"] }
 http-body-util = "0.1.5"
 bytes = "1.12.1"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_NetworkManagement_WindowsFilteringPlatform",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Rpc",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
+
 [profile.release]
 lto = true
 codegen-units = 1

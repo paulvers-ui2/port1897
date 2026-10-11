@@ -27,3 +27,5 @@ pub mod nrpt;
 pub mod rules;
 pub mod service;
 pub mod usque;
+#[cfg(windows)]
+pub mod win;
