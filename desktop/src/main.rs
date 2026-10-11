@@ -40,6 +40,8 @@ use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, Wind
 static QUITTING: AtomicBool = AtomicBool::new(false);
 /// The engine is stopped: the app may end now, and only now.
 static EXITING: AtomicBool = AtomicBool::new(false);
+/// The window's WebView2 is locked down (winutil::lock_down_webview).
+static LOCKED_DOWN: AtomicBool = AtomicBool::new(false);
 
 fn is_automation(a: &str) -> bool {
     matches!(a, "--start" | "--stop" | "--resume" | "--pause") || a.strip_prefix("--pause=").is_some_and(|m| !m.is_empty() && m.bytes().all(|b| b.is_ascii_digit()))
@@ -57,6 +59,22 @@ fn create_window(app: &AppHandle, show: bool) -> tauri::Result<()> {
         .on_navigation(|url| matches!(url.scheme(), "http" | "https") && url.host_str() == Some("tauri.localhost"))
         .disable_drag_drop_handler()
         .build()?;
+    // Most WebView2 settings apply from the next page load. On the main
+    // thread (the app's start, the tray) Tauri runs this at once, while the
+    // first page load still waits on the app's NavigationStarting handler;
+    // from another thread it runs a moment later, and the page loads again.
+    let on_main = std::thread::current().name() == Some("main");
+    w.with_webview(move |wv| {
+        let c = wv.controller();
+        match winutil::lock_down_webview(&c) {
+            Ok(()) => LOCKED_DOWN.store(true, Ordering::Relaxed),
+            Err(e) => applog!("the window's WebView2 could not be locked down: {e}"),
+        }
+        if !on_main {
+            // SAFETY: on the window's thread, which owns the controller
+            let _ = unsafe { c.CoreWebView2().and_then(|v| v.Reload()) };
+        }
+    })?;
     let ww = w.clone();
     w.on_window_event(move |e| {
         if let WindowEvent::CloseRequested { api, .. } = e
@@ -159,7 +177,8 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()
 
 /// --self-test, for CI: open the window hidden, wait until the page asked
 /// for its settings (its scripts ran and IPC works), and quit with 0, or 1
-/// when it did not. It proves a packaged build starts.
+/// when it did not or its WebView2 was not locked down. It proves a
+/// packaged build starts.
 fn self_test(app: &AppHandle) {
     if let Err(e) = create_window(app, false) {
         applog!("self-test failed: {e}");
@@ -168,6 +187,10 @@ fn self_test(app: &AppHandle) {
     tauri::async_runtime::spawn(async {
         for _ in 0..600 {
             if commands::PAGE_UP.load(Ordering::Relaxed) {
+                if !LOCKED_DOWN.load(Ordering::Relaxed) {
+                    applog!("self-test failed: the window's WebView2 was not locked down");
+                    std::process::exit(1);
+                }
                 applog!("self-test ok");
                 std::process::exit(0);
             }

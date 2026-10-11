@@ -128,6 +128,46 @@ pub fn pipe_server_is_service(pipe: &impl std::os::windows::io::AsRawHandle) -> 
     ok && session == 0
 }
 
+// ---------- the window's WebView2 ----------
+
+/// Locks the window's WebView2 down as the Electron app's window was: every
+/// web permission request (camera, microphone, location, notifications...)
+/// is refused, nothing typed into forms and no password is kept, and the
+/// browser's own keys (F5 and Ctrl+R reload, Ctrl+P print, Ctrl+F find...)
+/// do nothing, while editing keys (copy, paste, undo) and the page's own
+/// keys still work. A release also has no devtools and no default context
+/// menu; the packaged Electron window had neither. All but the autofill
+/// settings apply from the next page load: call it before the first one.
+pub fn lock_down_webview(controller: &webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller) -> windows::core::Result<()> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{COREWEBVIEW2_PERMISSION_STATE_DENY, ICoreWebView2Settings3, ICoreWebView2Settings4};
+    use windows::core::Interface;
+    // SAFETY: COM calls on the window's thread, which owns the controller;
+    // the handler is kept by WebView2 for the life of the webview
+    unsafe {
+        let wv = controller.CoreWebView2()?;
+        let mut token = 0i64;
+        wv.add_PermissionRequested(
+            &webview2_com::PermissionRequestedEventHandler::create(Box::new(|_, args| {
+                if let Some(args) = args {
+                    args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
+                }
+                Ok(())
+            })),
+            &mut token,
+        )?;
+        let settings = wv.Settings()?;
+        settings.cast::<ICoreWebView2Settings3>()?.SetAreBrowserAcceleratorKeysEnabled(false)?;
+        let s4 = settings.cast::<ICoreWebView2Settings4>()?;
+        s4.SetIsGeneralAutofillEnabled(false)?;
+        s4.SetIsPasswordAutosaveEnabled(false)?;
+        if !cfg!(debug_assertions) {
+            settings.SetAreDevToolsEnabled(false)?;
+            settings.SetAreDefaultContextMenusEnabled(false)?;
+        }
+    }
+    Ok(())
+}
+
 // ---------- screen lock ----------
 
 const WTS_SESSION_LOCK: usize = 0x7;
