@@ -641,6 +641,8 @@ pub(crate) mod tests {
         /// a SOCKS5 reply code, or an HTTP status line, to refuse with
         pub refuse_socks: Option<u8>,
         pub refuse_http: Option<&'static str>,
+        /// connections accepted
+        pub conns: Arc<std::sync::atomic::AtomicUsize>,
     }
 
     async fn pipe_both(a: TcpStream, b: TcpStream) {
@@ -665,6 +667,7 @@ pub(crate) mod tests {
         let a = l.local_addr().unwrap();
         tokio::spawn(async move {
             while let Ok((c, _)) = l.accept().await {
+                b.conns.fetch_add(1, Ordering::Relaxed);
                 tokio::spawn(socks_conn(c, b.clone()));
             }
         });
@@ -828,7 +831,7 @@ pub(crate) mod tests {
         a
     }
 
-    async fn echo_udp() -> SocketAddr {
+    pub(crate) async fn echo_udp() -> SocketAddr {
         let u = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let a = u.local_addr().unwrap();
         tokio::spawn(async move {

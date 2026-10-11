@@ -41,7 +41,9 @@ use crate::golike;
 use crate::killswitch::{Firewall, KillSwitch, WfpOptions};
 use crate::mtu::{self, MtuPlan};
 use crate::net::dial::{Direct, Protect};
+use crate::exit::{EXIT_PROXY, exit_name};
 use crate::net::forward::Forwarder;
+use crate::net::proxy::{ProxyExit, ProxyUrl};
 use crate::net::stack::StackConfig;
 use crate::net::tunnel::{Device, Tunnel};
 use crate::rules;
@@ -122,11 +124,16 @@ pub fn check_supported(o: &Options) -> Result<(), String> {
     if !["", "never", "split", "plain"].contains(&o.dial_retry.as_str()) {
         return Err(format!("-dial-retry must be never, split or plain, not {}", golike::quote(&o.dial_retry)));
     }
+    // Go's prepareExit makes this check; it comes first here so that two
+    // exits read as in Go even where one of them is not supported yet
+    let exits = [!o.wg.is_empty(), o.warp, !o.proxy.is_empty(), o.masque, !o.chain.is_empty()];
+    if exits.iter().filter(|&&on| on).count() > 1 {
+        return Err("choose one of -wg, -warp, -proxy, -masque and -chain".into());
+    }
     let not_yet = |what: &str| Err(format!("{what} is not supported by this engine yet (fswin-rs); use fswin.exe"));
     let set = [
         (!o.wg.is_empty(), "-wg"),
         (o.warp, "-warp"),
-        (!o.proxy.is_empty(), "-proxy"),
         (o.masque, "-masque"),
         (!o.chain.is_empty(), "-chain"),
         (!o.routes_file.is_empty(), "-routes"),
@@ -145,6 +152,19 @@ pub fn check_supported(o: &Options) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Go's prepareExit for the exits this engine has: the exit's id ("" for
+/// direct), its config, and for -proxy its URL and addresses. The proxy's
+/// name is looked up here, before the tunnel takes the PC's DNS. Errors
+/// past the scheme check read as Go's from AddProxy.
+pub async fn prepare_exit(o: &Options) -> Result<(String, String, Option<(ProxyUrl, Vec<SocketAddr>)>), String> {
+    if o.proxy.is_empty() {
+        return Ok((String::new(), String::new(), None));
+    }
+    let url = ProxyUrl::parse(&o.proxy).map_err(|e| if e.starts_with("-proxy") { e } else { format!("add exit {EXIT_PROXY}: {e}") })?;
+    let servers = url.resolve().await.map_err(|e| format!("add exit {EXIT_PROXY}: {e}"))?;
+    Ok((EXIT_PROXY.to_string(), o.proxy.clone(), Some((url, servers))))
 }
 
 /// Go's apiPreflight: fail before changing anything on the PC if the app
@@ -329,13 +349,13 @@ async fn start(o: &Options, sys: &dyn Sys, version: &str, stop_tx: &Arc<watch::S
     if (o.full || o.kill) && !wait_for_network(sys, NETWORK_WAIT, stops).await && stops.borrow().is_some() {
         return Ok(false);
     }
-    // no exits yet (check_supported): the exit is the direct one
-    let exit_id = String::new();
+    // Go's prepareExit: -proxy is the only exit check_supported lets by
+    let (exit_id, exit_cfg, proxy) = prepare_exit(&o).await?;
     let (link, link_why) = sys.link_mtu();
-    let plan: MtuPlan = mtu::plan_mtu(link, &link_why, &exit_id, "", None, o.mtu);
+    let plan: MtuPlan = mtu::plan_mtu(link, &link_why, &exit_id, &exit_cfg, None, o.mtu);
     sys.say(&format!("fswin: MTU: {plan}"));
-    if o.kill {
-        o.full = true; // the kill switch needs all traffic in the tunnel
+    if !exit_id.is_empty() || o.kill {
+        o.full = true; // a VPN exit and the kill switch need all traffic in the tunnel
     }
     if !o.block.is_empty() && !o.full {
         sys.say("fswin: -block needs -full: without it only DNS goes through the tunnel, and DNS is answered for every app");
@@ -404,13 +424,27 @@ async fn start(o: &Options, sys: &dyn Sys, version: &str, stop_tx: &Arc<watch::S
     let engine = Arc::new(e);
 
     let direct = Arc::new(Direct::new(phys.protect()));
+    // the exit is there before the first flow, so none waits for it or
+    // leaves direct; DNS transports dial through it for the queries given it
+    let exit = proxy.map(|(url, servers)| Arc::new(ProxyExit::new(&exit_id, url, servers, (*direct).clone())));
+    let dns_dialer: Arc<dyn crate::dns::Dialer> = match &exit {
+        Some(x) => x.clone(),
+        None => direct.clone(),
+    };
+    if let Some(x) = &exit {
+        engine.set_exit(&exit_id);
+        engine.set_proxies(x.clone());
+    }
     let fake = Arc::new(FakeDns::new(engine.clone()));
     let (fb_url, fb_ips) = if o.fallback_doh.is_empty() { (o.doh.clone(), o.doh_ips.clone()) } else { (o.fallback_doh.clone(), o.fallback_ips.clone()) };
-    let dtr = Doh::new(DEFAULT, &fb_url, &fb_ips, &Trust::System, direct.clone()).map_err(|e| format!("default dns: {e}"))?;
+    let dtr = Doh::new(DEFAULT, &fb_url, &fb_ips, &Trust::System, dns_dialer.clone()).map_err(|e| format!("default dns: {e}"))?;
     fake.add(Arc::new(dtr));
     fake.set_fallback(o.dns_fallback);
 
     let fwd = Arc::new(Forwarder::new(engine.clone(), sys.owners(), direct.clone(), fake.clone()));
+    if let Some(x) = &exit {
+        fwd.add_exit(&exit_id, x.clone());
+    }
     engine.set_closer(fwd.clone().closer());
     let cfg = StackConfig { mtu: plan.adapter.max(mtu::MIN_MTU) as usize, ..Default::default() };
     up.tunnel = Some(Tunnel::start(dev, cfg, fwd));
@@ -419,7 +453,7 @@ async fn start(o: &Options, sys: &dyn Sys, version: &str, stop_tx: &Arc<watch::S
         sys.say("fswin: blocklists: remote filetag names are not supported by this engine yet");
     }
 
-    let (tid, dns_label) = setup_dns(&fake, &o, &phys.dns_servers(), direct, &|l| sys.say(l)).map_err(|e| format!("dns: {e}"))?;
+    let (tid, dns_label) = setup_dns(&fake, &o, &phys.dns_servers(), dns_dialer, &|l| sys.say(l)).map_err(|e| format!("dns: {e}"))?;
     engine.set_dns(&tid);
     start_step(sys, began, "tunnel and DNS ready");
 
@@ -444,6 +478,9 @@ async fn start(o: &Options, sys: &dyn Sys, version: &str, stop_tx: &Arc<watch::S
         mode = format!("all IPv4; firestack's own traffic leaves via interface #{phys4}");
     }
     mode += kill_mode;
+    if !exit_id.is_empty() {
+        mode += &format!("; exit: {}", exit_name(&exit_id));
+    }
     sys.say(&format!(
         "fswin {version}: up on {} in {} ms ({mode}); DNS {FAKEDNS4}:53 -> {dns_label}. Ctrl+C to stop.",
         golike::quote(&name),
@@ -555,7 +592,11 @@ mod tests {
         lines: Mutex<Vec<String>>,
         fail_configure: bool,
         no_route: bool,
+        /// the adapter's packets: what the "programs" send, what they get
+        wire: Mutex<Option<Wire>>,
     }
+
+    type Wire = (smpsc::Sender<Vec<u8>>, tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>);
 
     impl Fake {
         fn step(&self, s: &str) {
@@ -591,6 +632,7 @@ mod tests {
         fn close(self: Box<Self>) {
             // the device's reader ends when its input does
             self.input.lock().unwrap().take();
+            self.sys.wire.lock().unwrap().take();
             self.sys.step("adapter closed");
         }
     }
@@ -643,7 +685,8 @@ mod tests {
         }
         fn create_adapter(&self, _name: &str) -> Result<Box<dyn Adapter>, String> {
             self.0.step("adapter");
-            let (dev, input, _out) = MemDevice::new();
+            let (dev, input, out) = MemDevice::new();
+            *self.0.wire.lock().unwrap() = Some((input.clone(), out));
             Ok(Box::new(FakeAdapter { sys: self.0.clone(), dev, input: Mutex::new(Some(input)) }))
         }
         fn nrpt_add(&self) -> Result<(), String> {
@@ -699,6 +742,11 @@ mod tests {
     }
 
     async fn run_until_up(f: Arc<Fake>, o: Options) -> Result<(), String> {
+        run_while_up(f, o, async |_| {}).await
+    }
+
+    /// Runs the engine, does during once it is up, then stops it.
+    async fn run_while_up(f: Arc<Fake>, o: Options, during: impl AsyncFnOnce(Arc<Fake>)) -> Result<(), String> {
         let tx = Arc::new(watch::channel(None).0);
         let sys: Arc<dyn Sys> = Arc::new(S(f.clone()));
         let h = tokio::spawn({
@@ -710,6 +758,9 @@ mod tests {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        if !h.is_finished() {
+            during(f.clone()).await;
         }
         request_stop(&tx, StopReason::App);
         tokio::time::timeout(Duration::from_secs(10), h).await.unwrap().unwrap()
@@ -775,6 +826,62 @@ mod tests {
             assert!(e.starts_with(want), "{args:?}: {e}");
             assert!(f.steps().is_empty(), "{args:?}: {:?}", f.steps());
         }
+    }
+
+    /// -proxy: all traffic goes to the tunnel (it implies -full) and
+    /// leaves by the proxy; the status line names the exit.
+    #[tokio::test]
+    async fn proxy_exit_starts_full_and_says_so() {
+        use crate::net::proxy::tests::{Behaviour, echo_udp, socks_server};
+        use crate::net::stack::{Parsed, build_udp, parse};
+        let b = Behaviour { auth: Some(("u", "p")), ..Default::default() };
+        let px = socks_server(b.clone()).await;
+        let echo = echo_udp().await;
+        let f = Arc::new(Fake::default());
+        let o = opts(&["-proxy", &format!("socks5://u:p@{px}"), "-api", "127.0.0.1:0", "-token-file", "token"]);
+        run_while_up(f.clone(), o, async |f: Arc<Fake>| {
+            // a program's datagram goes out by the proxy and its answer back
+            let (input, mut out) = f.wire.lock().unwrap().take().unwrap();
+            let me: SocketAddr = "10.111.222.1:7000".parse().unwrap();
+            input.send(build_udp(me, echo, b"through").unwrap()).unwrap();
+            let p = tokio::time::timeout(Duration::from_secs(5), out.recv()).await.unwrap().unwrap();
+            let Parsed::Udp { src, payload, .. } = parse(&p) else { panic!("not udp") };
+            assert_eq!((src, &p[payload]), (echo, &b"through"[..]));
+        })
+        .await
+        .unwrap();
+        assert_eq!(b.conns.load(std::sync::atomic::Ordering::Relaxed), 1, "the association's connection");
+        assert_eq!(f.steps(), ["adapter", "configure", "routes", "adapter closed"]);
+        for want in [
+            "fswin: MTU: adapter 1500 (automatic), from Ethernet 1500",
+            "(all IPv4; firestack's own traffic leaves via interface #3; exit: proxy); DNS 10.111.222.3:53 -> https://cloudflare-dns.com/dns-query.",
+        ] {
+            assert!(f.has_line(want), "no line {want:?} in {:#?}", f.lines.lock().unwrap());
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_urls_are_checked_before_the_adapter() {
+        for (args, want) in [
+            (&["-proxy", "https://1.2.3.4:443"][..], "-proxy must start with socks5:// or http://"),
+            (&["-proxy", "socks5://1.2.3.4"][..], "add exit socks: parse \"socks5://1.2.3.4\": missing port"),
+            (&["-proxy", "socks5://1.2.3.4:1", "-wg", "x.conf"][..], "choose one of -wg, -warp, -proxy, -masque and -chain"),
+            (&["-proxy", "http://1.2.3.4:1", "-masque"][..], "choose one of -wg, -warp, -proxy, -masque and -chain"),
+        ] {
+            let f = Arc::new(Fake::default());
+            let e = run_until_up(f.clone(), opts(args)).await.unwrap_err();
+            assert_eq!(e, want, "{args:?}");
+            assert!(f.steps().is_empty(), "{args:?}: {:?}", f.steps());
+        }
+    }
+
+    #[tokio::test]
+    async fn prepare_exit_gives_the_proxy() {
+        let (id, cfg, px) = prepare_exit(&opts(&["-proxy", "http://127.0.0.1:3128"])).await.unwrap();
+        assert_eq!((id.as_str(), cfg.as_str()), ("socks", "http://127.0.0.1:3128"));
+        assert_eq!(px.unwrap().1, vec!["127.0.0.1:3128".parse::<SocketAddr>().unwrap()]);
+        let (id, _, px) = prepare_exit(&opts(&[])).await.unwrap();
+        assert!(id.is_empty() && px.is_none());
     }
 
     #[tokio::test]
