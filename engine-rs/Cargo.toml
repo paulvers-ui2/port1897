@@ -1,0 +1,54 @@
+[package]
+name = "fswin-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MPL-2.0"
+description = "AuroraVPN's engine for Windows, in Rust: a drop-in for fswin.exe (same flags, control API and service pipe)"
+publish = false
+
+[lib]
+name = "fswin_rs"
+path = "src/lib.rs"
+
+[[bin]]
+name = "fswin-rs"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+subtle = "2.6.1"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "macros", "sync", "time", "io-util", "signal"] }
+hyper = { version = "1.11.1", features = ["http1", "server", "client", "http2"] }
+hyper-util = { version = "0.1.21", features = ["tokio"] }
+http-body-util = "0.1.5"
+bytes = "1.12.1"
+# DNS: messages, DoH/DoT over rustls (ring, no aws-lc build), system roots
+hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring", "tls12"] }
+rustls-platform-verifier = "0.7.1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_NetworkManagement_WindowsFilteringPlatform",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Rpc",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
+# Wintun's DLL wrapper; default features off: no async, no logging hooks
+wintun-bindings = { version = "0.7.40", default-features = false }
+
+[profile.release]
+lto = true
+codegen-units = 1
