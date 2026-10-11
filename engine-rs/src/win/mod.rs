@@ -14,6 +14,7 @@
 //! with the reason: they run on the admin CI runner, never on a PC whose
 //! VPN they could break.
 
+pub mod ipconf;
 pub mod owner;
 pub mod proc;
 pub mod registry;
