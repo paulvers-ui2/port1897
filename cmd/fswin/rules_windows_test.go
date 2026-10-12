@@ -118,6 +118,36 @@ func TestCountryBlock(t *testing.T) {
 	}
 }
 
+// DNS enforcement blocks an app's own DNS (53) and DoT (853) to a resolver
+// on the internet, but leaves other ports and local resolvers alone.
+func TestEnforceDNS(t *testing.T) {
+	now := time.Now()
+	r := mustRules(t, ruleSet{Universal: universalRules{EnforceDNS: true}})
+	block := "universal: DNS must go through AuroraVPN"
+	cases := []struct {
+		proto     int32
+		dst       string
+		wantBlock bool
+	}{
+		{udp, "8.8.8.8:53", true},         // plaintext DNS to a public resolver
+		{tcp, "8.8.8.8:53", true},         // DNS over TCP
+		{tcp, "1.1.1.1:853", true},        // DNS over TLS
+		{tcp, "8.8.8.8:443", false},       // not a DNS port
+		{udp, "192.168.1.1:53", false},    // local (LAN) DNS is left alone
+	}
+	for _, c := range cases {
+		d := r.decide(c.proto, `C:\a.exe`, false, netip.MustParseAddrPort(c.dst), nil, now)
+		if d.block != c.wantBlock || (c.wantBlock && d.why != block) {
+			t.Errorf("%s %s: %+v, want block=%t", proto(c.proto), c.dst, d, c.wantBlock)
+		}
+	}
+	// off: the app's own DNS is allowed again
+	off := mustRules(t, ruleSet{Universal: universalRules{EnforceDNS: false}})
+	if d := off.decide(udp, `C:\a.exe`, false, netip.MustParseAddrPort("8.8.8.8:53"), nil, now); d.block {
+		t.Errorf("EnforceDNS off: %+v, want allowed", d)
+	}
+}
+
 // asnLookup finds the autonomous system that announces an address, 0 in the
 // gaps between ranges and for an empty database.
 func TestASNLookup(t *testing.T) {

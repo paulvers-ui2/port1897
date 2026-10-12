@@ -393,7 +393,7 @@ function demoPort() {
     warpSni: '', exitSni: '', masqueFlags: '', warp1Flags: '', wgFlags: '', warp2Flags: '', warpAutoDisable: false,
     mode: 'both', full: true, killSwitch: true, allowLan: true, autoRecover: true,
     rules: { apps: { 'notepad.exe': { mode: 'block' } }, ips: [], domains: [{ domain: 'ads.example.com', action: 'block' }] },
-    universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false, outgoingOnly: true, countries: [], asns: [] },
+    universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false, outgoingOnly: true, enforceDns: true, countries: [], asns: [] },
     dnsTypesAuto: true, dnsTypes: [1, 28, 5, 65, 64, 45], knownApps: [], pausedUntil: 0,
     dialStrategy: 'never', dialRetry: '', dialTimeout: 0, tcpKeepAlive: false, eim: false, mtu: 0,
     odoh: '', odohRelay: '', odohName: '', dnsProxy: '', dnsProxyName: '', dnscryptRelays: [],

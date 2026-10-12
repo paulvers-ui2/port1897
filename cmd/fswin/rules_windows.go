@@ -93,6 +93,12 @@ type universalRules struct {
 	// allowed, so a hacked machine cannot reach a blocked country or network.
 	Countries []string `json:"countries,omitempty"`
 	ASNs      []int64  `json:"asns,omitempty"` // wider than uint32 so a bad value is dropped, not an unmarshal error that rejects every rule
+	// EnforceDNS blocks an app's own plaintext DNS (port 53) and DNS-over-TLS
+	// (port 853) to any non-local resolver, so every lookup goes through
+	// AuroraVPN's encrypted DNS and cannot be leaked or redirected. It holds
+	// even under "allow outgoing only". Queries to the system resolver are
+	// answered before this (Flow), and local (LAN) DNS is left alone.
+	EnforceDNS bool `json:"enforceDns"`
 }
 
 // ruleSet is the JSON the app sends.
@@ -482,6 +488,13 @@ func (r *rules) decide(protocol int32, path string, known bool, dst netip.AddrPo
 
 	u := r.u
 	port := dst.Port()
+	// DNS enforcement, also before the "allow outgoing only" short-circuit: an
+	// app's own plaintext DNS (53) or DNS-over-TLS (853) to a resolver out on
+	// the internet is refused, so every lookup goes through AuroraVPN. The
+	// system resolver was answered earlier (Flow); local (LAN) DNS is left be.
+	if u.EnforceDNS && (protocol == 6 || protocol == 17) && (port == 53 || port == 853) && !isLocalAddr(dst.Addr()) {
+		return blocked("universal: DNS must go through AuroraVPN")
+	}
 	switch {
 	case u.Lockdown:
 		return blocked("universal: lockdown")

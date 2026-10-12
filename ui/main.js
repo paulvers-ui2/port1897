@@ -85,7 +85,7 @@ const DEFAULTS = {
   autoRecover: true,
   // Firewall rules (Android: App info, Universal firewall, IP & domain rules)
   rules: { apps: {}, ips: [], domains: [] },
-  universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false, outgoingOnly: true, countries: [], asns: [] },
+  universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false, outgoingOnly: true, enforceDns: true, countries: [], asns: [] },
   dnsTypesAuto: true,
   dnsTypes: [1, 28, 5, 65, 64, 45], // A, AAAA, CNAME, HTTPS, SVCB, IPSECKEY: Android's defaults
   knownApps: [],
