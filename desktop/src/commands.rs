@@ -351,6 +351,50 @@ pub async fn wg_import_file(app: AppHandle) -> Value {
     }
 }
 
+/// Saves the firewall rules the window hands over (JSON text) to a file the
+/// user picks, so they can keep a backup or move it to another PC.
+#[tauri::command]
+pub async fn firewall_export(app: AppHandle, text: String) -> Value {
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M").to_string();
+    let desktop = app.path().desktop_dir().unwrap_or_default();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    file_dialog(&app)
+        .set_title("Back up firewall rules")
+        .set_directory(desktop)
+        .set_file_name(format!("AuroraVPN-firewall-{stamp}.json"))
+        .add_filter("JSON", &["json"])
+        .save_file(move |p| {
+            let _ = tx.send(p);
+        });
+    let Some(dest) = rx.await.ok().flatten().and_then(|p| p.into_path().ok()) else {
+        return json!({ "ok": false }); // cancelled
+    };
+    match tokio::fs::write(&dest, text).await {
+        Ok(()) => {
+            let _ = app.opener().reveal_item_in_dir(&dest);
+            json!({ "ok": true, "file": dest.to_string_lossy() })
+        }
+        Err(e) => json!({ "ok": false, "error": format!("Could not save {}: {e}", dest.display()) }),
+    }
+}
+
+/// Reads a firewall-rules backup the user picks and hands its text back to the
+/// window, which checks it and applies it with rules_set.
+#[tauri::command]
+pub async fn firewall_import(app: AppHandle) -> Value {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    file_dialog(&app).set_title("Restore firewall rules").add_filter("JSON", &["json"]).pick_file(move |p| {
+        let _ = tx.send(p);
+    });
+    let Some(p) = rx.await.ok().flatten().and_then(|p| p.into_path().ok()) else {
+        return json!({ "ok": false }); // cancelled
+    };
+    match tokio::fs::read_to_string(&p).await {
+        Ok(text) => json!({ "ok": true, "text": text }),
+        Err(e) => json!({ "ok": false, "error": format!("Could not read {}: {e}", p.display()) }),
+    }
+}
+
 // ---------- network, logs and the rest ----------
 
 #[tauri::command]

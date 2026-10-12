@@ -281,6 +281,8 @@ fn main() {
             commands::open_log,
             commands::open_pcap_folder,
             commands::debug_zip,
+            commands::firewall_export,
+            commands::firewall_import,
         ])
         .setup(move |app| {
             paths::init(app.path().resource_dir().ok());

@@ -209,7 +209,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "fswin:", err)
 		os.Exit(1)
 	}
-	asUser = tok
+	asUser.Store(tok)
 
 	if o.logFile != "" {
 		if err := redirectOutput(o.logFile); err != nil {
@@ -446,7 +446,7 @@ func run(o options) error {
 	if o.pcapFile != "" {
 		// the app's file, opened with the user's rights; a capture starts
 		// with its own header
-		err := asUser.do(func() error {
+		err := asUser.Load().do(func() error {
 			_ = os.Remove(o.pcapFile)
 			return t.SetPcap(o.pcapFile)
 		})
@@ -938,7 +938,7 @@ func exitName(id string) string {
 // file: it is opened with the user's rights.
 func redirectOutput(path string) error {
 	var f *os.File
-	err := asUser.do(func() (err error) {
+	err := asUser.Load().do(func() (err error) {
 		f, err = os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		return err
 	})

@@ -69,6 +69,8 @@
     openLog: call('open_log'),
     debugZip: call('debug_zip'),
     openPcapFolder: call('open_pcap_folder'),
+    firewallExport: call('firewall_export', 'text'),
+    firewallImport: call('firewall_import'),
     // the app tells the window at once when something changed (src/live.rs)
     onTick: (cb) => T.event.listen('tick', () => cb()),
   };

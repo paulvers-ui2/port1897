@@ -69,8 +69,8 @@ func TestUserTokenKeepsAdminFilesOut(t *testing.T) {
 	if !errors.Is(err, os.ErrPermission) {
 		t.Errorf("as the user, writing in an admin-only folder: %v, want access denied", err)
 	}
-	asUser = u
-	defer func() { asUser = nil }()
+	asUser.Store(u)
+	defer func() { asUser.Store(nil) }()
 	if _, err := readUserFile(secret); !errors.Is(err, os.ErrPermission) {
 		t.Errorf("as the user, reading an admin-only file: %v, want access denied", err)
 	}

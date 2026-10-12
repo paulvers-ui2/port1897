@@ -117,8 +117,52 @@ PAGES.configure = () =>
       ['network', 'ic_network_tunnel', 'Network'],
       ['settings', 'ic_other_settings', 'Settings'],
       ['logs', 'ic_logs_accent', 'Logs'],
-    ].map(([p, ico, title]) => card(row({ ico, title, right: chevron(), onclick: () => App.go(p) })))
+    ].map(([p, ico, title]) => card(row({ ico, title, right: chevron(), onclick: () => App.go(p) }))),
+    card(
+      row({
+        ico: 'firewall_home_screen',
+        title: 'Back up / restore firewall',
+        sub: 'Save your apps, IP, domain and universal rules to a file, or load them back.',
+        right: h('div', { class: 'actions' }, btn('Back up', backupFirewall), btn('Restore', restoreFirewall)),
+      })
+    )
   );
+
+// backupFirewall saves the firewall rules to a file the user picks.
+async function backupFirewall() {
+  const s = App.settings;
+  const data = { app: 'AuroraVPN', kind: 'firewall-rules', version: 1, exportedAt: Date.now(), rules: s.rules, universal: s.universal };
+  const r = await App.port.firewallExport(JSON.stringify(data, null, 2));
+  if (r && r.ok) toast('Firewall rules saved.');
+  else if (r && r.error) toast('Back up: ' + r.error);
+}
+
+// restoreFirewall loads firewall rules from a file and applies them.
+async function restoreFirewall() {
+  const r = await App.port.firewallImport();
+  if (!r || !r.ok) {
+    if (r && r.error) toast('Restore: ' + r.error);
+    return;
+  }
+  let data;
+  try {
+    data = JSON.parse(r.text);
+  } catch {
+    toast('That file is not a firewall backup.');
+    return;
+  }
+  if (!data || typeof data !== 'object' || data.kind !== 'firewall-rules' || typeof data.rules !== 'object') {
+    toast('That file is not an AuroraVPN firewall backup.');
+    return;
+  }
+  confirmDialog('Restore firewall rules?', 'This replaces your current apps, IP and domain rules and the universal rules with the ones in the file.', async () => {
+    const patch = { rules: data.rules };
+    if (data.universal && typeof data.universal === 'object') patch.universal = data.universal;
+    await App.setRules(patch); // updates settings, warns on skipped rules, redraws home
+    toast('Firewall rules restored.');
+    App.render();
+  });
+}
 
 // ---------- Apps ----------
 

@@ -1895,6 +1895,33 @@ function readTail(f, max) {
   }
 }
 
+ipcMain.handle('firewall:export', async (_e, text) => {
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
+  const r = await dialog.showSaveDialog(win, {
+    title: 'Back up firewall rules',
+    defaultPath: path.join(app.getPath('desktop'), `AuroraVPN-firewall-${stamp}.json`),
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (r.canceled || !r.filePath) return { ok: false };
+  try {
+    fs.writeFileSync(r.filePath, String(text));
+    shell.showItemInFolder(r.filePath);
+    return { ok: true, file: r.filePath };
+  } catch (e) {
+    return { ok: false, error: `Could not save ${r.filePath}: ${e.message}` };
+  }
+});
+
+ipcMain.handle('firewall:import', async () => {
+  const r = await dialog.showOpenDialog(win, { title: 'Restore firewall rules', filters: [{ name: 'JSON', extensions: ['json'] }], properties: ['openFile'] });
+  if (r.canceled || !r.filePaths || !r.filePaths[0]) return { ok: false };
+  try {
+    return { ok: true, text: fs.readFileSync(r.filePaths[0], 'utf8') };
+  } catch (e) {
+    return { ok: false, error: `Could not read ${r.filePaths[0]}: ${e.message}` };
+  }
+});
+
 ipcMain.handle('debug:zip', async () => {
   const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
   const r = await dialog.showSaveDialog(win, {
