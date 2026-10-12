@@ -127,7 +127,7 @@ func setupBlocklists(t intra.Tunnel, o options) (lists bool, err error) {
 		return false, err
 	}
 	if o.filetag != "" {
-		if ferr := asUser.do(func() error { return r.SetRdnsRemote(o.filetag) }); ferr != nil {
+		if ferr := asUser.Load().do(func() error { return r.SetRdnsRemote(o.filetag) }); ferr != nil {
 			err = errors.Join(err, fmt.Errorf("%s %s: %w", blRemoteID, o.filetag, ferr))
 		}
 	}
@@ -141,7 +141,7 @@ func setupBlocklists(t intra.Tunnel, o options) (lists bool, err error) {
 			return false, errors.Join(err, serr)
 		}
 	}
-	if lerr := asUser.do(func() error { return r.SetRdnsLocal(files[0], files[1], files[2], files[3]) }); lerr != nil {
+	if lerr := asUser.Load().do(func() error { return r.SetRdnsLocal(files[0], files[1], files[2], files[3]) }); lerr != nil {
 		return false, errors.Join(err, lerr)
 	}
 	local, lerr := r.GetRdnsLocal()

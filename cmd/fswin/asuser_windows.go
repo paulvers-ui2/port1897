@@ -9,11 +9,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -35,8 +37,13 @@ import (
 // user who asked the service (newUserTokenFrom), lowered the same way; usque
 // also gets that user's environment.
 
-// asUser is that token, made at start; nil (most tests) acts as fswin.
-var asUser *userToken
+// asUser is that token, made at start; a nil load (most tests) acts as fswin.
+// It is a pointer that can be swapped at runtime: the one the service handed
+// at start goes stale after the user signs out and back in, or the PC sleeps
+// and resumes, and a child started with it then fails with "Access is
+// denied". refreshUserToken swaps in a fresh one (WTSQueryUserToken), which
+// is what a manual Stop then Start did by hand.
+var asUser atomic.Pointer[userToken]
 
 type userToken struct {
 	primary windows.Token // for child processes
@@ -227,7 +234,7 @@ func (u *userToken) close() {
 // readUserFile reads one of the app's files with the user's rights.
 func readUserFile(path string) ([]byte, error) {
 	var b []byte
-	err := asUser.do(func() (err error) {
+	err := asUser.Load().do(func() (err error) {
 		b, err = os.ReadFile(filepath.Clean(path))
 		return err
 	})
@@ -236,8 +243,54 @@ func readUserFile(path string) ([]byte, error) {
 
 // statUserFile checks one of the app's files with the user's rights.
 func statUserFile(path string) error {
-	return asUser.do(func() error {
+	return asUser.Load().do(func() error {
 		_, err := os.Stat(path)
 		return err
 	})
+}
+
+var (
+	procWTSGetActiveConsoleSessionId = windows.NewLazySystemDLL("kernel32.dll").NewProc("WTSGetActiveConsoleSessionId")
+	procWTSQueryUserToken            = windows.NewLazySystemDLL("wtsapi32.dll").NewProc("WTSQueryUserToken")
+)
+
+// errNoConsoleUser is returned when nobody is signed in at the console, so
+// there is no user token to run usque with.
+var errNoConsoleUser = errors.New("no user signed in at the console")
+
+// activeConsoleToken is the primary token of the user signed in at the
+// physical console now. Only SYSTEM (the service-started engine) can get it;
+// an engine run by hand keeps the token it already has.
+func activeConsoleToken() (windows.Token, error) {
+	sid, _, _ := procWTSGetActiveConsoleSessionId.Call()
+	if sid == 0 || sid == 0xFFFFFFFF { // 0xFFFFFFFF: no session at the console
+		return 0, errNoConsoleUser
+	}
+	var tok windows.Token
+	if r, _, e := procWTSQueryUserToken.Call(sid, uintptr(unsafe.Pointer(&tok))); r == 0 { //nolint:gosec // G103: the Win32 call fills a token handle
+		return 0, fmt.Errorf("WTSQueryUserToken: %w", e)
+	}
+	return tok, nil
+}
+
+// refreshUserToken rebuilds asUser from the console user's token now, for when
+// the one the engine holds has gone stale (a sleep and resume, or a sign-out
+// and back in). It swaps in the new token and leaves the old one in place for
+// goroutines still using it, as one stale handle on a rare event is cheaper
+// than a use-after-close. Only the SYSTEM engine can do it; others keep what
+// they have.
+func refreshUserToken() error {
+	if asUser.Load() == nil {
+		return errNoConsoleUser // run by hand, not by the service: no token to refresh
+	}
+	tok, err := activeConsoleToken()
+	if err != nil {
+		return err
+	}
+	u, err := newUserTokenFrom(tok) // takes tok over
+	if err != nil {
+		return err
+	}
+	asUser.Store(u)
+	return nil
 }

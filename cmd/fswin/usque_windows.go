@@ -62,7 +62,7 @@ func prepareUsque(s usqueSetup) error {
 	if _, err := os.Stat(s.exe); err != nil {
 		return fmt.Errorf("usque: %w (usque.exe should sit next to fswin.exe)", err)
 	}
-	if err := asUser.do(func() error { return os.MkdirAll(s.dir, 0o700) }); err != nil {
+	if err := asUser.Load().do(func() error { return os.MkdirAll(s.dir, 0o700) }); err != nil {
 		return err
 	}
 	if err := usqueRegister(s, filepath.Join(s.dir, "warp1.json")); err != nil {
@@ -106,18 +106,38 @@ func startUsqueOn(s usqueSetup, port int, user, pass string) (*usque, error) {
 	args = append(args, usqueDefaults(s.chainWG != "", s.link)...)
 	args = append(args, s.extra...) // after the defaults: the last of a flag wins
 
-	// usque.exe beside fswin.exe; argv only, no shell; flags checked by usqueFlags
-	cmd := exec.Command(s.exe, args...) //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
-	cmd.Dir = s.dir
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
-	asUser.unelevated(cmd) // a SOCKS proxy and a QUIC client: no admin rights
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
+	// usque.exe beside fswin.exe; argv only, no shell; flags checked by usqueFlags.
+	// A SOCKS proxy and a QUIC client: no admin rights, so it runs with the
+	// user's token.
+	build := func() (*exec.Cmd, io.ReadCloser, error) {
+		cmd := exec.Command(s.exe, args...) //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
+		cmd.Dir = s.dir
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+		asUser.Load().unelevated(cmd)
+		out, err := cmd.StdoutPipe()
+		if err != nil {
+			return nil, nil, err
+		}
+		cmd.Stderr = cmd.Stdout
+		if err := cmd.Start(); err != nil {
+			return nil, nil, err
+		}
+		return cmd, out, nil
 	}
-	cmd.Stderr = cmd.Stdout
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("usque: start: %w", err)
+	cmd, out, err := build()
+	if err != nil {
+		// The token the service handed at start goes stale after the PC
+		// sleeps and resumes, or the user signs out and back in; usque then
+		// fails with "Access is denied" and could not start again until a
+		// manual Stop then Start. Get the console user's token now and try
+		// once more -- the same thing that did by hand.
+		if rerr := refreshUserToken(); rerr == nil {
+			s.logf("usque: start failed (%v); refreshed the user token and retrying", err)
+			cmd, out, err = build()
+		}
+		if err != nil {
+			return nil, fmt.Errorf("usque: start: %w", err)
+		}
 	}
 	u := &usque{cmd: cmd, port: port, user: user, pass: pass, done: make(chan struct{})}
 	// the one wait for this process: waitListening, stop and the supervisor
@@ -182,7 +202,7 @@ func usqueRegister(s usqueSetup, cfg string) error {
 	cmd := exec.Command(s.exe, "-c", cfg, "register", "--accept-tos") //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd.Dir = s.dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
-	asUser.unelevated(cmd)
+	asUser.Load().unelevated(cmd)
 	b, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("usque register: %w: %s", err, b)

@@ -177,7 +177,7 @@ func loadOrRegisterWarp(path string) (*warpAccount, error) {
 		return nil, err
 	}
 	b, _ := json.MarshalIndent(a, "", "  ")
-	if err := asUser.do(func() error { return os.WriteFile(filepath.Clean(path), b, 0o600) }); err != nil {
+	if err := asUser.Load().do(func() error { return os.WriteFile(filepath.Clean(path), b, 0o600) }); err != nil {
 		return nil, fmt.Errorf("warp: save %s: %w", path, err)
 	}
 	return a, nil
