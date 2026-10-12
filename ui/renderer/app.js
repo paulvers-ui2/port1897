@@ -263,6 +263,60 @@ async function pollOnce() {
   if (was !== !!App.status && top !== 'home') App.render();
 }
 
+// ---------- auto-recover ----------
+
+// If protection is on but the internet is gone — the WARP chain wedged, a
+// sleep/resume, a network change — stop and start it again, as hitting Stop
+// then Start by hand would. It checks by fetching a tiny page through the
+// tunnel; two misses in a row (not just after a recovery) trigger it. Off
+// while paused, mid-change, or when the user turned it off.
+let healthFails = 0;
+let lastRecover = 0;
+let checking = false;
+
+async function healthTick() {
+  const s = App.status;
+  if (!s || App.busy || checking) return;
+  if (App.settings.autoRecover === false || !App.port.checkExit) return;
+  if (s.mode !== 'full' || !s.exit) return; // only when a VPN chain is up
+  if (App.settings.pausedUntil > Date.now()) return; // paused on purpose
+  checking = true;
+  try {
+    const r = await App.port.checkExit();
+    if (r && !r.error && r.ip && r.ip !== '?') {
+      healthFails = 0; // the internet is there
+      return;
+    }
+    healthFails++;
+  } catch {
+    healthFails++;
+  } finally {
+    checking = false;
+  }
+  if (healthFails >= 2 && Date.now() - lastRecover > 60000 && App.status && !App.busy) {
+    healthFails = 0;
+    lastRecover = Date.now();
+    await autoRecover();
+  }
+}
+
+async function autoRecover() {
+  if (App.busy || !App.status) return;
+  toast('Connection lost — restarting protection…');
+  App.busy = true;
+  renderHome();
+  try {
+    await App.port.stop();
+    await new Promise((r) => setTimeout(r, 1000)); // the 1s pause before starting again
+    await App.port.start();
+  } catch {
+    // leave it; the next health check tries again after the cooldown
+  }
+  App.busy = false;
+  await poll();
+  App.render();
+}
+
 // ---------- wiring ----------
 
 const KOFI_URL = 'https://ko-fi.com/creatoreprints';
@@ -298,6 +352,7 @@ async function main() {
   } else {
     setInterval(poll, 1000);
   }
+  setInterval(healthTick, 10000); // watch the connection, restart if it drops
   if (!App.settings.welcomed) showWelcome();
 }
 
@@ -336,7 +391,7 @@ function demoPort() {
     fallbackDoh: 'https://cloudflare-dns.com/dns-query', fallbackIps: '1.1.1.1,1.0.0.1', fallbackName: 'Cloudflare',
     exit: 'masque', wgActive: '', socks: { host: '127.0.0.1', port: 1080, user: '', pass: '' }, http: { host: '', port: 8080, user: '', pass: '' },
     warpSni: '', exitSni: '', masqueFlags: '', warp1Flags: '', wgFlags: '', warp2Flags: '', warpAutoDisable: false,
-    mode: 'both', full: true, killSwitch: true, allowLan: true,
+    mode: 'both', full: true, killSwitch: true, allowLan: true, autoRecover: true,
     rules: { apps: { 'notepad.exe': { mode: 'block' } }, ips: [], domains: [{ domain: 'ads.example.com', action: 'block' }] },
     universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false, outgoingOnly: true, countries: [], asns: [] },
     dnsTypesAuto: true, dnsTypes: [1, 28, 5, 65, 64, 45], knownApps: [], pausedUntil: 0,

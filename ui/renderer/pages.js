@@ -853,7 +853,8 @@ PAGES.network = () => {
       row({ ico: 'ic_loopback', title: 'Release kill switch', sub: 'Removes a kill switch left behind by a crash. The portable app asks for admin permission.', right: chevron(), onclick: async () => {
         const r = await App.port.cleanup();
         toast(r.ok ? 'Released. The internet works without the app again.' : r.error);
-      } })
+      } }),
+      switchRow({ ico: 'ic_refresh_white', title: 'Reconnect if the connection drops', sub: 'When protection is on but the internet stops working — a wedged tunnel, sleep/resume, a network change — AuroraVPN stops and starts itself (a 1-second pause between), the way hitting Stop then Start by hand would.', value: s.autoRecover !== false, onchange: (v) => save({ autoRecover: v }) })
     ),
     card(
       row({ ico: 'ic_fallback', title: 'Choose fallback DNS', sub: `In rare cases when your chosen DNS can't be reached, fallback DNS is used. Now: ${s.fallbackName}`, right: chevron(), onclick: chooseFallback }),

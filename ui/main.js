@@ -82,6 +82,7 @@ const DEFAULTS = {
   full: true,
   killSwitch: true,
   allowLan: true,
+  autoRecover: true,
   // Firewall rules (Android: App info, Universal firewall, IP & domain rules)
   rules: { apps: {}, ips: [], domains: [] },
   universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false, outgoingOnly: true, countries: [], asns: [] },
