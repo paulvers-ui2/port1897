@@ -68,3 +68,16 @@ func FuzzCountry(f *testing.F) {
 		}
 	})
 }
+
+// FuzzASNLookup feeds arbitrary table bytes and an address to the ASN lookup:
+// a corrupt, truncated or hostile table must never read out of bounds.
+func FuzzASNLookup(f *testing.F) {
+	f.Add([]byte{}, []byte{1, 1, 1, 1})
+	f.Add([]byte{0, 0, 0, 0, 0, 0, 0, 1}, []byte{0, 0, 0, 0})
+	f.Add([]byte{1, 2, 3}, []byte{1, 2, 3, 4})
+	f.Fuzz(func(t *testing.T, db, ipb []byte) {
+		if ip, ok := netip.AddrFromSlice(ipb); ok {
+			_ = asnLookup(db, db, ip) // must not panic on any bytes
+		}
+	})
+}
