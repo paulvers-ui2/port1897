@@ -477,5 +477,7 @@ function demoPort() {
     openUrl: async () => {},
     openLog: async () => {},
     debugZip: async () => ({ ok: true }),
+    firewallExport: async () => ({ ok: true, file: 'demo' }),
+    firewallImport: async () => ({ ok: false }),
   };
 }

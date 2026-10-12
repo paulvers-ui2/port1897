@@ -64,4 +64,6 @@ contextBridge.exposeInMainWorld('port', {
   openLog: call('open:log'),
   debugZip: call('debug:zip'),
   openPcapFolder: call('open:pcapFolder'),
+  firewallExport: call('firewall:export'),
+  firewallImport: call('firewall:import'),
 });
