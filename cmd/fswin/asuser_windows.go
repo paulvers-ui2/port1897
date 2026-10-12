@@ -241,6 +241,22 @@ func readUserFile(path string) ([]byte, error) {
 	return b, err
 }
 
+// writeUserFile writes one of the app's files with the user's rights, to a
+// temporary file first, so a reader never sees half of it.
+func writeUserFile(path string, data []byte) error {
+	return asUser.Load().do(func() error {
+		path = filepath.Clean(path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return err
+		}
+		tmp := path + ".tmp"
+		if err := os.WriteFile(tmp, data, 0o600); err != nil {
+			return err
+		}
+		return os.Rename(tmp, path)
+	})
+}
+
 // statUserFile checks one of the app's files with the user's rights.
 func statUserFile(path string) error {
 	return asUser.Load().do(func() error {

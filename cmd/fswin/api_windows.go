@@ -50,6 +50,8 @@ type apiStatus struct {
 	// the exit is down while it is (supervise_windows.go)
 	ExitRestarts int64  `json:"exitRestarts,omitempty"`
 	ExitIssue    string `json:"exitIssue,omitempty"`
+	// the blocked networks, and how many address ranges each has so far
+	ASNs []asnState `json:"asns,omitempty"`
 }
 
 type dnsStat struct {
@@ -353,8 +355,12 @@ func statusOf(b *bridge, o options, started time.Time, exitID, dnsLabel string) 
 	if p := b.conflicts.Load(); p != nil {
 		st.Conflicts = append([]string{}, *p...) // as checked last, while running
 	}
-	if r := b.rules.Load(); r.isPaused(time.Now().UnixMilli()) {
+	r := b.rules.Load()
+	if r.isPaused(time.Now().UnixMilli()) {
 		st.Paused = r.paused
+	}
+	if len(r.u.ASNs) > 0 {
+		st.ASNs = asns.states(r.u.ASNs)
 	}
 	if ok := st.DNS.Queries - st.DNS.Failed; ok > 0 {
 		st.DNS.AvgMs = l.dnsTotalMs.Load() / ok

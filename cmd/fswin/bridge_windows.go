@@ -177,7 +177,18 @@ func (b *bridge) setRules(rs ruleSet) error {
 	b.rules.Store(r)
 	b.rulemu.Unlock()
 	b.enforce()
+	asns.refresh(asnNumbers(rs.Universal.ASNs), b.recompile)
 	return err
+}
+
+// recompile builds the current rules again, once blocked networks' ranges
+// have arrived, and closes the connections into them.
+func (b *bridge) recompile() {
+	b.rulemu.Lock()
+	r, _ := compileRules(b.rules.Load().src)
+	b.rules.Store(r)
+	b.rulemu.Unlock()
+	b.enforce()
 }
 
 // setBlocked blocks or unblocks app, an exe name or a full path, keeping
@@ -428,14 +439,12 @@ func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probable
 }
 
 // Inflow decides connections coming in through the tunnel (from a VPN exit
-// or a per-app route): allowed, unless "Allow outgoing only" is on.
+// or a per-app route): always refused, whatever the rules say and even
+// while protection is paused. Nothing on this PC is meant to be reached
+// from the internet through the tunnel.
 func (b *bridge) Inflow(protocol, uid int32, src, dst *x.Gostr) *intra.Mark {
 	cid := strconv.FormatInt(b.cid.Add(1), 10)
-	mark := &intra.Mark{PIDCSV: x.Base, CID: cid, UID: strconv.Itoa(int(uid))}
-	if !b.rules.Load().blocksIncoming(time.Now().UnixMilli()) {
-		b.logf("inflow #%s %s %s -> %s", cid, proto(protocol), src.V(), dst.V())
-		return mark
-	}
+	mark := &intra.Mark{PIDCSV: x.Block, CID: cid, UID: strconv.Itoa(int(uid))}
 	const why = "universal: incoming blocked"
 	b.logf("inflow #%s %s %s -> %s BLOCKED %s", cid, proto(protocol), src.V(), dst.V(), why)
 	b.log.flows.Add(1)
@@ -444,7 +453,6 @@ func (b *bridge) Inflow(protocol, uid int32, src, dst *x.Gostr) *intra.Mark {
 	sap, _ := netip.ParseAddrPort(src.V())
 	b.log.add(event{Kind: "flow", App: b.appName(uid), Path: b.appPath(uid), Proto: proto(protocol) + " in", Dst: src.V(),
 		Country: country(sap.Addr()), Via: exitName(x.Block), Blocked: true, Rule: why, CID: cid})
-	mark.PIDCSV = x.Block
 	return mark
 }
 
@@ -490,10 +498,20 @@ func (b *bridge) OnQuery(uid, domain *x.Gostr, qtyp int) *x.DNSOpts {
 	return &x.DNSOpts{TIDCSV: tid, PIDCSV: pid, NOBLOCK: trust}
 }
 
-// OnUpstreamAnswer blocks bogus answers when the DNSSEC switch is on: a
-// public name answered with a bogon address is re-answered by BlockAll.
+// OnUpstreamAnswer re-answers by BlockAll an answer that points into a
+// blocked country or network (always, as flows there are blocked), and, when
+// the DNSSEC switch is on, a public name answered with a bogon address.
 func (b *bridge) OnUpstreamAnswer(smm *x.DNSSummary, unmodifiedipcsv *x.Gostr) *x.DNSOpts {
-	if !b.dnssec || smm == nil || isLocalName(smm.QName) {
+	if smm == nil {
+		return nil
+	}
+	if block, why := b.rules.Load().geo.answerVerdict(unmodifiedipcsv.V()); block {
+		b.log.dnsBlocked.Add(1)
+		b.dnsWhy.put(smm.QName, why)
+		b.logf("dns: %s answered into a blocked place: %s; blocked", smm.QName, why)
+		return &x.DNSOpts{TIDCSV: x.BlockAll, PIDCSV: x.Base}
+	}
+	if !b.dnssec || isLocalName(smm.QName) {
 		return nil // keep the answer
 	}
 	bad := bogonsIn(unmodifiedipcsv.V())

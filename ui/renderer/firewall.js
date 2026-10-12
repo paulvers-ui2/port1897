@@ -138,12 +138,13 @@ PAGES.firewall = () => {
     card(
       row({ ico: 'ic_dns_firewall', title: 'Mode', sub: MODES.find((m) => m[0] === s.mode)[1] + (s.mode === 'dns' ? ' · the firewall is off' : ''), right: chevron(), onclick: chooseMode }),
       switchRow({ ico: 'ic_firewall_shield', title: 'Kill switch', sub: 'Block the internet outside AuroraVPN, at once. If the app crashes, the internet stays blocked until you start it again.', value: killSwitchOn(), onchange: (v) => setKillSwitch(v) }),
-      switchRow({ ico: 'universal_firewall', title: 'Allow outgoing only', sub: 'Every program may connect out and is added to your allowed apps the moment it does; incoming connections are blocked.', value: !!s.universal.outgoingOnly, onchange: (v) => App.setRules({ universal: { ...App.settings.universal, outgoingOnly: v } }).then(() => App.render()) })
+      switchRow({ ico: 'universal_firewall', title: 'Allow outgoing only', sub: 'Every program may connect out and is added to your allowed apps the moment it does. Incoming connections are always blocked.', value: !!s.universal.outgoingOnly, onchange: (v) => App.setRules({ universal: { ...App.settings.universal, outgoingOnly: v } }).then(() => App.render()) })
     ),
     sectionLabel('Universal'),
     card(
       row({ ico: 'universal_firewall', title: 'Universal firewall rules', sub: 'Apply firewall rules on all applications based on PC events, for example, when the PC is locked.', right: chevron(), onclick: () => App.go('universal') }),
-      row({ ico: 'universal_ip_rule', title: 'IP & Port rules', sub: 'Modify blocked or trusted Domain, IP / Port rules.', right: chevron(), onclick: () => App.go('custom-rules', {}) })
+      row({ ico: 'universal_ip_rule', title: 'IP & Port rules', sub: 'Modify blocked or trusted Domain, IP / Port rules.', right: chevron(), onclick: () => App.go('custom-rules', {}) }),
+      row({ ico: 'ic_global_lockdown', title: 'Countries & networks', sub: geoSummary(), right: chevron(), onclick: () => App.go('geo') })
     ),
     sectionLabel('Per app'),
     card(row({ ico: 'ic_ip_address', title: 'Per app IP / Domain rules', sub: 'Modify per app IP / Domain rules.', right: chevron(), onclick: () => App.go('apps') })),
@@ -190,7 +191,7 @@ PAGES.universal = () => {
     'Universal firewall',
     note('Apply firewall rules on all applications based on PC events, for example, firewall when the PC is locked or when a program connects without a DNS lookup.'),
     card(
-      switchRow({ ico: 'universal_firewall', title: 'Allow outgoing only', sub: 'Every program may connect out. A program’s first connection is allowed at once and the program is added to Apps as allowed (Bypass Universal), so the rules below never block it. Incoming connections are blocked. Your Block and Isolate choices, IP and domain rules, Lockdown and “PC locked” still apply.', value: !!u.outgoingOnly, onchange: (v) => set('outgoingOnly')(v).then(() => App.render()) })
+      switchRow({ ico: 'universal_firewall', title: 'Allow outgoing only', sub: 'Every program may connect out. A program’s first connection is allowed at once and the program is added to Apps as allowed (Bypass Universal), so the rules below never block it. Incoming connections are always blocked, with this on or off. Your Block and Isolate choices, IP and domain rules, Lockdown and “PC locked” still apply.', value: !!u.outgoingOnly, onchange: (v) => set('outgoingOnly')(v).then(() => App.render()) })
     ),
     u.outgoingOnly ? note('Allow outgoing only is on: the rules below, except Lockdown and “PC locked”, do not block outgoing connections.') : null,
     card(
@@ -215,6 +216,134 @@ PAGES.universal = () => {
     App.settings.mode === 'dns' ? note('These rules need the firewall: choose "DNS and Firewall" or "Firewall" mode.', 'bad') : null
   );
 };
+
+// ---------- Countries & networks ----------
+
+// Every ISO 3166 country code, and XK (Kosovo), which geo-IP tables use.
+const COUNTRY_CODES = (
+  'AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ ' +
+  'CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR ' +
+  'GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP ' +
+  'KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT ' +
+  'MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW ' +
+  'SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG ' +
+  'UM US UY UZ VA VC VE VG VI VN VU WF WS XK YE YT ZA ZM ZW'
+).split(' ');
+
+const MAX_ASNS = 1000; // as fswin allows (geoblock_windows.go)
+
+// kept with the universal rules, which the app hands the engine as they are
+const geoRules = () => App.settings.universal || {};
+
+function geoSummary() {
+  const r = geoRules();
+  const n = (r.countries || []).length;
+  const a = (r.asns || []).length;
+  const parts = [];
+  if (n) parts.push(r.countriesAllowOnly ? `Only ${n} ${n === 1 ? 'country' : 'countries'} allowed` : `${n} ${n === 1 ? 'country' : 'countries'} blocked`);
+  if (a) parts.push(`${a} ${a === 1 ? 'network' : 'networks'} blocked`);
+  return parts.join(' · ') || 'Block connections and DNS answers by country or by network (ASN).';
+}
+
+async function setGeo(patch) {
+  await App.setRules({ universal: { ...App.settings.universal, ...patch } });
+  App.render();
+}
+
+// "AS13335", "as 13335" or "13335"; null if not an AS number.
+function parseASN(text) {
+  const m = /^\s*(?:AS\s*)?(\d{1,10})\s*$/i.exec(String(text || ''));
+  if (!m) return null;
+  const n = Number(m[1]);
+  return n >= 1 && n <= 4294967295 ? n : null;
+}
+
+function asnStatus(asn) {
+  const st = ((App.status && App.status.asns) || []).find((s) => s.asn === asn);
+  if (!App.status) return 'Applies when protection is on';
+  if (!st) return 'Looking up its address ranges…';
+  if (st.ranges) return `${st.ranges} address ${st.ranges === 1 ? 'range' : 'ranges'} blocked${st.at ? ' · updated ' + new Date(st.at).toLocaleDateString() : ''}`;
+  return st.error ? 'Not blocked yet: ' + st.error : 'Looking up its address ranges…';
+}
+
+PAGES.geo = () => {
+  const r = geoRules();
+  const countries = [...(r.countries || [])].sort((a, b) => countryName(a).localeCompare(countryName(b)));
+  const nets = r.asns || [];
+  const allowOnly = !!r.countriesAllowOnly;
+  const modeTabs = h(
+    'div',
+    { class: 'seg-wrap' },
+    h('div', { class: 'seg' }, [[false, 'Block these countries'], [true, 'Allow only these countries']].map(([v, name]) => h('button', { class: allowOnly === v ? 'on' : '', type: 'button', text: name, onclick: () => allowOnly !== v && setGeo({ countriesAllowOnly: v }) })))
+  );
+  const countryRows = countries.map((cc) =>
+    h(
+      'div',
+      { class: 'row' },
+      h('span', { class: 'row-ico' }, flag(cc)),
+      h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: countryName(cc) || cc }), h('span', { class: 'row-sub', text: allowOnly ? cc + ' · allowed' : cc + ' · blocked' })),
+      h('button', { class: 'info-btn', type: 'button', title: 'Remove', onclick: () => setGeo({ countries: (r.countries || []).filter((c) => c !== cc) }) }, icon('ic_delete'))
+    )
+  );
+  const netRows = nets.map((a) =>
+    h(
+      'div',
+      { class: 'row' },
+      h('span', { class: 'tag bad', text: 'B' }),
+      h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: `AS${a.asn}${a.name ? ' · ' + a.name : ''}` }), h('span', { class: 'row-sub', text: asnStatus(a.asn) })),
+      h('button', { class: 'info-btn', type: 'button', title: 'Remove', onclick: () => setGeo({ asns: nets.filter((x) => x.asn !== a.asn) }) }, icon('ic_delete'))
+    )
+  );
+  return screen(
+    'Countries & networks',
+    note('These come before every other rule: they apply to every app, including apps set to Bypass or Exclude, and while protection is paused. A DNS lookup that answers with an address in a blocked place gets no answer. Your own network (LAN) is never blocked.'),
+    sectionLabel('Countries'),
+    modeTabs,
+    allowOnly && countries.length ? note('Every country not on this list is blocked, and so are addresses with no known country.', 'bad') : null,
+    allowOnly && !countries.length ? note('Add the countries to allow. With none listed, no country is blocked.') : null,
+    card(countryRows.length ? countryRows : h('p', { class: 'empty', text: 'No countries.' })),
+    h('div', { class: 'actions' }, btn('+ Choose countries', chooseCountries, { primary: true })),
+    sectionLabel('Networks (ASN)'),
+    note('Block everything a network (an autonomous system, such as a hosting company or an ISP) announces. AuroraVPN looks its address ranges up at RIPEstat and refreshes them weekly.'),
+    card(netRows.length ? netRows : h('p', { class: 'empty', text: 'No networks.' })),
+    h('div', { class: 'actions' }, btn('+ Block a network', addNetworkDialog, { primary: true })),
+    App.settings.mode === 'dns' ? note('In DNS mode only DNS answers are checked. Choose "DNS and Firewall" or "Firewall" mode to block connections too.', 'bad') : null
+  );
+};
+
+async function chooseCountries() {
+  const picked = new Set(geoRules().countries || []);
+  const all = COUNTRY_CODES.map((cc) => [cc, countryName(cc) || cc]).sort((a, b) => a[1].localeCompare(b[1]));
+  const rows = all.map(([cc, name]) => {
+    const c = h('input', { type: 'checkbox', checked: picked.has(cc) });
+    c.addEventListener('change', () => (c.checked ? picked.add(cc) : picked.delete(cc)));
+    const l = h('label', { class: 'pick-row' }, c, flag(cc), h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: name }), h('span', { class: 'row-sub', text: cc })));
+    l.dataset.q = (name + ' ' + cc).toLowerCase();
+    return l;
+  });
+  const list = h('div', { class: 'rr-list' }, rows);
+  const search = field({ label: 'Search', placeholder: 'Country name or code', oninput: (q) => {
+    q = q.trim().toLowerCase();
+    for (const l of rows) l.hidden = !!q && !l.dataset.q.includes(q);
+  } });
+  const ok = await dialog({ title: geoRules().countriesAllowOnly ? 'Countries to allow' : 'Countries to block', body: h('div', {}, search, list), ok: 'Save' });
+  if (!ok) return;
+  await setGeo({ countries: COUNTRY_CODES.filter((cc) => picked.has(cc)) });
+}
+
+async function addNetworkDialog() {
+  const nets = geoRules().asns || [];
+  if (nets.length >= MAX_ASNS) return toast(`At most ${MAX_ASNS} networks.`);
+  const num = field({ label: 'AS number', placeholder: 'AS13335', mono: true });
+  const name = field({ label: 'Name (optional)', placeholder: 'Looked up for you when empty' });
+  if (!(await dialog({ title: 'Block a network', body: h('div', {}, num, name), ok: 'Block' }))) return;
+  const asn = parseASN(num.input.value);
+  if (!asn) return toast('Not an AS number: enter one like AS13335.');
+  if (nets.some((a) => a.asn === asn)) return toast(`AS${asn} is already blocked.`);
+  const n = name.input.value.trim().slice(0, 64);
+  await setGeo({ asns: nets.concat(n ? { asn, name: n } : { asn }) });
+  toast(`Blocked AS${asn}`);
+}
 
 // ---------- IP & domain rules ----------
 

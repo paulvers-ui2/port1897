@@ -403,6 +403,8 @@ func run(o options) error {
 
 	var initial *rules
 	if o.rulesFile != "" {
+		// blocked networks' ranges are kept next to the rules (asn_windows.go)
+		asns.setDir(filepath.Join(filepath.Dir(o.rulesFile), "asn"))
 		r, err := loadRulesFile(o.rulesFile)
 		if r == nil {
 			return fmt.Errorf("-rules: %w", err)
@@ -439,6 +441,20 @@ func run(o options) error {
 	go watchLinkMTU(t, uint32(ifc.Index), mtuDone)
 	b.closer.Store(func(csv string) string { return t.CloseConns(csv) })
 	b.tun.Store(t)
+	// blocked networks are looked up once the tunnel is up, then checked
+	// hourly: a week-old list is refreshed, a failed lookup tried again
+	asnDone := make(chan struct{})
+	defer close(asnDone)
+	go func() {
+		for {
+			asns.refresh(asnNumbers(b.rules.Load().src.Universal.ASNs), b.recompile)
+			select {
+			case <-asnDone:
+				return
+			case <-time.After(time.Hour):
+			}
+		}
+	}()
 	if err := setDialer(o); err != nil {
 		return err
 	}
