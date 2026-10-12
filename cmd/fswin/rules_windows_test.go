@@ -129,11 +129,11 @@ func TestEnforceDNS(t *testing.T) {
 		dst       string
 		wantBlock bool
 	}{
-		{udp, "8.8.8.8:53", true},         // plaintext DNS to a public resolver
-		{tcp, "8.8.8.8:53", true},         // DNS over TCP
-		{tcp, "1.1.1.1:853", true},        // DNS over TLS
-		{tcp, "8.8.8.8:443", false},       // not a DNS port
-		{udp, "192.168.1.1:53", false},    // local (LAN) DNS is left alone
+		{udp, "8.8.8.8:53", true},      // plaintext DNS to a public resolver
+		{tcp, "8.8.8.8:53", true},      // DNS over TCP
+		{tcp, "1.1.1.1:853", true},     // DNS over TLS
+		{tcp, "8.8.8.8:443", false},    // not a DNS port
+		{udp, "192.168.1.1:53", false}, // local (LAN) DNS is left alone
 	}
 	for _, c := range cases {
 		d := r.decide(c.proto, `C:\a.exe`, false, netip.MustParseAddrPort(c.dst), nil, now)
