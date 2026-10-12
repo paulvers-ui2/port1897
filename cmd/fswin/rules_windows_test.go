@@ -81,23 +81,23 @@ func TestOutgoingOnly(t *testing.T) {
 	}
 }
 
-// Incoming connections are refused with "Allow outgoing only", except while
-// protection is paused, and journaled as blocked flows.
-func TestInflowWithOutgoingOnly(t *testing.T) {
+// Incoming connections are always refused, whatever the rules say and even
+// while protection is paused, and journaled as blocked flows.
+func TestInflowAlwaysBlocked(t *testing.T) {
 	b := newTestBridge(t, "")
 	src, dst := x.StrOf("203.0.113.5:4444"), x.StrOf("10.111.222.1:8080")
 
-	if m := b.Inflow(tcp, -1, src, dst); m.PIDCSV != x.Base {
-		t.Errorf("default: Inflow = %q, want %q", m.PIDCSV, x.Base)
+	if m := b.Inflow(tcp, -1, src, dst); m.PIDCSV != x.Block {
+		t.Errorf("default: Inflow = %q, want %q", m.PIDCSV, x.Block)
 	}
 
-	if err := b.setRules(ruleSet{Universal: universalRules{OutgoingOnly: true}}); err != nil {
+	if err := b.setRules(ruleSet{Universal: universalRules{OutgoingOnly: false}}); err != nil {
 		t.Fatal(err)
 	}
 	flows, blocked := b.log.flows.Load(), b.log.flowsBlocked.Load()
 	m := b.Inflow(tcp, -1, src, dst)
 	if m.PIDCSV != x.Block {
-		t.Errorf("outgoing only: Inflow = %q, want %q", m.PIDCSV, x.Block)
+		t.Errorf("outgoing only off: Inflow = %q, want %q", m.PIDCSV, x.Block)
 	}
 	if b.log.flows.Load() != flows+1 || b.log.flowsBlocked.Load() != blocked+1 {
 		t.Errorf("counters: flows %d -> %d, blocked %d -> %d; want +1 each", flows, b.log.flows.Load(), blocked, b.log.flowsBlocked.Load())
@@ -115,8 +115,8 @@ func TestInflowWithOutgoingOnly(t *testing.T) {
 	if err := b.setRules(ruleSet{Universal: universalRules{OutgoingOnly: true}, PausedUntil: paused}); err != nil {
 		t.Fatal(err)
 	}
-	if m := b.Inflow(tcp, -1, src, dst); m.PIDCSV != x.Base {
-		t.Errorf("paused: Inflow = %q, want %q", m.PIDCSV, x.Base)
+	if m := b.Inflow(tcp, -1, src, dst); m.PIDCSV != x.Block {
+		t.Errorf("paused: Inflow = %q, want %q", m.PIDCSV, x.Block)
 	}
 }
 

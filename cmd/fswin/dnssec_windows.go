@@ -62,9 +62,9 @@ func isLocalName(qname string) bool {
 	return false
 }
 
-// bogonsIn returns the bogon addresses in a csv of answer IPs. Unspecified
-// addresses (0.0.0.0, ::) are how blocklists answer, not poisoning.
-func bogonsIn(csv string) (out []string) {
+// answerAddrs parses a csv of answer IPs (some with a port), unmapped.
+// Unspecified addresses (0.0.0.0, ::) are how blocklists answer; skipped.
+func answerAddrs(csv string) (out []netip.Addr) {
 	for _, s := range strings.Split(csv, ",") {
 		s = strings.TrimSpace(s)
 		if s == "" {
@@ -77,7 +77,15 @@ func bogonsIn(csv string) (out []string) {
 		if err != nil || ip.IsUnspecified() {
 			continue
 		}
-		ip = ip.Unmap()
+		out = append(out, ip.Unmap())
+	}
+	return
+}
+
+// bogonsIn returns the bogon addresses in a csv of answer IPs. Unspecified
+// addresses (0.0.0.0, ::) are how blocklists answer, not poisoning.
+func bogonsIn(csv string) (out []string) {
+	for _, ip := range answerAddrs(csv) {
 		for _, p := range bogons {
 			if p.Contains(ip) {
 				out = append(out, ip.String())

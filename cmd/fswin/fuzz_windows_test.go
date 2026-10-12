@@ -27,6 +27,8 @@ func FuzzRules(f *testing.F) {
 	f.Add([]byte(`{"apps":{"chrome.exe":{"mode":"block"}},"ips":[{"app":"chrome.exe","ip":"1.2.3.0/24","port":443,"action":"block"},{"ip":"*","action":"trust"},{"ip":"10.0.0.*","action":"block"}],"domains":[{"domain":"*.example.com","action":"block"},{"app":"x.exe","domain":"a.b","action":"trust"}],"universal":{"udp":true,"icmp":true,"http":true,"unknown":true,"dnsBypass":true,"newApps":true,"lockdown":true,"outgoingOnly":true},"known":["C:\\a.exe"],"dnsTypes":[1,28],"pausedUntil":1}`),
 		`C:\Program Files\x.exe`, "[2001:db8::1]:53", "sub.example.com.", 28)
 	f.Add([]byte(`{"ips":[{"ip":"::/0","port":-1,"action":"x"}],"domains":[{"domain":"*.","action":"block"},{"domain":"","action":"trust"}]}`), "", "0.0.0.0:0", "*", 65535)
+	f.Add([]byte(`{"universal":{"countries":["RU","us","XYZ",""],"countriesAllowOnly":true,"asns":[{"asn":15169,"name":"G\u0000","prefixes":["8.8.8.0/24","2a00:1450::/32","::ffff:1.2.3.0/120","::ffff:0:0/90","0.0.0.0/0","x"]},{"asn":0,"prefixes":["1.1.1.0/24"]}]}}`),
+		`C:\a.exe`, "95.173.136.70:443", "8.8.8.8,[2a00:1450::1]:443,95.173.136.70", 1)
 	f.Fuzz(func(t *testing.T, raw []byte, app, dst, domain string, qtype int) {
 		var rs ruleSet
 		if json.Unmarshal(raw, &rs) != nil {
@@ -46,6 +48,8 @@ func FuzzRules(f *testing.F) {
 			r.decide(p, app, false, d, nil, now)
 		}
 		r.dnsVerdict(domain, qtype, now.UnixMilli())
+		r.geo.answerVerdict(domain) // as a csv of answer IPs
+		r.geo.verdict(d.Addr())
 		r.app(app)
 		r.knownApp(app)
 	})

@@ -82,9 +82,16 @@ type universalRules struct {
 	Locked    bool `json:"locked"`    // block everything while Windows is locked
 	Lockdown  bool `json:"lockdown"`  // block all but bypassed apps and trusted IPs
 	// OutgoingOnly allows every outgoing connection the rules above it do
-	// not block, and blocks incoming ones; the app window then sets each
-	// program it allowed to Bypass Universal, so it stays allowed.
+	// not block; the app window then sets each program it allowed to Bypass
+	// Universal, so it stays allowed. Incoming connections are blocked
+	// whatever it says (bridge.Inflow).
 	OutgoingOnly bool `json:"outgoingOnly"`
+	// Country and network blocks (geoblock_windows.go), checked before all
+	// the other rules. The app window hands the universal rules over as they
+	// are, so these need nothing of it but its screen.
+	Countries          []string  `json:"countries,omitempty"`          // two-letter codes
+	CountriesAllowOnly bool      `json:"countriesAllowOnly,omitempty"` // block every country but Countries
+	ASNs               []asnRule `json:"asns,omitempty"`
 }
 
 // ruleSet is the JSON the app sends.
@@ -128,6 +135,7 @@ type rules struct {
 	dnsTypes map[int]bool
 	paused   int64
 	locked   bool
+	geo      geoBlock
 }
 
 func compileRules(rs ruleSet) (*rules, error) {
@@ -176,6 +184,9 @@ func compileRules(rs ruleSet) (*rules, error) {
 			text:  dr.Domain,
 		})
 	}
+	geo, gerrs := compileGeo(rs.Universal)
+	r.geo = geo
+	errs = append(errs, gerrs...)
 	return r, errors.Join(errs...)
 }
 
@@ -274,12 +285,6 @@ func (r *rules) isPaused(now int64) bool {
 	return r.paused > now
 }
 
-// blocksIncoming reports whether connections coming in through the tunnel
-// are refused: "Allow outgoing only", unless protection is paused.
-func (r *rules) blocksIncoming(now int64) bool {
-	return r.u.OutgoingOnly && !r.isPaused(now)
-}
-
 func ruleApplies(ruleApp, full, exe string) bool {
 	return ruleApp == full || ruleApp == exe
 }
@@ -368,8 +373,12 @@ type decision struct {
 
 // decide is the Android app's firewall order: exclusions and bypasses, pause,
 // the app's own IP and domain rules, isolation, the global domain and IP
-// rules, the app's block, and last the universal rules.
+// rules, the app's block, and last the universal rules. Country and network
+// blocks come before all of them: no app mode, trust rule or pause lifts them.
 func (r *rules) decide(protocol int32, path string, known bool, dst netip.AddrPort, domains []string, now time.Time) decision {
+	if block, why := r.geo.verdict(dst.Addr()); block {
+		return decision{block: true, why: why}
+	}
 	ms := now.UnixMilli()
 	full, exe := appKeys(path)
 	a := r.app(path)
