@@ -77,6 +77,23 @@ jobs:
             desktop/target
           key: cargo-${{ runner.os }}-1.99.0-${{ hashFiles('desktop/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-1.99.0-
+      # IP-to-ASN tables fswin embeds for network (ASN) blocking, from
+      # iptoasn.com's public-domain data. The repo keeps empty placeholders;
+      # a failed fetch falls back to them so a release never breaks (that
+      # build just has no ASN data). Runs natively, not cross-compiled.
+      - name: ASN database
+        shell: bash
+        run: |
+          ok=1
+          curl -sSfL --retry 3 --retry-delay 5 -o asn-v4.tsv.gz https://iptoasn.com/data/ip2asn-v4.tsv.gz || ok=0
+          curl -sSfL --retry 3 --retry-delay 5 -o asn-v6.tsv.gz https://iptoasn.com/data/ip2asn-v6.tsv.gz || ok=0
+          if [ "$ok" = 1 ]; then
+            gunzip -f asn-v4.tsv.gz asn-v6.tsv.gz
+            go run ./cmd/fswin/geoip/genasn asn-v4.tsv asn-v6.tsv cmd/fswin/geoip
+            ls -la cmd/fswin/geoip/asn.v4 cmd/fswin/geoip/asn.v6
+          else
+            echo "WARNING: could not fetch IP-to-ASN data; building with the empty placeholder (ASN blocking has no data this build)"
+          fi
       - name: Engine and Wintun
         shell: bash
         env:

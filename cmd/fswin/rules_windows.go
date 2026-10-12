@@ -83,8 +83,16 @@ type universalRules struct {
 	Lockdown  bool `json:"lockdown"`  // block all but bypassed apps and trusted IPs
 	// OutgoingOnly allows every outgoing connection the rules above it do
 	// not block, and blocks incoming ones; the app window then sets each
-	// program it allowed to Bypass Universal, so it stays allowed.
+	// program it allowed to Bypass Universal, so it stays allowed. It is
+	// forced on (compileRules): AuroraVPN never accepts incoming connections.
 	OutgoingOnly bool `json:"outgoingOnly"`
+	// Countries blocks every outgoing connection whose destination is in one
+	// of these two-letter country codes (geoip_windows.go). ASNs blocks those
+	// whose destination network (autonomous system number, asn_windows.go) is
+	// listed. Both apply even though outgoing connections are otherwise
+	// allowed, so a hacked machine cannot reach a blocked country or network.
+	Countries []string `json:"countries,omitempty"`
+	ASNs      []uint32 `json:"asns,omitempty"`
 }
 
 // ruleSet is the JSON the app sends.
@@ -126,6 +134,8 @@ type rules struct {
 	u        universalRules
 	known    map[string]bool
 	dnsTypes map[int]bool
+	blockCC  map[string]bool // uppercase two-letter country codes to block
+	blockASN map[uint32]bool // autonomous system numbers to block
 	paused   int64
 	locked   bool
 }
@@ -137,8 +147,24 @@ func compileRules(rs ruleSet) (*rules, error) {
 		u:        rs.Universal,
 		known:    map[string]bool{},
 		dnsTypes: map[int]bool{},
+		blockCC:  map[string]bool{},
+		blockASN: map[uint32]bool{},
 		paused:   rs.PausedUntil,
 		locked:   rs.ScreenLocked,
+	}
+	// Allow outgoing only is mandatory: whatever the rule set asked for, the
+	// tunnel never accepts incoming connections. A tampered rules file or a
+	// stray POST cannot re-open the machine to the outside.
+	r.u.OutgoingOnly = true
+	for _, c := range rs.Universal.Countries {
+		if c = strings.ToUpper(strings.TrimSpace(c)); len(c) == 2 && c[0] >= 'A' && c[0] <= 'Z' && c[1] >= 'A' && c[1] <= 'Z' {
+			r.blockCC[c] = true
+		}
+	}
+	for _, a := range rs.Universal.ASNs {
+		if a != 0 {
+			r.blockASN[a] = true
+		}
 	}
 	var errs []error
 	for k, v := range rs.Apps {
@@ -278,6 +304,24 @@ func (r *rules) isPaused(now int64) bool {
 // are refused: "Allow outgoing only", unless protection is paused.
 func (r *rules) blocksIncoming(now int64) bool {
 	return r.u.OutgoingOnly && !r.isPaused(now)
+}
+
+// geoVerdict reports why a destination is blocked by the country or network
+// (ASN) block lists, or "" when it is not. The geo-IP lookups only run when
+// a list is set, so flows pay nothing for them when no country or network is
+// blocked.
+func (r *rules) geoVerdict(ip netip.Addr) string {
+	if len(r.blockCC) > 0 {
+		if cc := country(ip); cc != "" && r.blockCC[cc] {
+			return "universal: country " + cc
+		}
+	}
+	if len(r.blockASN) > 0 {
+		if a := asn(ip); a != 0 && r.blockASN[a] {
+			return "universal: AS" + strconv.FormatUint(uint64(a), 10)
+		}
+	}
+	return ""
 }
 
 func ruleApplies(ruleApp, full, exe string) bool {
@@ -425,6 +469,15 @@ func (r *rules) decide(protocol int32, path string, known bool, dst netip.AddrPo
 	}
 	if a.Mode == modeBypassUniversal {
 		return allow("app bypasses universal rules")
+	}
+
+	// Country and network (ASN) blocks come before the universal switch so
+	// they hold even under "allow outgoing only": a blocked destination is
+	// refused however permissive the outgoing rules are. An explicitly
+	// trusted IP or domain (above) still wins, and excluded or
+	// bypass-universal apps never reach here.
+	if why := r.geoVerdict(dst.Addr()); why != "" {
+		return blocked(why)
 	}
 
 	u := r.u

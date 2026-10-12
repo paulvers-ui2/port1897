@@ -59,7 +59,7 @@ func TestOutgoingOnly(t *testing.T) {
 		{"a blocked domain", ruleSet{Universal: strict, Domains: []domainRule{{Domain: "ads.example", Action: actBlock}}}, tcp, `C:\a.exe`, web, []string{"ads.example"}, true, "domain rule ads.example"},
 		{"a blocked IP", ruleSet{Universal: strict, IPs: []ipRule{{IP: "93.184.215.14", Action: actBlock}}}, tcp, `C:\a.exe`, web, nil, true, "IP rule 93.184.215.14"},
 		{"lockdown still wins", ruleSet{Universal: universalRules{OutgoingOnly: true, Lockdown: true}}, tcp, `C:\a.exe`, web, nil, true, "universal: lockdown"},
-		{"off: the universal rules apply again", ruleSet{Universal: universalRules{NewApps: true}}, tcp, `C:\new\app.exe`, web, nil, true, "universal: new app"},
+		{"mandatory: outgoing-only holds even if the rule set omits it", ruleSet{Universal: universalRules{NewApps: true}}, tcp, `C:\new\app.exe`, web, nil, false, ruleOutgoingAllowed},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -78,6 +78,70 @@ func TestOutgoingOnly(t *testing.T) {
 	r := mustRules(t, ruleSet{Universal: universalRules{OutgoingOnly: true, Locked: true}, ScreenLocked: true})
 	if d := r.decide(tcp, `C:\a.exe`, false, web, nil, now); !d.block || d.why != "universal: PC locked" {
 		t.Errorf("locked PC: %+v, want blocked by universal: PC locked", d)
+	}
+}
+
+// Allow outgoing only is mandatory: compileRules forces it on even when the
+// rule set turns it off, so incoming is always blocked.
+func TestOutgoingOnlyMandatory(t *testing.T) {
+	r := mustRules(t, ruleSet{Universal: universalRules{OutgoingOnly: false}})
+	if !r.u.OutgoingOnly {
+		t.Error("compileRules did not force OutgoingOnly on")
+	}
+	if !r.blocksIncoming(time.Now().UnixMilli()) {
+		t.Error("incoming connections are not blocked")
+	}
+}
+
+// A country block refuses outgoing connections to that country, even under
+// "allow outgoing only"; an explicitly trusted IP there still gets through.
+func TestCountryBlock(t *testing.T) {
+	now := time.Now()
+	ru := netip.MustParseAddrPort("95.173.136.70:443") // RU in the embedded db
+	us := netip.MustParseAddrPort("8.8.8.8:443")       // US
+
+	r := mustRules(t, ruleSet{Universal: universalRules{Countries: []string{"ru"}}})
+	if d := r.decide(tcp, `C:\a.exe`, false, ru, nil, now); !d.block || d.why != "universal: country RU" {
+		t.Errorf("RU dst: %+v, want blocked by universal: country RU", d)
+	}
+	if d := r.decide(tcp, `C:\a.exe`, false, us, nil, now); d.block {
+		t.Errorf("US dst: %+v, want allowed", d)
+	}
+
+	// an app that trusts the IP reaches it despite the country block
+	r = mustRules(t, ruleSet{
+		Universal: universalRules{Countries: []string{"RU"}},
+		IPs:       []ipRule{{IP: "95.173.136.70", Action: actTrust}},
+	})
+	if d := r.decide(tcp, `C:\a.exe`, false, ru, nil, now); d.block {
+		t.Errorf("trusted RU IP: %+v, want allowed", d)
+	}
+}
+
+// asnLookup finds the autonomous system that announces an address, 0 in the
+// gaps between ranges and for an empty database.
+func TestASNLookup(t *testing.T) {
+	rec := func(ip string, as uint32) []byte {
+		a := netip.MustParseAddr(ip).As4()
+		return append(a[:], byte(as>>24), byte(as>>16), byte(as>>8), byte(as))
+	}
+	var db4 []byte
+	db4 = append(db4, rec("1.0.0.0", 13335)...)
+	db4 = append(db4, rec("1.1.0.0", 0)...) // a gap: unrouted
+	db4 = append(db4, rec("2.0.0.0", 7922)...)
+	for ip, want := range map[string]uint32{
+		"1.0.0.5":   13335,
+		"1.0.255.0": 13335,
+		"1.1.0.1":   0, // in the gap
+		"2.0.0.9":   7922,
+		"0.255.0.0": 0, // before the first range
+	} {
+		if got := asnLookup(db4, nil, netip.MustParseAddr(ip)); got != want {
+			t.Errorf("asnLookup(%s) = %d, want %d", ip, got, want)
+		}
+	}
+	if got := asnLookup(nil, nil, netip.MustParseAddr("1.0.0.1")); got != 0 {
+		t.Errorf("empty db: asnLookup = %d, want 0", got)
 	}
 }
 
