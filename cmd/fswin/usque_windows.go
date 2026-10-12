@@ -110,7 +110,8 @@ func startUsqueOn(s usqueSetup, port int, user, pass string) (*usque, error) {
 	// A SOCKS proxy and a QUIC client: no admin rights, so it runs with the
 	// user's token.
 	build := func() (*exec.Cmd, io.ReadCloser, error) {
-		cmd := exec.Command(s.exe, args...) //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
+		// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- usque.exe is fswin's own fixed path; args are built here and user flags are validated by usqueFlags
+		cmd := exec.Command(s.exe, args...) //nolint:gosec // G204: usque.exe is fswin's own fixed path
 		cmd.Dir = s.dir
 		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
 		asUser.Load().unelevated(cmd)
