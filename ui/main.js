@@ -84,7 +84,7 @@ const DEFAULTS = {
   allowLan: true,
   // Firewall rules (Android: App info, Universal firewall, IP & domain rules)
   rules: { apps: {}, ips: [], domains: [] },
-  universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false, outgoingOnly: true },
+  universal: { udp: false, icmp: true, http: false, unknown: false, dnsBypass: false, newApps: false, locked: false, lockdown: false, outgoingOnly: true, countries: [], asns: [] },
   dnsTypesAuto: true,
   dnsTypes: [1, 28, 5, 65, 64, 45], // A, AAAA, CNAME, HTTPS, SVCB, IPSECKEY: Android's defaults
   knownApps: [],
@@ -390,7 +390,7 @@ function ruleSet(s) {
     apps,
     ips: s.rules.ips,
     domains: s.rules.domains,
-    universal: s.universal,
+    universal: { ...s.universal, outgoingOnly: true }, // mandatory: never accept incoming
     known: s.knownApps,
     dnsTypes: s.dnsTypesAuto ? [] : s.dnsTypes,
     pausedUntil: s.pausedUntil > Date.now() ? s.pausedUntil : 0,

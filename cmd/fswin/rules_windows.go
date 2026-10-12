@@ -92,7 +92,7 @@ type universalRules struct {
 	// listed. Both apply even though outgoing connections are otherwise
 	// allowed, so a hacked machine cannot reach a blocked country or network.
 	Countries []string `json:"countries,omitempty"`
-	ASNs      []uint32 `json:"asns,omitempty"`
+	ASNs      []int64  `json:"asns,omitempty"` // wider than uint32 so a bad value is dropped, not an unmarshal error that rejects every rule
 }
 
 // ruleSet is the JSON the app sends.
@@ -162,8 +162,8 @@ func compileRules(rs ruleSet) (*rules, error) {
 		}
 	}
 	for _, a := range rs.Universal.ASNs {
-		if a != 0 {
-			r.blockASN[a] = true
+		if a > 0 && a <= 0xFFFFFFFF {
+			r.blockASN[uint32(a)] = true
 		}
 	}
 	var errs []error

@@ -415,15 +415,16 @@ func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probable
 		domain = doms[0]
 	}
 	cc := country(dap.Addr())
+	as := asn(dap.Addr())
 	b.log.flows.Add(1)
 	if d.block {
 		b.log.flowsBlocked.Add(1)
 	} else {
 		b.conns.add(cid, liveConn{uid: uid, proto: protocol, dst: dap, domains: doms, app: app,
-			path: b.appPath(uid), via: via, country: cc, at: time.Now().UnixMilli()})
+			path: b.appPath(uid), via: via, country: cc, asn: as, at: time.Now().UnixMilli()})
 	}
 	b.log.add(event{Kind: "flow", App: app, Path: b.appPath(uid), Proto: proto(protocol), Dst: dst.V(),
-		Domain: domain, Country: cc, Via: via, Blocked: d.block, Rule: d.why, CID: cid})
+		Domain: domain, Country: cc, ASN: as, Via: via, Blocked: d.block, Rule: d.why, CID: cid})
 	return &intra.Mark{PIDCSV: pid, CID: cid, UID: strconv.Itoa(int(uid))}
 }
 

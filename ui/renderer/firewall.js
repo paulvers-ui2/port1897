@@ -138,7 +138,12 @@ PAGES.firewall = () => {
     card(
       row({ ico: 'ic_dns_firewall', title: 'Mode', sub: MODES.find((m) => m[0] === s.mode)[1] + (s.mode === 'dns' ? ' · the firewall is off' : ''), right: chevron(), onclick: chooseMode }),
       switchRow({ ico: 'ic_firewall_shield', title: 'Kill switch', sub: 'Block the internet outside AuroraVPN, at once. If the app crashes, the internet stays blocked until you start it again.', value: killSwitchOn(), onchange: (v) => setKillSwitch(v) }),
-      switchRow({ ico: 'universal_firewall', title: 'Allow outgoing only', sub: 'Every program may connect out and is added to your allowed apps the moment it does; incoming connections are blocked.', value: !!s.universal.outgoingOnly, onchange: (v) => App.setRules({ universal: { ...App.settings.universal, outgoingOnly: v } }).then(() => App.render()) })
+      row({ ico: 'universal_firewall', title: 'Allow only outgoing connections', sub: 'Always on. Programs may connect out, but incoming connections are always blocked, so a compromised machine cannot be reached from outside. This cannot be turned off.', right: h('span', { class: 'tag good', text: 'Always on' }) })
+    ),
+    sectionLabel('Countries & networks'),
+    card(
+      row({ ico: 'ic_network', title: 'Blocked countries', sub: geoSummary('countries'), right: chevron(), onclick: () => App.go('block-countries') }),
+      row({ ico: 'ic_network_tunnel', title: 'Blocked networks (ASN)', sub: geoSummary('asns'), right: chevron(), onclick: () => App.go('block-asn') })
     ),
     sectionLabel('Universal'),
     card(
@@ -190,9 +195,9 @@ PAGES.universal = () => {
     'Universal firewall',
     note('Apply firewall rules on all applications based on PC events, for example, firewall when the PC is locked or when a program connects without a DNS lookup.'),
     card(
-      switchRow({ ico: 'universal_firewall', title: 'Allow outgoing only', sub: 'Every program may connect out. A program’s first connection is allowed at once and the program is added to Apps as allowed (Bypass Universal), so the rules below never block it. Incoming connections are blocked. Your Block and Isolate choices, IP and domain rules, Lockdown and “PC locked” still apply.', value: !!u.outgoingOnly, onchange: (v) => set('outgoingOnly')(v).then(() => App.render()) })
+      row({ ico: 'universal_firewall', title: 'Allow only outgoing connections', sub: 'Always on, and cannot be turned off. Every program may connect out; a program’s first connection is allowed at once and the program is added to Apps as allowed (Bypass Universal). Incoming connections are always blocked. Your Block and Isolate choices, IP and domain rules, blocked countries and networks, Lockdown and “PC locked” still apply.', right: h('span', { class: 'tag good', text: 'Always on' }) })
     ),
-    u.outgoingOnly ? note('Allow outgoing only is on: the rules below, except Lockdown and “PC locked”, do not block outgoing connections.') : null,
+    note('Allow only outgoing connections is always on: the rules below, except Lockdown and “PC locked”, do not block outgoing connections. Blocked countries and networks still apply — set them on the Firewall screen.'),
     card(
       switchRow({ ico: 'ic_device_lock', title: 'Block all apps when the PC is locked', sub: 'While Windows shows the lock screen, no app reaches the internet.', value: u.locked, onchange: set('locked') }),
       switchRow({ ico: 'ic_unknown_app', title: 'Block when source app is unknown', sub: 'Block connections whose program Windows cannot tell (some system services).', value: u.unknown, onchange: set('unknown') }),
@@ -213,6 +218,128 @@ PAGES.universal = () => {
     ),
     note('Android-only rules are left out: block apps not in use, block IPv4 in IPv6, and block on metered networks.'),
     App.settings.mode === 'dns' ? note('These rules need the firewall: choose "DNS and Firewall" or "Firewall" mode.', 'bad') : null
+  );
+};
+
+// ---------- Blocked countries and networks (ASN) ----------
+
+// ISO 3166-1 alpha-2 codes, for the country picker. The name and flag come
+// from the browser (countryName / flag in ui.js), so only the codes live here.
+const COUNTRY_CODES = (
+  'AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ ' +
+  'CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR ' +
+  'GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP ' +
+  'KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT ' +
+  'MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW ' +
+  'SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG ' +
+  'UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW'
+).split(' ');
+
+function geoSummary(kind) {
+  const list = App.settings.universal[kind] || [];
+  if (!list.length) return kind === 'asns' ? 'No networks blocked.' : 'No countries blocked.';
+  if (kind === 'asns') return list.slice(0, 8).map((a) => 'AS' + a).join(', ') + (list.length > 8 ? ` +${list.length - 8} more` : '');
+  return list.slice(0, 6).map((c) => countryName(String(c).toUpperCase()) || c).join(', ') + (list.length > 6 ? ` +${list.length - 6} more` : '');
+}
+
+async function setUniversalList(kind, list) {
+  await App.setRules({ universal: { ...App.settings.universal, [kind]: list } });
+}
+
+async function toggleCountry(cc, on) {
+  const set = new Set((App.settings.universal.countries || []).map((c) => String(c).toUpperCase()));
+  if (on) set.add(cc);
+  else set.delete(cc);
+  await setUniversalList('countries', [...set].sort());
+}
+
+PAGES['block-countries'] = () => {
+  const blocked = new Set((App.settings.universal.countries || []).map((c) => String(c).toUpperCase()));
+  const listEl = card();
+  const named = COUNTRY_CODES.map((cc) => [cc, countryName(cc)]).filter(([, n]) => n).sort((a, b) => a[1].localeCompare(b[1]));
+  const fill = (q) => {
+    q = (q || '').trim().toLowerCase();
+    listEl.textContent = '';
+    const items = named.filter(([cc, n]) => !q || cc.toLowerCase().includes(q) || n.toLowerCase().includes(q));
+    for (const [cc, name] of items) {
+      listEl.appendChild(
+        h(
+          'div',
+          { class: 'row' },
+          flag(cc) || h('span', { class: 'row-ico' }),
+          h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: name }), h('span', { class: 'row-sub', text: cc })),
+          toggle(blocked.has(cc), (v) => {
+            if (v) blocked.add(cc);
+            else blocked.delete(cc);
+            toggleCountry(cc, v);
+          }, name)
+        )
+      );
+    }
+    if (!items.length) listEl.appendChild(h('p', { class: 'empty', text: 'No country matches.' }));
+  };
+  fill('');
+  return screen(
+    'Blocked countries',
+    note('Block every outgoing connection to a country. A server in a blocked country cannot be reached, even by a program that is otherwise allowed. An IP or domain you trust still gets through. Blocks apply at once.'),
+    field({ placeholder: 'Search country', oninput: debounce(fill, 150) }),
+    listEl
+  );
+};
+
+async function removeASN(a) {
+  await setUniversalList('asns', (App.settings.universal.asns || []).filter((x) => Number(x) !== Number(a)));
+}
+
+async function addASNDialog() {
+  const input = field({ label: 'Network number (ASN)', placeholder: '13335 or AS13335' });
+  if (!(await dialog({ title: 'Block a network', body: input, ok: 'Block' }))) return;
+  const m = String(input.input.value).trim().match(/^(?:as)?0*(\d{1,10})$/i);
+  const n = m ? Number(m[1]) : 0;
+  if (!n || n > 4294967295) {
+    toast('Enter a network number like 13335 or AS13335');
+    return;
+  }
+  const set = new Set((App.settings.universal.asns || []).map(Number));
+  set.add(n);
+  await setUniversalList('asns', [...set].sort((a, b) => a - b));
+  toast('Blocked AS' + n);
+  App.render();
+}
+
+async function blockNetwork(a) {
+  const set = new Set((App.settings.universal.asns || []).map(Number));
+  set.add(Number(a));
+  await setUniversalList('asns', [...set].sort((x, y) => x - y));
+}
+
+// Block a network or country from a log or connection detail, with a check
+// first: a whole network or country is a broad block.
+function confirmBlockNetwork(a) {
+  confirmDialog('Block this network?', `Every outgoing connection to AS${a} will be refused. Undo it under Firewall → Blocked networks.`, () => blockNetwork(a).then(() => (toast('Blocked AS' + a), App.render())));
+}
+
+function confirmBlockCountry(cc) {
+  const name = countryName(cc) || cc;
+  confirmDialog('Block this country?', `Every outgoing connection to ${name} will be refused. Undo it under Firewall → Blocked countries.`, () => toggleCountry(cc, true).then(() => (toast('Blocked ' + name), App.render())));
+}
+
+PAGES['block-asn'] = () => {
+  const asns = (App.settings.universal.asns || []).map(Number).sort((a, b) => a - b);
+  const rows = asns.map((a) =>
+    h(
+      'div',
+      { class: 'row' },
+      icon('ic_network_tunnel', 'row-ico'),
+      h('span', { class: 'row-text' }, h('span', { class: 'row-title', text: 'AS' + a }), h('span', { class: 'row-sub', text: 'Network blocked' })),
+      h('button', { class: 'info-btn', type: 'button', title: 'Remove', onclick: () => removeASN(a).then(() => App.render()) }, icon('ic_delete'))
+    )
+  );
+  return screen(
+    'Blocked networks (ASN)',
+    note('Block a whole network by its autonomous system number (ASN): every outgoing connection to it is refused. You can see a connection’s network in the Logs and block it there. Examples: AS13335 is Cloudflare, AS16509 is Amazon AWS, AS15169 is Google.'),
+    card(rows.length ? rows : h('p', { class: 'empty', text: 'No networks blocked.' })),
+    h('div', { class: 'actions' }, btn('+ Block a network (ASN)', addASNDialog, { primary: true }))
   );
 };
 
@@ -410,6 +537,7 @@ function connDetails(e) {
       kv('Destination', `${e.proto} ${e.dst}`),
       e.domain ? kv('Domain', e.domain) : null,
       e.country ? kv('Country', countryName(e.country)) : null,
+      e.asn ? kv('Network', 'AS' + e.asn) : null,
       kv('Via', e.via),
       kv(e.blocked ? 'Blocked by' : 'Rule', e.rule || (e.blocked ? 'app blocked' : 'none'))
     ),
@@ -419,6 +547,8 @@ function connDetails(e) {
       ip ? { text: `Block or trust this IP${app ? ' for this app' : ''}…`, onclick: () => ruleSheet('ips', app, ip, 0) } : null,
       ip && port ? { text: `Block or trust ${ip}:${port}…`, onclick: () => ruleSheet('ips', app, ip, Number(port)) } : null,
       e.domain ? { text: `Block or trust this domain${app ? ' for this app' : ''}…`, onclick: () => ruleSheet('domains', app, e.domain) } : null,
+      e.asn ? { text: `Block this network (AS${e.asn})…`, onclick: () => confirmBlockNetwork(e.asn) } : null,
+      e.country ? { text: `Block this country (${countryName(e.country)})…`, onclick: () => confirmBlockCountry(e.country) } : null,
     ],
   });
 }
@@ -437,6 +567,7 @@ function activeDetails(c) {
       kv('Destination', `${c.proto} ${c.dst}`),
       c.domain ? kv('Domain', c.domain) : null,
       kv('Country', c.country ? countryName(c.country) : 'unknown: a private or unassigned address'),
+      c.asn ? kv('Network', 'AS' + c.asn) : null,
       kv('Open since', `${new Date(c.since).toLocaleString()} (${fmtAge(Date.now() - c.since)})`),
       kv('Via', c.via || 'direct')
     ),
@@ -454,6 +585,8 @@ function activeDetails(c) {
       ip ? { text: `Block or trust this IP${app ? ' for this app' : ''}…`, onclick: () => ruleSheet('ips', app, ip, 0) } : null,
       ip && port ? { text: `Block or trust ${ip}:${port}…`, onclick: () => ruleSheet('ips', app, ip, Number(port)) } : null,
       c.domain ? { text: `Block or trust this domain${app ? ' for this app' : ''}…`, onclick: () => ruleSheet('domains', app, c.domain) } : null,
+      c.asn ? { text: `Block this network (AS${c.asn})…`, onclick: () => confirmBlockNetwork(c.asn) } : null,
+      c.country ? { text: `Block this country (${countryName(c.country)})…`, onclick: () => confirmBlockCountry(c.country) } : null,
     ],
   });
 }

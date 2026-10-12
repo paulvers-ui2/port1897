@@ -109,11 +109,16 @@ pub fn rule_set(s: &S) -> Value {
     }
     let rules = settings::obj(s, "rules");
     let paused = settings::num(s, "pausedUntil");
+    // Allow outgoing only is mandatory: force it on in the rules the engine
+    // reads, so rules.json for the next start carries it too. (The engine
+    // also forces it, but this keeps the file honest.)
+    let mut universal = settings::obj(s, "universal").cloned().unwrap_or_default();
+    universal.insert("outgoingOnly".into(), json!(true));
     json!({
         "apps": apps,
         "ips": rules.and_then(|r| r.get("ips")).cloned().unwrap_or(json!([])),
         "domains": rules.and_then(|r| r.get("domains")).cloned().unwrap_or(json!([])),
-        "universal": s.get("universal").cloned().unwrap_or(json!({})),
+        "universal": Value::Object(universal),
         "known": s.get("knownApps").cloned().unwrap_or(json!([])),
         "dnsTypes": if settings::bool(s, "dnsTypesAuto") { json!([]) } else { s.get("dnsTypes").cloned().unwrap_or(json!([])) },
         "pausedUntil": if paused > applog::now_ms() as f64 { settings::number(paused) } else { json!(0) },

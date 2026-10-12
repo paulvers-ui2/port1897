@@ -33,6 +33,7 @@ type liveConn struct {
 	path    string // the program's full path; "" if unknown
 	via     string // the exit or route it leaves through
 	country string // two-letter code of dst
+	asn     uint32 // autonomous system (network) number of dst
 	at      int64  // unix millis
 }
 
@@ -75,6 +76,7 @@ type openConn struct {
 	Dst     string `json:"dst"`
 	Domain  string `json:"domain,omitempty"`
 	Country string `json:"country,omitempty"` // two-letter code of Dst
+	ASN     uint32 `json:"asn,omitempty"`     // autonomous system (network) number of Dst
 	Via     string `json:"via,omitempty"`
 	Since   int64  `json:"since"` // unix millis
 }
@@ -88,7 +90,7 @@ func (t *connTable) list(app string) []openConn {
 			continue
 		}
 		o := openConn{CID: cid, App: c.app, Path: c.path, Proto: proto(c.proto), Dst: c.dst.String(),
-			Country: c.country, Via: c.via, Since: c.at}
+			Country: c.country, ASN: c.asn, Via: c.via, Since: c.at}
 		if len(c.domains) > 0 {
 			o.Domain = c.domains[0]
 		}
