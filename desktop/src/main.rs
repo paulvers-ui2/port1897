@@ -14,6 +14,7 @@
 
 mod api;
 mod applog;
+mod autoconnect;
 mod blocklists;
 mod commands;
 mod debugzip;
@@ -42,6 +43,11 @@ static QUITTING: AtomicBool = AtomicBool::new(false);
 static EXITING: AtomicBool = AtomicBool::new(false);
 /// The window's WebView2 is locked down (winutil::lock_down_webview).
 static LOCKED_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// Quit was chosen: nothing may start protection any more.
+pub fn quitting() -> bool {
+    QUITTING.load(Ordering::Relaxed)
+}
 
 fn is_automation(a: &str) -> bool {
     matches!(a, "--start" | "--stop" | "--resume" | "--pause") || a.strip_prefix("--pause=").is_some_and(|m| !m.is_empty() && m.bytes().all(|b| b.is_ascii_digit()))
@@ -320,12 +326,17 @@ fn main() {
                 }
             });
             live::spawn(handle.clone());
+            // Connect automatically / reconnect (Settings); booted: started
+            // with Windows, not by hand or by a script
+            autoconnect::spawn(handle.clone(), args.iter().any(|a| a == "--autostart"));
             if automated {
                 let args = args.clone();
                 tauri::async_runtime::spawn(async move {
                     automate(&handle, &args).await;
                 });
-            } else if autostart && settings::bool(&s, "wasRunning") {
+            } else if autostart && settings::bool(&s, "wasRunning") && !settings::bool(&s, "autoConnect") {
+                // with "Connect automatically" on, autoconnect starts it
+                let handle = handle.clone();
                 tauri::async_runtime::spawn(async move {
                     let r = engine::start().await;
                     live::refresh(&handle).await;

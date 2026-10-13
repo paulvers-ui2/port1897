@@ -103,6 +103,8 @@ const DEFAULTS = {
   statusAlerts: true,
   theme: 'darkplus',
   autostart: false,
+  autoConnect: false, // desktop/src/autoconnect.rs (the Tauri app); not run by this Electron app
+  autoRecover: true,
   wasRunning: false,
   pcap: false, // packet capture to capture.pcap
   automation: false, // Android: "Automation"; here, command-line --start / --stop / --pause

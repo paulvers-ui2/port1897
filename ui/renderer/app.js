@@ -169,6 +169,15 @@ function renderHome() {
   killBtn.classList.toggle('failed', !!killErr);
   killBtn.setAttribute('aria-pressed', String(kill));
   setText('kill-label', killErr ? 'Kill switch failed' : kill ? 'Kill switch on' : 'Kill switch off');
+
+  const auto = !!cfg.autoConnect;
+  const autoBtn = $('auto-btn');
+  autoBtn.classList.toggle('on', auto);
+  autoBtn.setAttribute('aria-pressed', String(auto));
+  setText('auto-label', auto ? 'Auto-connect on' : 'Auto-connect off');
+  autoBtn.title = auto
+    ? 'Protection starts by itself when Windows starts or the PC connects to a network. Click to turn off.'
+    : 'Start protection by itself when Windows starts or the PC connects to a network. Click to turn on.';
   killBtn.title = killErr
     ? `The kill switch could not be turned on: ${killErr}. Click to try again.`
     : kill ? 'Only AuroraVPN reaches the internet. Click to turn off.' : 'Block the internet outside AuroraVPN. Click to turn on.';
@@ -277,6 +286,7 @@ async function main() {
   $('pause-btn').addEventListener('click', () => pauseProtection());
   $('mode-btn').addEventListener('click', () => chooseMode());
   $('kill-btn').addEventListener('click', () => setKillSwitch(!killSwitchOn()));
+  $('auto-btn').addEventListener('click', () => setAutoConnect(!App.settings.autoConnect));
   // the heart, as on Android, is the way to support the project
   $('heart-btn').addEventListener('click', () => App.port.openUrl(KOFI_URL));
   window.addEventListener('keydown', (e) => {
@@ -343,7 +353,7 @@ function demoPort() {
     dialStrategy: 'never', dialRetry: '', dialTimeout: 0, tcpKeepAlive: false, eim: false, mtu: 0,
     odoh: '', odohRelay: '', odohName: '', dnsProxy: '', dnsProxyName: '', dnscryptRelays: [],
     blocklistsLocal: false, localFlags: [], localStamp: '', remoteFlags: [], remoteStamp: '',
-    history: true, logLevel: 3, notify: true, statusAlerts: true, theme: 'darkplus', autostart: false,
+    history: true, logLevel: 3, notify: true, statusAlerts: true, theme: 'darkplus', autostart: false, autoConnect: false, autoRecover: true,
   };
   let running = false;
   const born = Date.now(); // the stress connections opened before this
