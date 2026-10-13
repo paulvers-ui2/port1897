@@ -89,6 +89,10 @@ pub fn defaults() -> &'static S {
             "statusAlerts": true,
             "theme": "darkplus",
             "autostart": false,
+            // start when Windows starts or a network connects; reconnect
+            // when the connection drops (autoconnect.rs)
+            "autoConnect": false,
+            "autoRecover": true,
             "wasRunning": false,
             "pcap": false,
             "automation": false,

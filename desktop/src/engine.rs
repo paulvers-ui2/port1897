@@ -318,6 +318,9 @@ pub async fn start_locked() -> Value {
     let s = settings::read();
     let r = start_once().await;
     let ok = r.get("ok").and_then(Value::as_bool) == Some(true);
+    if ok {
+        crate::autoconnect::started();
+    }
     let what = if ok { "engine running".to_string() } else { format!("engine did not start: {}", r.get("error").and_then(Value::as_str).unwrap_or("")) };
     let log = r.get("log").and_then(Value::as_str).map(|l| format!("\n{l}")).unwrap_or_default();
     applog!(
@@ -441,6 +444,8 @@ const ENDING: Duration = Duration::from_secs(15);
 /// nothing in use. The wait sleeps on the timer and holds only OP.
 async fn stop_once(by_user: bool) -> Value {
     EXPECTED_STOP.store(true, Ordering::Relaxed);
+    // a Stop of the user is kept: autoconnect does not undo it
+    crate::autoconnect::stopping(by_user);
     if api::post("/api/stop", None).await.is_err() {
         return json!({ "ok": true }); // not running
     }

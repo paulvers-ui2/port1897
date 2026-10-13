@@ -45,6 +45,11 @@ The networking engine, [firestack](FIRESTACK.md), now builds and runs on Windows
   or proxy, the rest through the main VPN.
 - **Kill switch** (`-killswitch`): Windows Filtering Platform rules block everything
   outside the tunnel, and keep blocking if the engine crashes.
+- **Connect automatically** (app): the Auto-connect button under Start turns
+  protection on by itself when Windows starts and whenever the PC connects to a
+  network. **Reconnect if the connection drops** (Settings, on by default): when the
+  internet stops answering through the VPN, the app presses Stop, waits 1 second and
+  presses Start again.
 - **App window** (`ui/`): an Electron app styled after the Android home screen, with
   a tray icon. Download the installer or the portable exe from the
   [latest release](https://github.com/paulvers-ui2/port1897/releases/latest);

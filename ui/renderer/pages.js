@@ -88,6 +88,19 @@ async function setKillSwitch(on) {
   App.render();
 }
 
+// Connect automatically: the app must run at sign-in to start protection when
+// Windows starts, so turning it on turns on Auto-start on power-up too.
+async function setAutoConnect(on) {
+  if (on) {
+    await App.port.setAutostart(true);
+    await save({ autoConnect: true, autostart: true }, true);
+    toast('Auto-connect on: protection starts when Windows starts and whenever the PC connects to a network.');
+  } else {
+    await save({ autoConnect: false }, true);
+    toast('Auto-connect off.');
+  }
+}
+
 async function save(patch, quiet) {
   await App.save(patch);
   if (!quiet) toast(App.status ? 'Saved. Restart protection to apply.' : 'Saved');
@@ -984,7 +997,9 @@ PAGES.settings = () => {
     card(
       row({ ico: 'ic_appearance', title: 'Appearance', sub: 'Current theme: ' + (THEMES.find((t) => t[0] === s.theme) || THEMES[0])[1], right: chevron(), onclick: chooseTheme }),
       switchRow({ ico: 'ic_tun_nw_policy', title: 'Automation', sub: 'Let scripts and the Task Scheduler control protection: AuroraVPN.exe --start, --stop, --pause=15 or --resume.', value: s.automation, onchange: (v) => save({ automation: v }, true) }),
-      switchRow({ ico: 'ic_auto_start', title: 'Auto-start on power-up', sub: 'On sign-in, start the app in the tray, and start protection if it was running before shut down. The installed app does it through AuroraVPN Service, without an admin prompt.', value: s.autostart, onchange: (v) => App.port.setAutostart(v).then(() => save({ autostart: v }, true)) })
+      switchRow({ ico: 'ic_auto_start', title: 'Auto-start on power-up', sub: 'On sign-in, start the app in the tray, and start protection if it was running before shut down. The installed app does it through AuroraVPN Service, without an admin prompt.', value: s.autostart, onchange: (v) => App.port.setAutostart(v).then(() => save({ autostart: v }, true)) }),
+      switchRow({ ico: 'ic_vpn', title: 'Connect automatically', sub: 'Start protection by itself when Windows starts and whenever the PC connects to a network (also Auto-start on power-up). A Stop you press is kept until the next network or the next start of Windows.', value: !!s.autoConnect, onchange: (v) => setAutoConnect(v) }),
+      switchRow({ ico: 'ic_refresh_white', title: 'Reconnect if the connection drops', sub: 'While protection runs through a VPN, the internet is checked every 10 seconds; if it stops answering twice in a row, AuroraVPN presses Stop, waits 1 second and presses Start. If protection stops by itself, it starts again 1 second later.', value: s.autoRecover !== false, onchange: (v) => save({ autoRecover: v }, true) })
     )
   );
 };
