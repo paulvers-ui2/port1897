@@ -30,8 +30,10 @@ use tauri::AppHandle;
 
 use crate::{applog, engine, live, net, settings};
 
-/// How often the loop looks at the network and the engine.
-const TICK: Duration = Duration::from_secs(1);
+/// How often the loop looks at the network and the engine: 50 ms, so a new
+/// network or a dead engine is acted on at once (a cached status and a UDP
+/// route lookup; nothing goes on the wire).
+const TICK: Duration = Duration::from_millis(50);
 /// The pause between Stop and Start, and before starting an engine that ended
 /// by itself.
 const RESTART_PAUSE: Duration = Duration::from_secs(1);
@@ -43,8 +45,9 @@ const PROBE_MISSES: u32 = 2;
 /// stays unreachable: it doubles each time, and starts over once it answers.
 const RECOVER_MIN: Duration = Duration::from_secs(20);
 const RECOVER_MAX: Duration = Duration::from_secs(300);
-/// Retries of a start that failed: doubling up to a minute.
-const RETRY_MIN: Duration = Duration::from_secs(2);
+/// Retries of a start that failed: 50 ms, doubling up to a minute, so a
+/// start that keeps failing does not spin.
+const RETRY_MIN: Duration = Duration::from_millis(50);
 const RETRY_MAX: Duration = Duration::from_secs(60);
 /// An engine that ends this long after a stop was asked for ended because of
 /// it, not by itself.
@@ -435,7 +438,7 @@ mod tests {
         let mut g = Guard::new(true);
         assert!(matches!(g.tick(&off(Some("10.0.0.2")), t), Act::Start(_)));
         g.start_done(false, t);
-        assert_eq!(g.tick(&off(Some("10.0.0.2")), t + Duration::from_secs(1)), Act::Wait);
+        assert_eq!(g.tick(&off(Some("10.0.0.2")), t + RETRY_MIN / 2), Act::Wait);
         assert!(matches!(g.tick(&off(Some("10.0.0.2")), t + RETRY_MIN), Act::Start(_)));
     }
 
