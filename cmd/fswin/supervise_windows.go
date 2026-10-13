@@ -37,9 +37,9 @@ import (
 //   - the network changes (Wi-Fi to Ethernet, another hotspot): usque
 //     rebuilds its tunnels by itself; netSettle later a probe checks that it
 //     did, and restarts it if not.
-//   - back-to-back restarts wait twice as long each time, up to restartMax,
-//     until a probe passes: restarting WARP1 in the middle of its own
-//     reconnect is how a short outage becomes a long one.
+//   - back-to-back restarts wait twice as long each time, up to restartMax
+//     (5 s: a minute between tries kept the VPN down long after the cause
+//     was gone), until a probe passes.
 //
 // usque itself rebuilds a dead tunnel within seconds (usque v0.0.4: -r 1s,
 // --stall-timeout; see usqueDefaults); this is the backstop for what it
@@ -49,18 +49,18 @@ import (
 // re-points the exit at it on every restart so firestack rebuilds its proxy
 // against the fresh process; a new port only when the old one is taken.
 const (
-	restartMax    = 60 * time.Second
-	probeFailures = 3
+	restartMax    = 5 * time.Second
+	probeFailures = 2
 	probeTarget   = "1.1.1.1:80"
 )
 
 // variables so that tests can make them short
 var (
 	restartMin   = 1 * time.Second
-	probeEvery   = 15 * time.Second
-	probeTimeout = 8 * time.Second
+	probeEvery   = 5 * time.Second
+	probeTimeout = 5 * time.Second
 	startGrace   = 30 * time.Second
-	quickProbe   = 3 * time.Second // while usque says the tunnel is down
+	quickProbe   = 1 * time.Second // while usque says the tunnel is down
 	netEvery     = 5 * time.Second
 	netSettle    = 8 * time.Second
 )

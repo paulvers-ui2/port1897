@@ -109,12 +109,12 @@ func startUsqueOn(s usqueSetup, port int, user, pass string) (*usque, error) {
 	// usque.exe beside fswin.exe; argv only, no shell; flags checked by usqueFlags.
 	// A SOCKS proxy and a QUIC client: no admin rights, so it runs with the
 	// user's token.
-	build := func() (*exec.Cmd, io.ReadCloser, error) {
+	build := func(tok *userToken) (*exec.Cmd, io.ReadCloser, error) {
 		// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- usque.exe is fswin's own fixed path; args are built here and user flags are validated by usqueFlags
 		cmd := exec.Command(s.exe, args...) //nolint:gosec // G204: usque.exe is fswin's own fixed path
 		cmd.Dir = s.dir
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
-		asUser.Load().unelevated(cmd)
+		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: childFlags}
+		tok.unelevated(cmd)
 		out, err := cmd.StdoutPipe()
 		if err != nil {
 			return nil, nil, err
@@ -125,7 +125,7 @@ func startUsqueOn(s usqueSetup, port int, user, pass string) (*usque, error) {
 		}
 		return cmd, out, nil
 	}
-	cmd, out, err := build()
+	cmd, out, err := build(asUser.Load())
 	if err != nil {
 		// The token the service handed at start goes stale after the PC
 		// sleeps and resumes, or the user signs out and back in; usque then
@@ -134,11 +134,23 @@ func startUsqueOn(s usqueSetup, port int, user, pass string) (*usque, error) {
 		// once more -- the same thing that did by hand.
 		if rerr := refreshUserToken(); rerr == nil {
 			s.logf("usque: start failed (%v); refreshed the user token and retrying", err)
-			cmd, out, err = build()
+			cmd, out, err = build(asUser.Load())
 		}
-		if err != nil {
-			return nil, fmt.Errorf("usque: start: %w", err)
+	}
+	if err != nil && asUser.Load() != nil {
+		// Still refused: no user signed in at the console to take a token
+		// from (locked out, switching users), or Windows keeps refusing
+		// theirs. Run it with fswin's own token lowered the same way (no
+		// Administrators, no privileges, medium integrity) rather than leave
+		// the VPN down until someone presses Stop then Start.
+		if own, oerr := newUserToken(); oerr == nil {
+			s.logf("usque: start with the user's token failed (%v); starting it with fswin's own lowered token", err)
+			cmd, out, err = build(own)
+			own.close() // the process has its own copy once created
 		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("usque: start: %w", err)
 	}
 	u := &usque{cmd: cmd, port: port, user: user, pass: pass, done: make(chan struct{})}
 	// the one wait for this process: waitListening, stop and the supervisor
@@ -193,6 +205,15 @@ func (u *usque) exited() bool {
 	}
 }
 
+// childFlags start usque with no console at all, in its own process group.
+// With CREATE_NO_WINDOW it got a hidden console: a console control event
+// (Ctrl+C, the console closing, a sign-out) killed it with 0xC000013A, and
+// started from the service into the user's session it could fail before
+// running any code with 0xC0000142, when Windows could not set that console
+// up there -- the two deaths in the 2026-10-11 debug zip that left the VPN
+// down. Its output still comes through the pipe.
+const childFlags = windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP
+
 // usqueRegister creates a free WARP MASQUE identity in cfg unless it exists.
 func usqueRegister(s usqueSetup, cfg string) error {
 	if statUserFile(cfg) == nil {
@@ -202,7 +223,7 @@ func usqueRegister(s usqueSetup, cfg string) error {
 	// usque.exe beside fswin.exe; argv only, no shell
 	cmd := exec.Command(s.exe, "-c", cfg, "register", "--accept-tos") //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd.Dir = s.dir
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: childFlags}
 	asUser.Load().unelevated(cmd)
 	b, err := cmd.CombinedOutput()
 	if err != nil {
