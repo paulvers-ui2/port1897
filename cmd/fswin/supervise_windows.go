@@ -28,7 +28,7 @@ import (
 // It does what the Android app does (rethink-app-masque BraveVPNService:
 // the chain and usque watchdogs, the death callback, restartChain):
 //
-//   - usque exits: it starts again after restartMin (1 s).
+//   - usque exits: it starts again after restartMin (50 ms, doubling to 5 s).
 //   - usque runs but nothing gets through: a probe every probeEvery opens a
 //     connection through it (SOCKS CONNECT to 1.1.1.1:80, so through every
 //     hop of the chain); probeFailures failures in a row restart it. A start
@@ -56,11 +56,11 @@ const (
 
 // variables so that tests can make them short
 var (
-	restartMin   = 1 * time.Second
+	restartMin   = 50 * time.Millisecond // first retry; doubles up to restartMax
 	probeEvery   = 5 * time.Second
 	probeTimeout = 5 * time.Second
 	startGrace   = 30 * time.Second
-	quickProbe   = 1 * time.Second // while usque says the tunnel is down
+	quickProbe   = 50 * time.Millisecond // while usque says the tunnel is down
 	netEvery     = 5 * time.Second
 	netSettle    = 8 * time.Second
 )
