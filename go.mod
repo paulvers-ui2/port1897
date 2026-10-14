@@ -9,7 +9,7 @@ require (
 	github.com/jedisct1/go-dnsstamps v0.0.0-20200621175006-302248eecc94
 	github.com/jedisct1/xsecretbox v0.0.0-20190909160646-b731c21297f9
 	github.com/k-sone/critbitgo v1.4.0
-	github.com/miekg/dns v1.1.66
+	github.com/miekg/dns v1.1.73
 	golang.org/x/crypto v0.57.0
 	golang.org/x/sys v0.48.0
 )
