@@ -24,6 +24,7 @@ jobs:
     name: 🔏 Build attestation
     if: ${{ inputs.subjects != '' && inputs.subjects != '[]' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       id-token: write
       attestations: write
@@ -47,6 +48,7 @@ jobs:
     name: 📦 SBOM attestation
     if: ${{ inputs.sbom-info != '' }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       id-token: write
       attestations: write

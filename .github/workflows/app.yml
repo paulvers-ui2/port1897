@@ -20,6 +20,7 @@ jobs:
   version:
     name: Version
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       tag: ${{ steps.v.outputs.tag }} # the release this run publishes; empty for none
     steps:
@@ -48,6 +49,7 @@ jobs:
     name: Windows app (x64)
     needs: version
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -204,6 +206,7 @@ jobs:
     if: needs.version.outputs.tag != ''
     needs: [version, app]
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: write
       actions: write # start release-aar.yml for this release

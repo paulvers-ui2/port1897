@@ -15,6 +15,7 @@ jobs:
   auto-tag:
     name: Auto tag
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     if: github.event_name == 'push' && github.ref == 'refs/heads/n2'
     permissions:
       contents: write # github-tag-action creates the tag through the API
@@ -36,6 +37,7 @@ jobs:
   build:
     name: 🧬 Build
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     needs: [auto-tag]
     if: always()
     permissions:
@@ -233,6 +235,7 @@ jobs:
   github-release:
     name: 📦 GitHub Release
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     needs: [auto-tag, build]
     if: needs.auto-tag.outputs.new_tag != '' && needs.build.result == 'success'
     permissions:

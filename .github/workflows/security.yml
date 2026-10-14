@@ -5,7 +5,8 @@ name: Security
 # only on problems the pull request adds, so firestack's existing backlog
 # does not block work; pushes to main and the weekly run report everything.
 #
-#   CodeQL          Go (linux and windows code), JavaScript, workflows
+#   CodeQL          Go (linux and windows code), JavaScript, Rust (desktop/),
+#                   workflows; security-extended + security-and-quality
 #   golangci-lint   gosec, staticcheck, govet and bug linters, linux + windows
 #   govulncheck     known vulnerabilities reachable from the Windows code
 #   Semgrep         community security rules for Go, JS and workflows
@@ -48,6 +49,8 @@ jobs:
             build-mode: manual
           - language: javascript-typescript
             build-mode: none
+          - language: rust
+            build-mode: none # the Tauri app in desktop/
           - language: actions
             build-mode: none
     steps:
@@ -62,7 +65,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-          queries: security-extended
+          queries: security-extended,security-and-quality
       - if: matrix.language == 'go'
         name: Build for linux and windows
         env:
