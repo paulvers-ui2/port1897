@@ -1,0 +1,41 @@
+# Weekly update PRs for every dependency the Windows app ships or builds with.
+# Security updates (Settings -> Code security) use this file too.
+version: 2
+updates:
+  - package-ecosystem: "gomod" # engine, fswin, usque glue
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7 # let a bad release be pulled before it reaches us
+    open-pull-requests-limit: 5
+  - package-ecosystem: "cargo" # Tauri app
+    directory: "/desktop"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7 # let a bad release be pulled before it reaches us
+    groups:
+      cargo:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+  - package-ecosystem: "npm"
+    directories: ["/desktop", "/ui"]
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7 # let a bad release be pulled before it reaches us
+    groups:
+      npm:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+  - package-ecosystem: "github-actions" # SHA pins and their version comments
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7 # let a bad release be pulled before it reaches us
+    groups:
+      actions:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
