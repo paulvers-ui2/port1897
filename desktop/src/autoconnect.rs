@@ -39,15 +39,22 @@ const TICK: Duration = Duration::from_millis(50);
 const RESTART_PAUSE: Duration = Duration::from_secs(1);
 /// How often the internet is checked through the tunnel.
 const PROBE_EVERY: Duration = Duration::from_secs(10);
-/// Misses in a row that mean the connection is gone.
-const PROBE_MISSES: u32 = 2;
+/// Misses in a row that mean the connection is gone: 30 s. A full restart
+/// (adapter, kill switch, every hop) is the heaviest fix there is, and the
+/// engine and usque repair most drops themselves within that time.
+const PROBE_MISSES: u32 = 3;
+/// Misses in a row while the engine says it is repairing the exit itself
+/// (exitIssue: usque reconnecting or being restarted): 90 s. Restarting the
+/// engine in the middle of its repair started the repair over (debug zip of
+/// 2026-10-15: a restart about every minute, each one dropping everything).
+const PROBE_MISSES_REPAIRING: u32 = 9;
 /// The shortest and longest wait between two reconnects while the internet
 /// stays unreachable: it doubles each time, and starts over once it answers.
 const RECOVER_MIN: Duration = Duration::from_secs(20);
 const RECOVER_MAX: Duration = Duration::from_secs(300);
-/// Retries of a start that failed: 50 ms, doubling up to a minute, so a
+/// Retries of a start that failed: 1 s, doubling up to a minute, so a
 /// start that keeps failing does not spin.
-const RETRY_MIN: Duration = Duration::from_millis(50);
+const RETRY_MIN: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(60);
 /// An engine that ends this long after a stop was asked for ended because of
 /// it, not by itself.
@@ -130,6 +137,8 @@ pub struct Seen {
     pub paused: bool,
     /// A stop was asked for within STOP_GRACE.
     pub stopped_recently: bool,
+    /// The engine reports a problem with the exit that it is fixing itself.
+    pub repairing: bool,
 }
 
 /// What the loop should do.
@@ -166,12 +175,13 @@ pub struct Guard {
     next_recover: Option<Instant>,
     recover_wait: Duration,
     settle_until: Option<Instant>,
+    repairing: bool,
 }
 
 impl Guard {
     /// boot: the app was started with Windows (--autostart).
     pub fn new(boot: bool) -> Self {
-        Guard { first: true, boot, was_on: false, prev_net: None, pending: None, misses: 0, probing: false, next_probe: None, next_recover: None, recover_wait: RECOVER_MIN, settle_until: None }
+        Guard { first: true, boot, was_on: false, prev_net: None, pending: None, misses: 0, probing: false, next_probe: None, next_recover: None, recover_wait: RECOVER_MIN, settle_until: None, repairing: false }
     }
 
     fn plan(&mut self, why: &str, at: Instant, stops: u64) {
@@ -184,6 +194,7 @@ impl Guard {
         if s.busy {
             return Act::Wait;
         }
+        self.repairing = s.repairing;
         if self.first {
             self.first = false;
             self.was_on = s.on;
@@ -271,7 +282,8 @@ impl Guard {
             return Act::Wait;
         }
         self.misses += 1;
-        if self.misses < PROBE_MISSES || self.next_recover.is_some_and(|t| now < t) {
+        let needed = if self.repairing { PROBE_MISSES_REPAIRING } else { PROBE_MISSES };
+        if self.misses < needed || self.next_recover.is_some_and(|t| now < t) {
             return Act::Wait;
         }
         self.misses = 0;
@@ -298,6 +310,7 @@ fn seen(now: Instant) -> Seen {
         has_exit: !exit.is_empty(),
         paused: settings::num(&s, "pausedUntil") > applog::now_ms() as f64,
         stopped_recently: stopped_recently(now),
+        repairing: st.as_ref().and_then(|v| v.get("exitIssue")).and_then(Value::as_str).is_some_and(|w| !w.is_empty()),
     }
 }
 
@@ -502,16 +515,18 @@ mod tests {
     }
 
     #[test]
-    fn two_misses_in_a_row_restart_then_the_wait_grows() {
+    fn three_misses_in_a_row_restart_then_the_wait_grows() {
         let t = Instant::now();
         let mut g = Guard::new(false);
         g.tick(&on(), t);
-        assert_eq!(g.tick(&on(), t + PROBE_EVERY), Act::Probe);
-        assert_eq!(g.probed(false, t + PROBE_EVERY), Act::Wait);
-        assert_eq!(g.tick(&on(), t + PROBE_EVERY * 2), Act::Probe);
-        assert_eq!(g.probed(false, t + PROBE_EVERY * 2), Act::Restart("the connection dropped".into()));
+        for i in 1..PROBE_MISSES {
+            assert_eq!(g.tick(&on(), t + PROBE_EVERY * i), Act::Probe);
+            assert_eq!(g.probed(false, t + PROBE_EVERY * i), Act::Wait);
+        }
+        let t2 = t + PROBE_EVERY * PROBE_MISSES;
+        assert_eq!(g.tick(&on(), t2), Act::Probe);
+        assert_eq!(g.probed(false, t2), Act::Restart("the connection dropped".into()));
         // still down right after: no second restart within RECOVER_MIN
-        let t2 = t + PROBE_EVERY * 2;
         assert_eq!(g.probed(false, t2 + Duration::from_secs(5)), Act::Wait);
         assert_eq!(g.probed(false, t2 + Duration::from_secs(10)), Act::Wait);
         assert!(matches!(g.probed(false, t2 + RECOVER_MIN + Duration::from_secs(5)), Act::Restart(_)));
@@ -519,6 +534,21 @@ mod tests {
         // answering again resets it
         assert_eq!(g.probed(true, t2 + RECOVER_MIN * 3), Act::Wait);
         assert_eq!(g.recover_wait, RECOVER_MIN);
+    }
+
+    #[test]
+    fn the_engine_repairing_its_exit_gets_longer() {
+        let t = Instant::now();
+        let mut g = Guard::new(false);
+        let s = Seen { repairing: true, ..on() };
+        g.tick(&s, t);
+        for i in 1..PROBE_MISSES_REPAIRING {
+            assert_eq!(g.tick(&s, t + PROBE_EVERY * i), Act::Probe);
+            assert_eq!(g.probed(false, t + PROBE_EVERY * i), Act::Wait, "miss {i}");
+        }
+        let end = t + PROBE_EVERY * PROBE_MISSES_REPAIRING;
+        assert_eq!(g.tick(&s, end), Act::Probe);
+        assert!(matches!(g.probed(false, end), Act::Restart(_)));
     }
 
     #[test]

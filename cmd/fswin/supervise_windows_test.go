@@ -224,7 +224,7 @@ func TestSupervisorRestartsUsqueWithNoTraffic(t *testing.T) {
 // network.
 func TestUsqueDefaults(t *testing.T) {
 	masque := strings.Join(usqueDefaults(false, 1500), " ")
-	if masque != "-i 1350 -k 10s -r 1s --idle-timeout 25s --stall-timeout 2s --always-reconnect" {
+	if masque != "-i 1350 -k 10s -r 1s --idle-timeout 25s --stall-timeout 3s --always-reconnect" {
 		t.Errorf("MASQUE: %s", masque)
 	}
 	if chain := strings.Join(usqueDefaults(true, 0), " "); strings.Contains(chain, "--always-reconnect") || !strings.HasPrefix(chain, "-i 1350 ") {
