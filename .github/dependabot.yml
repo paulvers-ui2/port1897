@@ -9,18 +9,8 @@ updates:
     cooldown:
       default-days: 7 # let a bad release be pulled before it reaches us
     open-pull-requests-limit: 5
-  - package-ecosystem: "cargo" # Tauri app
-    directory: "/desktop"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7 # let a bad release be pulled before it reaches us
-    groups:
-      cargo:
-        patterns: ["*"]
-    open-pull-requests-limit: 5
   - package-ecosystem: "npm"
-    directories: ["/desktop", "/ui"]
+    directory: "/ui" # the Electron app
     schedule:
       interval: "weekly"
     cooldown:
