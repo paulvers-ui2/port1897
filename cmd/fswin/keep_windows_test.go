@@ -11,6 +11,8 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -191,5 +193,35 @@ func TestKeepMissesMustBeInARow(t *testing.T) {
 	eventually(t, "not enough checks", func() bool { _, _, p := f.get(); return p >= 4*keepMisses })
 	if _, st, _ := f.get(); st != 0 {
 		t.Fatal("restarted though the internet answered between misses")
+	}
+}
+
+// What is kept outlives the service (keep.json): a new keeper, as after a
+// reboot, keeps the same flags without a token; a stop forgets it for good,
+// the service stopping does not.
+func TestKeepOutlivesTheService(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "keep.json")
+	k := keeper{file: file}
+	k.set([]string{"-dns", "doh"}, 0, `PC\me`, true)
+
+	k.clear() // the service stops (Windows shuts down)
+	after := keeper{file: file}
+	st, ok := after.load()
+	w := after.want()
+	if !ok || !w.on || !w.watch || w.token != 0 || len(w.args) != 2 || w.args[1] != "doh" || st.User != `PC\me` {
+		t.Fatalf("after a restart: ok=%v %+v", ok, w)
+	}
+
+	after.forget() // the user's stop
+	if _, ok := (&keeper{file: file}).load(); ok {
+		t.Fatal("kept again after a stop")
+	}
+
+	// flags the service refuses are not taken from the file either
+	if err := os.WriteFile(file, []byte(`{"args":["-usque","x.exe"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := (&keeper{file: file}).load(); ok {
+		t.Fatal("kept a refused flag")
 	}
 }

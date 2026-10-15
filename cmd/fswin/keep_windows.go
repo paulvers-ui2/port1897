@@ -10,8 +10,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -41,9 +44,13 @@ import (
 //     through the engine's own API) ends the keeping, and so does a start
 //     without keep.
 //
-// Nothing is kept across a restart of the service or of Windows: the engine
-// runs with the user's token, which the service only has while the user is
-// signed in. The app, started at sign-in, starts protection again.
+// What is kept is also written to keep.json in the install folder (only
+// SYSTEM and administrators change it), so it outlives a restart of the
+// service or of Windows: at boot the service starts the engine itself,
+// before anyone signs in (a server). Without the user's token then, the
+// engine opens the app's files and starts usque with its own token,
+// lowered (asuser_windows.go). Only a stop, unkeep or a start without keep
+// removes the file; the service stopping (Windows shutting down) does not.
 
 // variables so that tests can make them short
 var (
@@ -77,6 +84,8 @@ type keepHooks struct {
 // keeper is what to keep running: set by a start with keep, cleared by a
 // stop.
 type keeper struct {
+	file string // keep.json; "" (tests): nothing is written
+
 	mu    sync.Mutex
 	on    bool
 	watch bool
@@ -85,15 +94,60 @@ type keeper struct {
 	user  string
 }
 
-// set keeps args running for user, with token (a copy the keeper owns).
+// keptState is keep.json.
+type keptState struct {
+	Args  []string `json:"args"`
+	Watch bool     `json:"watch"`
+	User  string   `json:"user"`
+}
+
+// set keeps args running for user, with token (a copy the keeper owns), and
+// writes it down for the next start of the service.
 func (k *keeper) set(args []string, token windows.Token, user string, watch bool) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.closeToken()
 	k.on, k.watch, k.args, k.token, k.user = true, watch, append([]string(nil), args...), token, user
+	if k.file == "" {
+		return
+	}
+	b, err := json.Marshal(keptState{Args: k.args, Watch: watch, User: user})
+	if err == nil {
+		tmp := k.file + ".tmp"
+		if err = os.WriteFile(tmp, b, 0o600); err == nil {
+			err = os.Rename(tmp, k.file) // whole or not at all, also on a power cut
+		}
+	}
+	_ = err // kept in memory still; only a restart of the service forgets it
 }
 
-// clear ends the keeping.
+// load keeps what keep.json says, without a user token (at boot nobody is
+// signed in). It reports whether there was anything to keep.
+func (k *keeper) load() (keptState, bool) {
+	var st keptState
+	if k.file == "" {
+		return st, false
+	}
+	b, err := os.ReadFile(filepath.Clean(k.file))
+	if err != nil || json.Unmarshal(b, &st) != nil || len(st.Args) == 0 || checkEngineArgs(st.Args) != nil {
+		return st, false
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.closeToken()
+	k.on, k.watch, k.args, k.user = true, st.Watch, st.Args, st.User
+	return st, true
+}
+
+// forget ends the keeping for good: a stop, unkeep, a start without keep.
+func (k *keeper) forget() {
+	k.clear()
+	if k.file != "" {
+		_ = os.Remove(k.file)
+	}
+}
+
+// clear ends the keeping in memory: the service stopping. keep.json stays.
 func (k *keeper) clear() {
 	k.mu.Lock()
 	defer k.mu.Unlock()

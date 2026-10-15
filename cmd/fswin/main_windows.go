@@ -962,8 +962,9 @@ func redirectOutput(path string) error {
 		return err
 	}
 	os.Stdout, os.Stderr = f, f
-	log.SetOutput(f)
-	flog.SetOutput(f) // firestack's own logs, which say why a DNS query or dial failed
+	w := &cappedLog{f: f, path: filepath.Clean(path), limit: logLimit}
+	log.SetOutput(w)
+	flog.SetOutput(w) // firestack's own logs, which say why a DNS query or dial failed
 	_ = windows.SetStdHandle(windows.STD_OUTPUT_HANDLE, windows.Handle(f.Fd()))
 	_ = windows.SetStdHandle(windows.STD_ERROR_HANDLE, windows.Handle(f.Fd()))
 	return nil
