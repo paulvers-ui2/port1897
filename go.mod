@@ -19,7 +19,7 @@ require (
 	github.com/cloudflare/odoh-go v1.0.0
 	github.com/coder/websocket v1.8.15
 	github.com/crazy-max/xgo v0.31.0
-	github.com/elazarl/goproxy v0.0.0-20230808193330-2592e75ae04a
+	github.com/elazarl/goproxy v1.9.2
 	github.com/noql-net/certpool v0.0.0-20240719060413-a5ed62ecc62a
 	github.com/tailscale/depaware v0.0.0-20251001183927-9c2ad255ef3f
 	github.com/txthinking/socks5 v0.0.0-20230325130024-4230056ae301
