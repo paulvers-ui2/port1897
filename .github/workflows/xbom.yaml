@@ -19,7 +19,7 @@ jobs:
       repositories: ${{ steps.rm.outputs.repositories }}
     steps:
       - name: 🚀 Build analysis matrix
-        uses: advanced-security/cbom-action/build-matrix@dfb4d675f06fb8da89535d9e553c6a936ed0cf7e # v1
+        uses: advanced-security/cbom-action/build-matrix@d8e886f7cbd114c8306a1f9b5dc01a6f5ea45b83 # v1.0.1
         id: rm
         with:
           repositoryNameWithOwner: ${{ github.repository }}
@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: 💈 CBOM run
-        uses: advanced-security/cbom-action/analyze@d5f28cfce2a516c74cae4ebb296a427eb51f62ec # 11 Dec 25
+        uses: advanced-security/cbom-action/analyze@e73233dcd4f1aa6932d2ca481a37055ca986f28d # 11 Dec 25
         with:
           repositoryNameWithOwner: ${{ fromJson(matrix.repository).nameWithOwner }}
           language: ${{ fromJson(matrix.repository).language }}
@@ -55,4 +55,4 @@ jobs:
     needs: run-cbom-action
     steps:
       - name: 🔅 Summarize
-        uses: advanced-security/cbom-action/workflow-summary@d5f28cfce2a516c74cae4ebb296a427eb51f62ec # 11 Dec 25
+        uses: advanced-security/cbom-action/workflow-summary@e73233dcd4f1aa6932d2ca481a37055ca986f28d # 11 Dec 25
