@@ -87,6 +87,21 @@ func fastKeeper(t *testing.T) {
 	})
 }
 
+// runKeeper runs k until the test ends, and waits for it to end before
+// fastKeeper's cleanup puts the timings back (cleanups run last first).
+func runKeeper(t *testing.T, k *keeper, h keepHooks) {
+	t.Helper()
+	quit, done := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(done)
+		k.run(quit, h)
+	}()
+	t.Cleanup(func() {
+		close(quit)
+		<-done
+	})
+}
+
 func eventually(t *testing.T, what string, ok func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -104,9 +119,7 @@ func TestKeepRestartsAnEngineThatEnds(t *testing.T) {
 	fastKeeper(t)
 	f := &keptEngine{up: true, started: time.Now(), online: true}
 	var k keeper
-	quit := make(chan struct{})
-	defer close(quit)
-	go k.run(quit, f.hooks(t))
+	runKeeper(t, &k, f.hooks(t))
 
 	f.crash()
 	time.Sleep(100 * time.Millisecond)
@@ -116,8 +129,11 @@ func TestKeepRestartsAnEngineThatEnds(t *testing.T) {
 
 	k.set([]string{"-dns", "doh"}, 0, "me", false)
 	eventually(t, "a kept engine that ended was not started again", func() bool { s, _, _ := f.get(); return s == 1 })
-	if f.args[1] != "doh" {
-		t.Fatalf("started with %v", f.args)
+	f.mu.Lock()
+	args := f.args
+	f.mu.Unlock()
+	if len(args) != 2 || args[1] != "doh" {
+		t.Fatalf("started with %v", args)
 	}
 
 	k.clear() // the user's stop
@@ -134,9 +150,7 @@ func TestKeepRestartsAfterTheInternetStaysAway(t *testing.T) {
 	fastKeeper(t)
 	f := &keptEngine{up: true, started: time.Now(), online: false}
 	var k keeper
-	quit := make(chan struct{})
-	defer close(quit)
-	go k.run(quit, f.hooks(t))
+	runKeeper(t, &k, f.hooks(t))
 
 	k.set(nil, 0, "me", false)
 	time.Sleep(100 * time.Millisecond)
@@ -160,8 +174,6 @@ func TestKeepMissesMustBeInARow(t *testing.T) {
 	fastKeeper(t)
 	f := &keptEngine{up: true, started: time.Now()}
 	var k keeper
-	quit := make(chan struct{})
-	defer close(quit)
 	h := f.hooks(t)
 	n := 0
 	h.probe = func(context.Context) error {
@@ -174,7 +186,7 @@ func TestKeepMissesMustBeInARow(t *testing.T) {
 		}
 		return errors.New("no answer")
 	}
-	go k.run(quit, h)
+	runKeeper(t, &k, h)
 	k.set(nil, 0, "me", true)
 	eventually(t, "not enough checks", func() bool { _, _, p := f.get(); return p >= 4*keepMisses })
 	if _, st, _ := f.get(); st != 0 {
