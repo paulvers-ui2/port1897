@@ -394,22 +394,16 @@ func (ps *pipeServer) answer(h windows.Handle) {
 	f := os.NewFile(uintptr(h), pipePath)
 	defer f.Close()
 	if err := ps.pipeCaller(h); err != nil {
-		// told why, but nothing it sent is read
+		// told why (the reply fits the pipe's buffer, so this does not
+		// wait for it), but nothing it sent is read
 		ps.logf("refused: %v", err)
-		// the flush waits for it to read the reply: not forever
-		cut := time.AfterFunc(pipeReadTimeout, func() { _ = windows.DisconnectNamedPipe(h) })
 		_ = json.NewEncoder(f).Encode(pipeReply{Error: err.Error()})
-		_ = windows.FlushFileBuffers(h)
-		if cut.Stop() {
-			_ = windows.DisconnectNamedPipe(h)
-		}
 		return
 	}
-	// a client that connects and never sends is cut off
-	cut := time.AfterFunc(pipeReadTimeout, func() { _ = windows.DisconnectNamedPipe(h) })
 	var req pipeRequest
-	err := json.NewDecoder(io.LimitReader(f, 64<<10)).Decode(&req)
-	if !cut.Stop() || err != nil {
+	if err := readWithin(pipeReadTimeout, func() error {
+		return json.NewDecoder(io.LimitReader(f, 64<<10)).Decode(&req)
+	}); err != nil {
 		return
 	}
 	reply := ps.handle(h, req)
@@ -460,6 +454,41 @@ type pipeClient struct {
 	pid   uint32
 	user  string
 	token windows.Token // the user's own token, primary, inheritable
+}
+
+var procCancelSynchronousIo = windows.NewLazySystemDLL("kernel32.dll").NewProc("CancelSynchronousIo")
+
+// readWithin runs read, which reads from the pipe, and cancels it after d: a
+// client that connects and never sends is cut off. The pipe's handle is
+// synchronous, so its read can only be cancelled on the thread that waits
+// in it (CancelSynchronousIo); DisconnectNamedPipe from another thread
+// waited behind that same read (seen on the CI runner: 8 silent clients held
+// every slot for good).
+func readWithin(d time.Duration, read func() error) error {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	var th windows.Handle
+	if err := windows.DuplicateHandle(windows.CurrentProcess(), windows.CurrentThread(), windows.CurrentProcess(), &th, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+		return err
+	}
+	defer windows.CloseHandle(th)
+	var mu sync.Mutex
+	done := false
+	cut := time.AfterFunc(d, func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if !done {
+			_, _, _ = procCancelSynchronousIo.Call(uintptr(th))
+		}
+	})
+	err := read()
+	mu.Lock()
+	done = true // the thread may run other code now: no cancel after this
+	mu.Unlock()
+	if !cut.Stop() && err == nil {
+		err = errors.New("read cancelled")
+	}
+	return err
 }
 
 // pipeCaller checks that the program at the other end of h is the installed

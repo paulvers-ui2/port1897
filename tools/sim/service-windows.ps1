@@ -187,7 +187,7 @@ $w.WriteLine('{"cmd":"ping"}')
   Start-Sleep -Seconds 12 # past the service's 10 s read timeout
   $r = $null
   try { $r = Pipe @{ cmd = 'ping' } } catch {}
-  Check 'after a flood of silent connections the app is answered again' ($r.ok) ("$(@($silent).Count) silent connections")
+  Check 'after a flood of silent connections the app is answered again' ([bool]($r -and $r.ok)) ("$(@($silent).Count) silent connections; reply: $($r | ConvertTo-Json -Compress)")
   $silent | ForEach-Object { $_.Dispose() }
 
   $r = Pipe @{ cmd = 'cleanup' }

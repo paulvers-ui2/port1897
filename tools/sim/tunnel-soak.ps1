@@ -10,7 +10,7 @@
 # through the AuroraVPN adapter. Everything to that address then goes app ->
 # Wintun -> gVisor -> firestack -> the network, as every app's traffic does
 # in full mode. Checked:
-#   1 GB down, in ten 100 MB downloads, every byte arrives
+#   1 GB down, in forty 25 MB downloads, every byte arrives
 #   100 MB up
 #   one slow download that lasts about 2.5 minutes (a long-lived connection)
 #   64 downloads at once
@@ -94,13 +94,14 @@ try {
 
   # 1 GB down
   $ok, $total, $secs = 0, 0, 0
-  for ($i = 0; $i -lt 10; $i++) {
-    $r = Curl @("https://$hostName/__down?bytes=100000000")
-    if ($r.Code -eq '200' -and $r.Down -eq 100000000) { $ok++ }
+  $first = ''
+  for ($i = 0; $i -lt 40; $i++) {
+    $r = Curl @("https://$hostName/__down?bytes=25000000")
+    if ($r.Code -eq '200' -and $r.Down -eq 25000000) { $ok++ } elseif (-not $first) { $first = $r.Raw }
     $total += $r.Down
     $secs += $r.Seconds
   }
-  Check '1 GB down through the tunnel, every byte' ($ok -eq 10) ("{0}/10 complete, {1:N0} MB in {2:N0} s ({3:N0} Mbit/s)" -f $ok, ($total / 1e6), $secs, ($total * 8 / 1e6 / [math]::Max($secs, 1)))
+  Check '1 GB down through the tunnel, every byte' ($ok -eq 40) ("{0}/40 complete, {1:N0} MB in {2:N0} s ({3:N0} Mbit/s)" -f $ok, ($total / 1e6), $secs, ($total * 8 / 1e6 / [math]::Max($secs, 1))) + $(if ($first) { "; first failure: $first" })
 
   # 100 MB up
   $file = Join-Path $env:RUNNER_TEMP 'soak-up.bin'
