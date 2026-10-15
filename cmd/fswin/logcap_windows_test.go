@@ -19,7 +19,7 @@ import (
 // kept in .old: a server's disk does not fill.
 func TestLogStaysUnderItsLimit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "engine.log")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	f, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
