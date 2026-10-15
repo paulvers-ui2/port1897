@@ -9,17 +9,17 @@ require (
 	github.com/jedisct1/go-dnsstamps v0.0.0-20200621175006-302248eecc94
 	github.com/jedisct1/xsecretbox v0.0.0-20190909160646-b731c21297f9
 	github.com/k-sone/critbitgo v1.4.0
-	github.com/miekg/dns v1.1.66
+	github.com/miekg/dns v1.1.73
 	golang.org/x/crypto v0.57.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 )
 
 require (
 	github.com/Snawoot/opera-proxy v1.5.0
 	github.com/cloudflare/odoh-go v1.0.0
 	github.com/coder/websocket v1.8.15
-	github.com/crazy-max/xgo v0.42.0
-	github.com/elazarl/goproxy v0.0.0-20230808193330-2592e75ae04a
+	github.com/crazy-max/xgo v0.31.0
+	github.com/elazarl/goproxy v1.9.2
 	github.com/noql-net/certpool v0.0.0-20240719060413-a5ed62ecc62a
 	github.com/tailscale/depaware v0.0.0-20251001183927-9c2ad255ef3f
 	github.com/txthinking/socks5 v0.0.0-20230325130024-4230056ae301
