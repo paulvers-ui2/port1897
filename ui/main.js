@@ -26,6 +26,7 @@ const { Worker } = require('node:worker_threads');
 const nodeNet = require('node:net');
 const os = require('node:os');
 const dnsPromises = require('node:dns').promises;
+const dgram = require('node:dgram');
 
 const API_HOST = '127.0.0.1';
 const API_PORT = 47897;
@@ -103,8 +104,8 @@ const DEFAULTS = {
   statusAlerts: true,
   theme: 'darkplus',
   autostart: false,
-  autoConnect: false, // desktop/src/autoconnect.rs (the Tauri app); not run by this Electron app
-  autoRecover: true,
+  autoConnect: false, // start at sign-in and on a new network (the auto-connect section below)
+  autoRecover: true, // AuroraVPN Service keeps the engine running (cmd/fswin/keep_windows.go)
   wasRunning: false,
   pcap: false, // packet capture to capture.pcap
   automation: false, // Android: "Automation"; here, command-line --start / --stop / --pause
@@ -964,7 +965,11 @@ async function startEngineOnce() {
   }
   let pid = 0;
   const args = engineArgs(s);
-  const svc = await serviceCall({ cmd: 'start', args });
+  // keep: the service starts the engine again if it ends by itself; watch:
+  // and restarts it when the internet stays away through a VPN exit. It does
+  // so with this window closed or the app not running (keep_windows.go).
+  const keep = s.autoRecover !== false;
+  const svc = await serviceCall({ cmd: 'start', args, keep, watch: keep && s.exit !== 'none' });
   if (svc && svc.ok) {
     pid = svc.pid || 0;
     appLog(`engine ${pid} started by AuroraVPN Service`);
@@ -998,6 +1003,7 @@ async function startEngineOnce() {
 }
 
 function stopEngine(byUser = true) {
+  if (byUser) autoUserStopped(); // window, tray, --stop: kept until the next network
   return oneAtATime(async () => {
     const r = await stopEngineOnce(byUser);
     appLog(r.ok ? 'engine stopped' : `engine did not stop: ${r.error}`, byUser ? '(by the user)' : '');
@@ -1007,6 +1013,9 @@ function stopEngine(byUser = true) {
 
 async function stopEngineOnce(byUser) {
   expectedStop = true;
+  // the service would see the engine end and start it again: let go first
+  // (an older service answers "unknown request", which is fine)
+  await serviceCall({ cmd: 'unkeep' }, 5000).catch(() => null);
   try {
     await api('POST', '/api/stop');
   } catch {
@@ -1375,6 +1384,113 @@ async function pingTest(q) {
     }
   }
   return out;
+}
+
+// ---------- auto-connect ----------
+//
+// Protection starts by itself when Windows starts (the app runs at sign-in
+// with --autostart) and whenever the PC connects to a network, with
+// "Connect automatically" on. A Stop of the user is kept until the next
+// network or the next start of Windows. Keeping protection up once it runs
+// is AuroraVPN Service's job, which also works with the app closed.
+
+// networkPath is the address Windows would send from to reach the internet
+// (a UDP connect: nothing is sent), or null without a network. The engine's
+// own adapter, loopback and link-local (no DHCP answer) are no network.
+function networkPath() {
+  return new Promise((resolve) => {
+    const sock = dgram.createSocket('udp4');
+    const done = (a) => {
+      try {
+        sock.close();
+      } catch {
+        // closed already
+      }
+      resolve(a);
+    };
+    sock.on('error', () => done(null));
+    sock.connect(53, '1.1.1.1', () => {
+      let a = null;
+      try {
+        a = sock.address().address;
+      } catch {
+        // no route
+      }
+      done(usableAddress(a) ? a : null);
+    });
+  });
+}
+
+function usableAddress(a) {
+  return !!a && a !== '0.0.0.0' && !a.startsWith('127.') && !a.startsWith('169.254.') && !a.startsWith('10.111.222.');
+}
+
+const AUTO_TICK = 500; // ms: a new network is acted on at once (no traffic)
+const AUTO_SETTLE = 5000; // after protection stops, route changes are ours
+const AUTO_RETRY_MIN = 1000;
+const AUTO_RETRY_MAX = 60 * 1000;
+
+const auto = {
+  first: true, // the network at launch is not a new one: a launch by hand does not start
+  wasOn: false,
+  prevNet: null,
+  settleUntil: 0,
+  pending: null, // { why, at, retry }
+  busy: false,
+};
+
+function autoPlan(why, at = Date.now()) {
+  if (!auto.pending) auto.pending = { why, at, retry: AUTO_RETRY_MIN };
+}
+
+// autoUserStopped drops a planned start: the user's Stop wins until the next
+// network or the next start of Windows.
+function autoUserStopped() {
+  auto.pending = null;
+}
+
+async function autoTick() {
+  if (auto.busy) return;
+  auto.busy = true;
+  try {
+    const s = readSettings();
+    const on = !!lastStatus;
+    const now = Date.now();
+    if (auto.wasOn && !on) {
+      auto.prevNet = await networkPath(); // our own stop is not a new network
+      auto.settleUntil = now + AUTO_SETTLE;
+    }
+    if (on) auto.pending = null;
+    auto.wasOn = on;
+    if (on) return;
+
+    const net = await networkPath();
+    if (auto.first || now < auto.settleUntil) auto.prevNet = net;
+    auto.first = false;
+    if (!net) {
+      auto.prevNet = null;
+      return;
+    }
+    if (net !== auto.prevNet && s.autoConnect) autoPlan(auto.prevNet ? 'connected to another network' : 'connected to a network');
+    auto.prevNet = net;
+
+    const p = auto.pending;
+    if (!p || now < p.at || !s.autoConnect) return;
+    appLog(`auto-connect: ${p.why}; starting protection`);
+    const r = await startEngine();
+    if (r.ok) {
+      auto.pending = null;
+      return;
+    }
+    if (p.retry === AUTO_RETRY_MIN) notify(`Could not start protection: ${r.error}. Trying again.`);
+    appLog(`auto-connect: start failed (${r.error}); trying again in ${p.retry / 1000} s`);
+    p.at = Date.now() + p.retry;
+    p.retry = Math.min(p.retry * 2, AUTO_RETRY_MAX);
+  } catch (e) {
+    appLog('auto-connect:', e);
+  } finally {
+    auto.busy = false;
+  }
 }
 
 // ---------- notifications and the status loop ----------
@@ -2108,6 +2224,8 @@ if (!app.requestSingleInstanceLock()) {
     loadBuckets();
     // the start-at-login entry names the program's path, which moved with the
     // rename (port1897's entry goes, the new one points at this copy)
+    // and the Tauri app's (AuroraVPN 0.2.10-0.2.4x), named AuroraVPN
+    app.setLoginItemSettings({ openAtLogin: false, name: 'AuroraVPN' });
     if (readSettings().autostart) {
       app.setLoginItemSettings({ openAtLogin: false, name: 'electron.app.port1897' });
       app.setLoginItemSettings({ openAtLogin: true, args: ['--autostart'] });
@@ -2125,9 +2243,12 @@ if (!app.requestSingleInstanceLock()) {
     powerMonitor.on('lock-screen', () => onLock(true));
     powerMonitor.on('unlock-screen', () => onLock(false));
     setInterval(statusLoop, 1500);
+    setInterval(autoTick, AUTO_TICK);
     setInterval(() => saveBuckets(readSettings()), 60 * 1000);
     if (automated) {
       await automate(process.argv);
+    } else if (autostart && readSettings().autoConnect) {
+      autoPlan('Windows started'); // autoTick starts it once there is a network
     } else if (autostart && readSettings().wasRunning) {
       const r = await startEngine();
       if (!r.ok) notify('Could not resume protection: ' + r.error);

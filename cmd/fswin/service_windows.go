@@ -209,6 +209,7 @@ func (s *service) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 		return true, 1
 	}
 	go ps.serve()
+	go ps.keep.run(ps.quit, ps.keepHooks())
 	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 	logf("running %s for %s", version, s.app)
 	for c := range req {
@@ -246,8 +247,12 @@ func serviceLog(path string) func(string, ...any) {
 
 // pipeRequest is one request to the service.
 type pipeRequest struct {
-	Cmd  string   `json:"cmd"`            // ping, start, stop or cleanup
+	Cmd  string   `json:"cmd"`            // ping, start, stop, unkeep or cleanup
 	Args []string `json:"args,omitempty"` // start: the engine's flags
+	// start: keep the engine running until a stop or unkeep (keep_windows.go),
+	// and with Watch also restart it when the internet stays away (a VPN exit)
+	Keep  bool `json:"keep,omitempty"`
+	Watch bool `json:"watch,omitempty"`
 }
 
 // pipeReply is the service's answer.
@@ -268,6 +273,9 @@ type pipeServer struct {
 	mu      sync.Mutex
 	closed  bool
 	running *engineProc
+
+	keep keeper
+	quit chan struct{} // closed by close: ends keep.run
 }
 
 func newPipeServer(app, engine string, logf func(string, ...any)) (*pipeServer, error) {
@@ -275,7 +283,7 @@ func newPipeServer(app, engine string, logf func(string, ...any)) (*pipeServer, 
 	if err != nil {
 		return nil, err
 	}
-	ps := &pipeServer{app: app, engine: engine, logf: logf, sa: &windows.SecurityAttributes{SecurityDescriptor: sd}}
+	ps := &pipeServer{app: app, engine: engine, logf: logf, sa: &windows.SecurityAttributes{SecurityDescriptor: sd}, quit: make(chan struct{})}
 	ps.sa.Length = uint32(unsafe.Sizeof(*ps.sa)) //nolint:gosec // G103: the struct's size, for Windows
 	// the first instance fails if another program already holds the name
 	if ps.first, err = ps.instance(true); err != nil {
@@ -337,6 +345,8 @@ func (ps *pipeServer) close() {
 	ps.mu.Lock()
 	ps.closed = true
 	ps.mu.Unlock()
+	ps.keep.clear()
+	close(ps.quit)
 	// a connection of our own wakes serve, waiting for the next client
 	if name, err := windows.UTF16PtrFromString(pipePath); err == nil {
 		if h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil, windows.OPEN_EXISTING, 0, 0); err == nil {
@@ -375,9 +385,15 @@ func (ps *pipeServer) handle(h windows.Handle, req pipeRequest) pipeReply {
 		if err != nil {
 			return pipeReply{Error: err.Error()}
 		}
+		ps.keepFor(c, req)
 		return pipeReply{OK: true, PID: pid}
 	case "stop":
+		ps.keep.clear()
 		ps.stopEngine(15 * time.Second)
+		return pipeReply{OK: true}
+	case "unkeep":
+		// the app stops the engine through the engine's own API next
+		ps.keep.clear()
 		return pipeReply{OK: true}
 	case "cleanup":
 		if err := ps.cleanup(c); err != nil {
@@ -528,9 +544,10 @@ func checkEngineArgs(args []string) error {
 // denied" as "still running", and every stop waited out its full 15 s
 // ("engine <pid> still ending after 15 s").
 type engineProc struct {
-	pid  uint32
-	done chan struct{} // closed once the process has ended and its handles are closed
-	code uint32        // its exit code, once done is closed
+	pid     uint32
+	started time.Time
+	done    chan struct{} // closed once the process has ended and its handles are closed
+	code    uint32        // its exit code, once done is closed
 
 	// watch is the only wait on process and the only close of both: a use
 	// after the close could reach another object under the same handle value
@@ -540,7 +557,7 @@ type engineProc struct {
 }
 
 func newEngineProc(pid uint32, process, stop windows.Handle) *engineProc {
-	e := &engineProc{pid: pid, done: make(chan struct{}), process: process, stop: stop}
+	e := &engineProc{pid: pid, started: time.Now(), done: make(chan struct{}), process: process, stop: stop}
 	go e.watch()
 	return e
 }
@@ -594,7 +611,49 @@ func (e *engineProc) kill() {
 	}
 }
 
+// keepFor keeps the engine just started for c running when it asked so.
+func (ps *pipeServer) keepFor(c *pipeClient, req pipeRequest) {
+	if !req.Keep {
+		ps.keep.clear()
+		return
+	}
+	tok, err := userPrimary(c.token) // c.token is closed after this request
+	if err != nil {
+		ps.logf("keep: %v; the engine is not kept running", err)
+		ps.keep.clear()
+		return
+	}
+	ps.keep.set(req.Args, tok, c.user, req.Watch)
+}
+
+// keepHooks are the keeper's hands on this server's engine.
+func (ps *pipeServer) keepHooks() keepHooks {
+	return keepHooks{
+		engine: func() (bool, time.Time) {
+			ps.mu.Lock()
+			defer ps.mu.Unlock()
+			if e := ps.running; e != nil && !e.exited(0) {
+				return true, e.started
+			}
+			return false, time.Time{}
+		},
+		start: func(args []string, token windows.Token) error {
+			_, err := ps.startEngineAs(token, "kept", args)
+			return err
+		},
+		stop:  func() { ps.stopEngine(15 * time.Second) },
+		probe: keepProbe,
+		logf:  ps.logf,
+	}
+}
+
 func (ps *pipeServer) startEngine(c *pipeClient, args []string) (uint32, error) {
+	return ps.startEngineAs(c.token, c.user, args)
+}
+
+// startEngineAs starts the engine with the token of user, ending one still
+// running first.
+func (ps *pipeServer) startEngineAs(token windows.Token, user string, args []string) (uint32, error) {
 	if err := checkEngineArgs(args); err != nil {
 		return 0, err
 	}
@@ -615,12 +674,15 @@ func (ps *pipeServer) startEngine(c *pipeClient, args []string) (uint32, error) 
 		}
 		ps.running = nil
 	}
-	e, err := launch(c.token, ps.engine, args)
+	if ps.closed {
+		return 0, errors.New("the service is stopping")
+	}
+	e, err := launch(token, ps.engine, args)
 	if err != nil {
 		return 0, err
 	}
 	ps.running = e
-	ps.logf("engine %d started as SYSTEM for %s (session %d)", e.pid, c.user, tokenSession(c.token))
+	ps.logf("engine %d started as SYSTEM for %s (session %d)", e.pid, user, tokenSession(token))
 	go func() {
 		<-e.done
 		ps.logf("engine %d ended (exit code %s)", e.pid, winCode(e.code))

@@ -300,14 +300,7 @@ async function main() {
   App.applyTheme();
   await poll();
   App.render();
-  if (App.port.onTick) {
-    // the app says when something changed (desktop/src/live.rs); a slow look
-    // stays, in case a tick is missed
-    App.port.onTick(() => poll());
-    setInterval(poll, 5000);
-  } else {
-    setInterval(poll, 1000);
-  }
+  setInterval(poll, 1000);
   if (!App.settings.welcomed) showWelcome();
 }
 
