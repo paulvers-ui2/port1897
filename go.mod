@@ -11,7 +11,7 @@ require (
 	github.com/k-sone/critbitgo v1.4.0
 	github.com/miekg/dns v1.1.73
 	golang.org/x/crypto v0.57.0
-	golang.org/x/sys v0.48.0
+	golang.org/x/sys v0.49.0
 )
 
 require (
