@@ -19,8 +19,8 @@ github.com/cloudflare/odoh-go v1.0.0 h1:4ZRBHNFC0wefDpWKuSXDuw6SsEulP3QrS/rqG9RV
 github.com/cloudflare/odoh-go v1.0.0/go.mod h1:J3Doz827YDYvz4hEmJU6q45hRFOqxUBL6NRUuEfjMxA=
 github.com/coder/websocket v1.8.15 h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNUA=
 github.com/coder/websocket v1.8.15/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
-github.com/crazy-max/xgo v0.31.0 h1:JE2PKXBQ6cYpcMSVBuo7WmYy3elKiNHaLv9YXCSsRug=
-github.com/crazy-max/xgo v0.31.0/go.mod h1:m/aqfKaN/cYzfw+Pzk7Mk0tkmShg3/rCS4Zdhdugi4o=
+github.com/crazy-max/xgo v0.42.0 h1:kvu+PPnF/WDQsk+r4UBj6ETVzBK8lpG0aLN6BTpHWC8=
+github.com/crazy-max/xgo v0.42.0/go.mod h1:Uy2yd/Rmz5cqGoii6BONfPZGt3LgCAFnoShTL0T4Iko=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
