@@ -11,6 +11,10 @@ updates:
     open-pull-requests-limit: 5
   - package-ecosystem: "cargo" # Tauri app
     directory: "/desktop"
+    ignore:
+      # must match the versions tauri/wry use: their types meet in our code
+      - dependency-name: "windows"
+      - dependency-name: "webview2-com"
     schedule:
       interval: "weekly"
     cooldown:

@@ -30,7 +30,7 @@ winreg = "~0.56"
 getrandom = "~0.4"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "~0.62", features = [
+windows = { version = "~0.61", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_System_Threading",
@@ -41,8 +41,10 @@ windows = { version = "~0.62", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
-# the WebView2 types of the copy wry already uses, to lock the window down
-webview2-com = "~0.39.1"
+# the WebView2 types of the copy wry already uses, to lock the window down.
+# windows and webview2-com must stay on the versions tauri/wry use (their
+# types meet in our code): Dependabot leaves them alone (dependabot.yml).
+webview2-com = "~0.38.2"
 
 [profile.release]
 codegen-units = 1
