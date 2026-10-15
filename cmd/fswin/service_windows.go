@@ -121,12 +121,15 @@ func installService(app string) error {
 		return err
 	}
 	defer s.Close()
-	// a crash restarts it; an engine it started keeps running meanwhile
+	// a crash restarts it within a second, every time (the count starts over
+	// after an hour), and so does an exit with an error; an engine it
+	// started keeps running meanwhile, and keep.json has it kept again
 	_ = s.SetRecoveryActions([]mgr.RecoveryAction{
-		{Type: mgr.ServiceRestart, Delay: 2 * time.Second},
-		{Type: mgr.ServiceRestart, Delay: 10 * time.Second},
-		{Type: mgr.ServiceRestart, Delay: time.Minute},
-	}, 24*3600)
+		{Type: mgr.ServiceRestart, Delay: time.Second},
+		{Type: mgr.ServiceRestart, Delay: time.Second},
+		{Type: mgr.ServiceRestart, Delay: 5 * time.Second},
+	}, 3600)
+	_ = s.SetRecoveryActionsOnNonCrashFailures(true)
 	return s.Start()
 }
 
@@ -209,6 +212,15 @@ func (s *service) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 		return true, 1
 	}
 	go ps.serve()
+	ps.keep.file = filepath.Join(installRoot(exe), "keep.json")
+	if st, ok := ps.keep.load(); ok {
+		// an engine of the service that ran before (it crashed) would meet
+		// the one started now: end it first
+		if n := endStaleEngines(exe); n > 0 {
+			logf("keep: ended %d engine(s) left by the service before", n)
+		}
+		logf("keep: protection was on for %s; starting it again", st.User)
+	}
 	go ps.keep.run(ps.quit, ps.keepHooks())
 	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 	logf("running %s for %s", version, s.app)
@@ -274,16 +286,27 @@ type pipeServer struct {
 	closed  bool
 	running *engineProc
 
-	keep keeper
-	quit chan struct{} // closed by close: ends keep.run
+	keep  keeper
+	quit  chan struct{} // closed by close: ends keep.run
+	slots chan struct{} // one per connection being answered (pipeSlots)
 }
+
+// A local program could open the pipe and never send, or open it thousands
+// of times: each held a goroutine and a pipe instance for good. Now:
+//   - only the installed app is read from at all (pipeCaller, before reading);
+//   - a request must arrive within pipeReadTimeout;
+//   - at most pipeSlots connections are answered at once; more are dropped.
+const (
+	pipeSlots       = 8
+	pipeReadTimeout = 10 * time.Second
+)
 
 func newPipeServer(app, engine string, logf func(string, ...any)) (*pipeServer, error) {
 	sd, err := windows.SecurityDescriptorFromString(pipeSDDL)
 	if err != nil {
 		return nil, err
 	}
-	ps := &pipeServer{app: app, engine: engine, logf: logf, sa: &windows.SecurityAttributes{SecurityDescriptor: sd}, quit: make(chan struct{})}
+	ps := &pipeServer{app: app, engine: engine, logf: logf, sa: &windows.SecurityAttributes{SecurityDescriptor: sd}, quit: make(chan struct{}), slots: make(chan struct{}, pipeSlots)}
 	ps.sa.Length = uint32(unsafe.Sizeof(*ps.sa)) //nolint:gosec // G103: the struct's size, for Windows
 	// the first instance fails if another program already holds the name
 	if ps.first, err = ps.instance(true); err != nil {
@@ -321,7 +344,17 @@ func (ps *pipeServer) serve() {
 			return
 		}
 		if err == nil || errors.Is(err, windows.ERROR_PIPE_CONNECTED) {
-			go ps.answer(h)
+			select {
+			case ps.slots <- struct{}{}:
+				go func(h windows.Handle) {
+					defer func() { <-ps.slots }()
+					ps.answer(h)
+				}(h)
+			default:
+				// every slot busy: a flood, or clients that never send
+				_ = windows.DisconnectNamedPipe(h)
+				_ = windows.CloseHandle(h)
+			}
 		} else {
 			ps.logf("connect: %v", err)
 			_ = windows.CloseHandle(h)
@@ -360,8 +393,17 @@ func (ps *pipeServer) close() {
 func (ps *pipeServer) answer(h windows.Handle) {
 	f := os.NewFile(uintptr(h), pipePath)
 	defer f.Close()
+	if err := ps.pipeCaller(h); err != nil {
+		// told why (the reply fits the pipe's buffer, so this does not
+		// wait for it), but nothing it sent is read
+		ps.logf("refused: %v", err)
+		_ = json.NewEncoder(f).Encode(pipeReply{Error: err.Error()})
+		return
+	}
 	var req pipeRequest
-	if err := json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&req); err != nil {
+	if err := readWithin(pipeReadTimeout, func() error {
+		return json.NewDecoder(io.LimitReader(f, 64<<10)).Decode(&req)
+	}); err != nil {
 		return
 	}
 	reply := ps.handle(h, req)
@@ -388,12 +430,12 @@ func (ps *pipeServer) handle(h windows.Handle, req pipeRequest) pipeReply {
 		ps.keepFor(c, req)
 		return pipeReply{OK: true, PID: pid}
 	case "stop":
-		ps.keep.clear()
+		ps.keep.forget()
 		ps.stopEngine(15 * time.Second)
 		return pipeReply{OK: true}
 	case "unkeep":
 		// the app stops the engine through the engine's own API next
-		ps.keep.clear()
+		ps.keep.forget()
 		return pipeReply{OK: true}
 	case "cleanup":
 		if err := ps.cleanup(c); err != nil {
@@ -412,6 +454,63 @@ type pipeClient struct {
 	pid   uint32
 	user  string
 	token windows.Token // the user's own token, primary, inheritable
+}
+
+var procCancelSynchronousIo = windows.NewLazySystemDLL("kernel32.dll").NewProc("CancelSynchronousIo")
+
+// readWithin runs read, which reads from the pipe, and cancels it after d: a
+// client that connects and never sends is cut off. The pipe's handle is
+// synchronous, so its read can only be cancelled on the thread that waits
+// in it (CancelSynchronousIo); DisconnectNamedPipe from another thread
+// waited behind that same read (seen on the CI runner: 8 silent clients held
+// every slot for good).
+func readWithin(d time.Duration, read func() error) error {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	var th windows.Handle
+	if err := windows.DuplicateHandle(windows.CurrentProcess(), windows.CurrentThread(), windows.CurrentProcess(), &th, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+		return err
+	}
+	defer windows.CloseHandle(th)
+	var mu sync.Mutex
+	done := false
+	cut := time.AfterFunc(d, func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if !done {
+			_, _, _ = procCancelSynchronousIo.Call(uintptr(th))
+		}
+	})
+	err := read()
+	mu.Lock()
+	done = true // the thread may run other code now: no cancel after this
+	mu.Unlock()
+	if !cut.Stop() && err == nil {
+		err = errors.New("read cancelled")
+	}
+	return err
+}
+
+// pipeCaller checks that the program at the other end of h is the installed
+// app, before anything is read from it.
+func (ps *pipeServer) pipeCaller(h windows.Handle) error {
+	var pid uint32
+	if err := windows.GetNamedPipeClientProcessId(h, &pid); err != nil {
+		return err
+	}
+	p, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return fmt.Errorf("client %d: %w", pid, err)
+	}
+	defer windows.CloseHandle(p)
+	exe, err := processPath(p)
+	if err != nil {
+		return fmt.Errorf("client %d: %w", pid, err)
+	}
+	if !samePath(exe, ps.app) {
+		return fmt.Errorf("%s is not the AuroraVPN app", exe)
+	}
+	return nil
 }
 
 func (ps *pipeServer) identify(h windows.Handle) (*pipeClient, error) {
@@ -611,16 +710,46 @@ func (e *engineProc) kill() {
 	}
 }
 
+// endStaleEngines ends every other process of exe (fswin.exe from this
+// install) but this one: engines a crashed service left behind. It reports
+// how many.
+func endStaleEngines(exe string) int {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return 0
+	}
+	defer windows.CloseHandle(snap)
+	self := windows.GetCurrentProcessId()
+	n := 0
+	var pe windows.ProcessEntry32
+	pe.Size = uint32(unsafe.Sizeof(pe)) //nolint:gosec // G103: the struct's size, for Windows
+	for err = windows.Process32First(snap, &pe); err == nil; err = windows.Process32Next(snap, &pe) {
+		if pe.ProcessID == self || !strings.EqualFold(windows.UTF16ToString(pe.ExeFile[:]), filepath.Base(exe)) {
+			continue
+		}
+		p, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE, false, pe.ProcessID)
+		if err != nil {
+			continue
+		}
+		if path, err := processPath(p); err == nil && samePath(path, exe) && windows.TerminateProcess(p, 1) == nil {
+			_, _ = windows.WaitForSingleObject(p, 5000)
+			n++
+		}
+		_ = windows.CloseHandle(p)
+	}
+	return n
+}
+
 // keepFor keeps the engine just started for c running when it asked so.
 func (ps *pipeServer) keepFor(c *pipeClient, req pipeRequest) {
 	if !req.Keep {
-		ps.keep.clear()
+		ps.keep.forget()
 		return
 	}
 	tok, err := userPrimary(c.token) // c.token is closed after this request
 	if err != nil {
 		ps.logf("keep: %v; the engine is not kept running", err)
-		ps.keep.clear()
+		ps.keep.forget()
 		return
 	}
 	ps.keep.set(req.Args, tok, c.user, req.Watch)

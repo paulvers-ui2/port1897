@@ -136,6 +136,60 @@ $w.WriteLine('{"cmd":"ping"}')
   try { $null = Api '/api/stop' 'POST' } catch {}
   Check 'the app''s stop still works' ($r.pid -and (Wait-Exit $r.pid 30)) ''
 
+  # ---------- kept running (keep_windows.go): for servers ----------
+  function Engines() { @(Get-CimInstance Win32_Process -Filter "Name='fswin.exe'" | Where-Object { $_.CommandLine -match '-token-file' }) }
+  $r = Pipe @{ cmd = 'start'; args = $engineArgs; keep = $true }
+  $st = Wait-Api 45
+  Check 'a kept engine comes up' ($r.ok -and $null -ne $st) ($r | ConvertTo-Json -Compress)
+  Check 'what is kept is written down (keep.json)' (Test-Path (Join-Path $root 'keep.json')) ''
+
+  # the engine crashes: the service starts it again by itself
+  $t0 = Get-Date
+  Stop-Process -Id $r.pid -Force
+  $null = Wait-Exit $r.pid 10
+  $back = $null
+  for ($i = 0; $i -lt 60 -and -not $back; $i++) {
+    Start-Sleep -Milliseconds 500
+    $e = Engines
+    if ($e.Count -ge 1 -and $e[0].ProcessId -ne $r.pid) { $back = Wait-Api 20 }
+  }
+  $took = ((Get-Date) - $t0).TotalSeconds
+  Check 'a crashed engine is back by itself' ($null -ne $back) ("{0:N1} s" -f $took)
+  Check '... within 20 s' ($null -ne $back -and $took -lt 20) ("{0:N1} s" -f $took)
+
+  # the service itself restarts (a crash, an update, Windows starting): it
+  # finds keep.json, ends the engine it left, and starts one of its own
+  $t0 = Get-Date
+  Restart-Service AuroraVPN -Force
+  Start-Sleep -Seconds 3
+  $back = Wait-Api 45
+  Check 'after a restart of the service protection is back by itself' ($null -ne $back) ("{0:N1} s" -f ((Get-Date) - $t0).TotalSeconds)
+  Start-Sleep -Seconds 3
+  $n = (Engines).Count
+  Check 'and only one engine runs' ($n -eq 1) "$n engine(s)"
+
+  # the app's Stop: unkeep, then the engine's own API; it stays stopped
+  $r = Pipe @{ cmd = 'unkeep' }
+  $e = Engines
+  try { $null = Api '/api/stop' 'POST' } catch {}
+  $gone = $true
+  foreach ($p in $e) { $gone = $gone -and (Wait-Exit $p.ProcessId 30) }
+  Start-Sleep -Seconds 5
+  Check 'a Stop of the user is kept: no engine 5 s later' ($r.ok -and $gone -and (Engines).Count -eq 0) "$((Engines).Count) engine(s)"
+  Check 'keep.json is gone' (-not (Test-Path (Join-Path $root 'keep.json'))) ''
+
+  # ---------- the pipe under a flood ----------
+  # 30 connections that never send: they must not lock the app out for good
+  $silent = 1..30 | ForEach-Object {
+    $c = [IO.Pipes.NamedPipeClientStream]::new('.', 'AuroraVPN', [IO.Pipes.PipeDirection]::InOut)
+    try { $c.Connect(2000); $c } catch { $c.Dispose() }
+  }
+  Start-Sleep -Seconds 12 # past the service's 10 s read timeout
+  $r = $null
+  try { $r = Pipe @{ cmd = 'ping' } } catch {}
+  Check 'after a flood of silent connections the app is answered again' ([bool]($r -and $r.ok)) ("$(@($silent).Count) silent connections; reply: $($r | ConvertTo-Json -Compress)")
+  $silent | ForEach-Object { $_.Dispose() }
+
   $r = Pipe @{ cmd = 'cleanup' }
   Check 'cleanup through the service' ($r.ok) ($r | ConvertTo-Json -Compress)
 

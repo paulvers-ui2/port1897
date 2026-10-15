@@ -227,3 +227,35 @@ func TestUserTokenFromTheService(t *testing.T) {
 		t.Error("usque would not start as the user, with the user's environment")
 	}
 }
+
+// A read that waits for a client that never sends is cancelled after the
+// timeout (a synchronous pipe handle, as the service's), and a read that
+// finishes in time is not touched.
+func TestReadWithinCutsOffASilentClient(t *testing.T) {
+	var r, w windows.Handle
+	if err := windows.CreatePipe(&r, &w, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(r)
+	defer windows.CloseHandle(w)
+	buf := make([]byte, 16)
+	start := time.Now()
+	err := readWithin(200*time.Millisecond, func() error {
+		var n uint32
+		return windows.ReadFile(r, buf, &n, nil)
+	})
+	if err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("a silent client was not cut off: %v after %s", err, time.Since(start))
+	}
+
+	var n uint32
+	if err := windows.WriteFile(w, []byte("hi"), &n, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := readWithin(5*time.Second, func() error {
+		var got uint32
+		return windows.ReadFile(r, buf, &got, nil)
+	}); err != nil {
+		t.Fatalf("a read in time failed: %v", err)
+	}
+}
