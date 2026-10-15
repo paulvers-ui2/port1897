@@ -272,8 +272,10 @@ func randHex(n int) string {
 //	-k 10s               keepalive: keeps NAT bindings open
 //	-r 1s                a second between reconnect attempts
 //	--idle-timeout 25s   QUIC drops a connection that hears nothing for 25 s
-//	--stall-timeout 2s   packets go out, nothing comes back for 2 s, and a
-//	                     probe through the tunnel gets no answer: rebuild now
+//	--stall-timeout 3s   packets go out, nothing comes back for 3 s, and two
+//	                     probes through the tunnel in a row get no answer:
+//	                     rebuild now (usque#6; one probe after 2 s dropped
+//	                     working tunnels under load)
 //
 // WARP over MASQUE also gets --always-reconnect (rebuild at once, not on the
 // next packet); the chain reconnects always (usque sets it), and its WARP2
@@ -283,7 +285,7 @@ func usqueDefaults(chain bool, link int) []string {
 	if link > 0 {
 		ips = max(min(ips, link-28), 1200) // 28: IPv4 and UDP headers; QUIC needs 1200
 	}
-	f := []string{"-i", fmt.Sprint(ips), "-k", "10s", "-r", "1s", "--idle-timeout", "25s", "--stall-timeout", "2s"}
+	f := []string{"-i", fmt.Sprint(ips), "-k", "10s", "-r", "1s", "--idle-timeout", "25s", "--stall-timeout", "3s"}
 	if !chain {
 		f = append(f, "--always-reconnect")
 	}

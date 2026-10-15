@@ -28,17 +28,21 @@ import (
 // It does what the Android app does (rethink-app-masque BraveVPNService:
 // the chain and usque watchdogs, the death callback, restartChain):
 //
-//   - usque exits: it starts again after restartMin (50 ms, doubling to 5 s).
+//   - usque exits: it starts again after restartMin (1 s, doubling to 15 s).
 //   - usque runs but nothing gets through: a probe every probeEvery opens a
-//     connection through it (SOCKS CONNECT to 1.1.1.1:80, so through every
-//     hop of the chain); probeFailures failures in a row restart it. A start
+//     connection through it (SOCKS CONNECT to 1.1.1.1:80 and 8.8.8.8:443 at
+//     once, so through every hop of the chain; either answering passes);
+//     probeFailures failures in a row restart it. That is about 30 s: usque
+//     rebuilds a dead tunnel itself within about 15 s, and a restart in the
+//     middle of that only started it over (debug zip of 2026-10-15: a
+//     restart 50 ms after two 5 s probes, during usque's own reconnect). A start
 //     gets startGrace first: the SOCKS port opens before the hops carry
 //     traffic (WARP1 connects, wg0 handshakes inside it, WARP2 connects).
 //   - the network changes (Wi-Fi to Ethernet, another hotspot): usque
 //     rebuilds its tunnels by itself; netSettle later a probe checks that it
 //     did, and restarts it if not.
 //   - back-to-back restarts wait twice as long each time, up to restartMax
-//     (5 s: a minute between tries kept the VPN down long after the cause
+//     (15 s: a minute between tries kept the VPN down long after the cause
 //     was gone), until a probe passes.
 //
 // usque itself rebuilds a dead tunnel within seconds (usque v0.0.4: -r 1s,
@@ -49,18 +53,21 @@ import (
 // re-points the exit at it on every restart so firestack rebuilds its proxy
 // against the fresh process; a new port only when the old one is taken.
 const (
-	restartMax    = 5 * time.Second
-	probeFailures = 2
-	probeTarget   = "1.1.1.1:80"
+	restartMax    = 15 * time.Second
+	probeFailures = 3
 )
+
+// probeTargets are tried at once; one answer is enough. Two operators, so
+// that one of them being slow or filtered at the exit is not a dead tunnel.
+var probeTargets = []string{"1.1.1.1:80", "8.8.8.8:443"}
 
 // variables so that tests can make them short
 var (
-	restartMin   = 50 * time.Millisecond // first retry; doubles up to restartMax
-	probeEvery   = 5 * time.Second
-	probeTimeout = 5 * time.Second
+	restartMin   = time.Second // first retry; doubles up to restartMax
+	probeEvery   = 10 * time.Second
+	probeTimeout = 10 * time.Second // three tunnels deep, behind queued traffic
 	startGrace   = 30 * time.Second
-	quickProbe   = 50 * time.Millisecond // while usque says the tunnel is down
+	quickProbe   = time.Second // while usque says the tunnel is down
 	netEvery     = 5 * time.Second
 	netSettle    = 8 * time.Second
 )
@@ -290,8 +297,8 @@ func portFree(port int) bool {
 	return true
 }
 
-// probe opens a connection through usque's SOCKS proxy to probeTarget: it
-// passes only when every hop carries traffic.
+// probe opens connections through usque's SOCKS proxy to probeTargets: it
+// passes when one of them gets through, which takes every hop.
 func probe(ctx context.Context, u *usque) error {
 	d, err := proxy.SOCKS5("tcp", fmt.Sprintf("127.0.0.1:%d", u.port),
 		&proxy.Auth{User: u.user, Password: u.pass}, &net.Dialer{Timeout: probeTimeout})
@@ -303,10 +310,26 @@ func probe(ctx context.Context, u *usque) error {
 		return fmt.Errorf("socks dialer without context")
 	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-	c, err := cd.DialContext(ctx, "tcp", probeTarget)
-	if err != nil {
-		return err
+	defer cancel() // ends the other dial once one answered
+	errs := make(chan error, len(probeTargets))
+	for _, t := range probeTargets {
+		go func() {
+			c, err := cd.DialContext(ctx, "tcp", t)
+			if err == nil {
+				err = c.Close()
+			}
+			errs <- err
+		}()
 	}
-	return c.Close()
+	var first error
+	for range probeTargets {
+		err := <-errs
+		if err == nil {
+			return nil
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	return first
 }

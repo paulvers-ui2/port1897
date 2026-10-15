@@ -58,7 +58,7 @@ jobs:
           # v0.0.4, as the Android app: a dead tunnel rebuilt within seconds
           # (--stall-timeout, -r 1s), --connect-timeout, network watch
           USQUE_REPO: https://github.com/paulvers-ui2/usque.git
-          USQUE_REF: fd7101710213dec2f85ebc7709d0dc92d7dc3936
+          USQUE_REF: e69ca33c101a6acd99817a048520c35abff75906
         run: |
           git init -q usque-src
           git -C usque-src fetch -q --depth 1 "$USQUE_REPO" "$USQUE_REF"
