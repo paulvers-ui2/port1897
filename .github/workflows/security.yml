@@ -59,7 +59,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod # its toolchain line: the patched Go every build uses
-      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
@@ -73,7 +73,7 @@ jobs:
           # -a: rebuild everything, so nothing is skipped as already built
           go build -a -ldflags=-checklinkname=0 ./intra/... ./tunnel/... ./cmd/... ./win/... ./tools/sim/fakedns
           GOOS=windows go build -a -ldflags=-checklinkname=0 ./intra/... ./tunnel/... ./cmd/... ./win/... ./tools/sim/fakedns
-      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           category: /language:${{ matrix.language }}
 
@@ -123,7 +123,7 @@ jobs:
           { echo "## golangci-lint ($GOOS_NAME): $(grep -cE '^[^ ].*:[0-9]+:[0-9]+: ' "$f") findings, in code scanning"
             echo '```'; tail -60 "$f"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - if: always() && hashFiles(format('golangci-{0}.sarif', matrix.goos)) != ''
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: golangci-${{ matrix.goos }}.sarif
           category: golangci-${{ matrix.goos }}
@@ -156,7 +156,7 @@ jobs:
           # which code scanning rejects as invalid SARIF
           jq '(.runs[]?.results[]? | select(.stacks != null) | .stacks) |= unique' govulncheck.raw.sarif > govulncheck.sarif
       - if: always() && hashFiles('govulncheck.sarif') != ''
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: govulncheck.sarif
           category: govulncheck-windows
@@ -180,7 +180,7 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
           enable-cache: false # no Python dependencies to cache
       - name: Scan
@@ -197,7 +197,7 @@ jobs:
             semgrep scan $rules --metrics=off --exclude third_party --baseline-commit "$BASE" --error
           fi
       - if: always() && hashFiles('semgrep.sarif') != ''
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: semgrep.sarif
           category: semgrep
@@ -222,7 +222,7 @@ jobs:
           npx --yes @doyensec/electronegativity@1.10.0 -i ui -r -x LimitNavigationGlobalCheck,LimitNavigationJSCheck,AvailableSecurityFixesGlobalCheck,ElectronVersionJSONCheck -o electronegativity.sarif | tee electronegativity.txt || true
           { echo '## Electronegativity'; echo '```'; tail -120 electronegativity.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - if: always() && hashFiles('electronegativity.sarif') != ''
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: electronegativity.sarif
           category: electronegativity
@@ -251,7 +251,7 @@ jobs:
           ./osv-scanner scan source -r --config=osv-scanner.toml --format markdown ./ > osv.md || true
           { echo '## OSV-Scanner'; cat osv.md; } >> "$GITHUB_STEP_SUMMARY"
       - if: always() && hashFiles('osv.sarif') != ''
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: osv.sarif
           category: osv-scanner
@@ -278,7 +278,7 @@ jobs:
       - name: Scan all history
         run: ./gitleaks git --redact --no-banner --report-format sarif --report-path gitleaks.sarif --exit-code 0 .
       - if: always() && hashFiles('gitleaks.sarif') != ''
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: gitleaks.sarif
           category: gitleaks
@@ -299,7 +299,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa # v10.3.1
         with:
           enable-cache: false # no Python dependencies to cache
       - name: Scan
@@ -309,7 +309,7 @@ jobs:
           uvx zizmor==1.30.1 --config .github/zizmor.yml --format sarif .github/workflows > zizmor.sarif || true
           { echo '## zizmor'; echo '```'; uvx zizmor==1.30.1 --config .github/zizmor.yml --format plain .github/workflows 2>&1 | tail -200 || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - if: always() && hashFiles('zizmor.sarif') != ''
-        uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4
         with:
           sarif_file: zizmor.sarif
           category: zizmor
