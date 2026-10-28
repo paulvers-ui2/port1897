@@ -13,8 +13,8 @@
     "dist": "electron-builder --win --publish never"
   },
   "devDependencies": {
-    "electron": "44.7.0",
-    "electron-builder": "26.15.3"
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0"
   },
   "overrides": {
     "global-agent": "4.1.3"
