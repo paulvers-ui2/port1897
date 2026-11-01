@@ -1,3 +1,8 @@
+[![Website](https://img.shields.io/badge/website-AuroraVPN-1f6feb?style=for-the-badge)](https://paulvers-ui2.github.io/auroravpn/)
+[![Donate](https://img.shields.io/badge/donate-support%20the%20project-ffc933?style=for-the-badge&labelColor=0a1f44)](https://paulvers-ui2.github.io/auroravpn/#donate)
+
+🌐 **Website, downloads and donations:** https://paulvers-ui2.github.io/auroravpn/
+
 # AuroraVPN for Windows: firestack
 
 An open-source effort to bring the engine behind the Android firewall
