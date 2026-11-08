@@ -32,7 +32,10 @@ func NewDenialOfExistenceNSEC3(ctx context.Context, zone string, records []*dns.
 		if r.Hash != dns.SHA1 {
 			continue
 		}
-		if r.Flags < 0 || r.Flags > 1 {
+		// FIRESTACK PATCH (P11): upstream also tested r.Flags < 0, which is
+		// always false for a uint8 (staticcheck SA4003). Only the opt-out flag
+		// (bit 0) may be set; any other value is unknown and must be ignored.
+		if r.Flags > 1 {
 			continue
 		}
 

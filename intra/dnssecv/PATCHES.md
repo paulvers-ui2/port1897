@@ -72,10 +72,15 @@ dropped (they need `testify`; run them upstream before each re-vendor).
   nilaway **strict on all firestack code except `resolver/`**, and
   **report-only on `resolver/`** (`.github/workflows/go.yml`, 🔮 Vet).
 
+- **P11 — dead comparison** (`dnssec/doe/doe.go`, staticcheck SA4003 in
+  port1897's security lint). `r.Flags < 0` on a `uint8` is always false;
+  removed. Behaviour unchanged: NSEC3 records with flags other than 0 or 1
+  are still ignored (RFC 5155 §8.2).
+
 ## Re-vendoring checklist
 
 1. Diff upstream against the pinned SHA; read every change in `dnssec/`.
-2. Re-apply P1–P10; `grep -rn "FIRESTACK PATCH"` must list them all.
+2. Re-apply P1–P11; `grep -rn "FIRESTACK PATCH"` must list them all.
 3. Run upstream's own tests in a scratch checkout.
 4. `go test -race ./intra/dnssecv/...` here, then `DNSSECV_LIVE=1` on a
    network that allows UDP/TCP 53.

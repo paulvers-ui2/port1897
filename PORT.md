@@ -103,6 +103,12 @@ Merged `paulvers-ui2/firestack` `n2` (28 commits since the shared base `05a6645`
   cross-compile, live self-test). nilaway stays strict except for the vendored
   resolver, which is report-only; golangci-lint skips the vendored paths.
 
+Also in this sync: **toolchain go1.26.9 → go1.26.10.** go1.26.9 lacks the
+`crypto/x509` fix "Distrust compromised intermediate certificates" (fixed in
+go1.26.10), which govulncheck (windows) reports as reachable from
+`ipn.sedialer.tlsVerify`. Every build here, including the Windows exe, takes its Go
+version from this line.
+
 **Not wired in yet:** `fswin -dnssec` is still the DnsSecGuard port (blocks
 bogus/bogon answers, marks AD-verified ones). Using `dnssecv` for true local
 validation, or as a DNSSEC status line in the UI like the Android DNS card, is a
