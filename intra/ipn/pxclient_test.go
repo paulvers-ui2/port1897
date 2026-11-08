@@ -72,12 +72,12 @@ func (f *fakeProxy) Stop() error                            { return nil }
 func (f *fakeProxy) Refresh() error                         { return nil }
 
 func restoreDefaultURLs(t *testing.T) func() {
-	prevTrace, prevWarp := traceURL, warpURL
+	prevTrace4, prevTrace6, prevWarp := traceV4URL, traceV6URL, warpURL
 	prevV4, prevV6 := mullvadV4URL, mullvadV6URL
-	traceURL, warpURL = defaultTraceURL, defaultWarpURL
+	traceV4URL, traceV6URL, warpURL = defaultTraceV4URL, defaultTraceV6URL, defaultWarpURL
 	mullvadV4URL, mullvadV6URL = defaultMullvadV4URL, defaultMullvadV6URL
 	return func() {
-		traceURL, warpURL = prevTrace, prevWarp
+		traceV4URL, traceV6URL, warpURL = prevTrace4, prevTrace6, prevWarp
 		mullvadV4URL, mullvadV6URL = prevV4, prevV6
 	}
 }
@@ -121,9 +121,9 @@ func newServerWithListener(t *testing.T, ln net.Listener) *httptest.Server {
 func TestProxyClientIP4(t *testing.T) {
 	srv := newIPv4Server(t)
 
-	prevTrace, prevMull := traceURL, mullvadV4URL
-	traceURL, mullvadV4URL = srv.URL+"/cdn-cgi/trace", srv.URL+"/json"
-	defer func() { traceURL, mullvadV4URL = prevTrace, prevMull }()
+	prevTrace, prevMull := traceV4URL, mullvadV4URL
+	traceV4URL, mullvadV4URL = srv.URL+"/cdn-cgi/trace", srv.URL+"/json"
+	defer func() { traceV4URL, mullvadV4URL = prevTrace, prevMull }()
 
 	p := &fakeProxy{id: "test-ipv4"}
 	meta, err := newProxyClient(p).IP4()
@@ -154,9 +154,9 @@ func TestProxyClientIP6(t *testing.T) {
 		t.Skip("ipv6 not available")
 	}
 
-	prevTrace, prevMull := traceURL, mullvadV6URL
-	traceURL, mullvadV6URL = srv.URL+"/cdn-cgi/trace", srv.URL+"/json"
-	defer func() { traceURL, mullvadV6URL = prevTrace, prevMull }()
+	prevTrace, prevMull := traceV6URL, mullvadV6URL
+	traceV6URL, mullvadV6URL = srv.URL+"/cdn-cgi/trace", srv.URL+"/json"
+	defer func() { traceV6URL, mullvadV6URL = prevTrace, prevMull }()
 
 	p := &fakeProxy{id: "test-ipv6"}
 	meta, err := newProxyClient(p).IP6()

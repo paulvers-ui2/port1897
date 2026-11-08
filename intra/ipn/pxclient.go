@@ -27,7 +27,11 @@ import (
 )
 
 const (
-	defaultTraceURL     = "https://sky.rethinkdns.com/cdn-cgi/trace"
+	// Cloudflare's own trace endpoint, addressed by its resolver IPs: reaching it needs
+	// no DNS, and both addresses are IP SANs in its certificate. One per family, since
+	// fetchIPMetadata dials strictly tcp4 or tcp6.
+	defaultTraceV4URL   = "https://1.1.1.1/cdn-cgi/trace"
+	defaultTraceV6URL   = "https://[2606:4700:4700::1111]/cdn-cgi/trace"
 	defaultWarpURL      = "https://redir.nile.workers.dev/p/warp"
 	defaultMullvadV4URL = "https://ipv4.am.i.mullvad.net/json"
 	defaultMullvadV6URL = "https://ipv6.am.i.mullvad.net/json"
@@ -37,7 +41,8 @@ const (
 
 // test hooks
 var (
-	traceURL     = defaultTraceURL
+	traceV4URL   = defaultTraceV4URL
+	traceV6URL   = defaultTraceV6URL
 	warpURL      = defaultWarpURL
 	mullvadV4URL = defaultMullvadV4URL
 	mullvadV6URL = defaultMullvadV6URL
@@ -69,12 +74,12 @@ func (c *proxyClient) IP6() (*x.IPMetadata, error) {
 
 func fetchIPMetadata(p Proxy, network string) (*x.IPMetadata, error) {
 	meta := &x.IPMetadata{ID: idstr(p)}
-	mullvadURL := mullvadV4URL
+	traceURL, mullvadURL := traceV4URL, mullvadV4URL
 	if network == "tcp6" {
-		mullvadURL = mullvadV6URL
+		traceURL, mullvadURL = traceV6URL, mullvadV6URL
 	}
 
-	if trace, err1 := fetchTrace(p, network); err1 == nil {
+	if trace, err1 := fetchTrace(p, network, traceURL); err1 == nil {
 		applyTrace(meta, trace)
 		meta.ProviderURL = traceURL
 	} else if warp, err2 := fetchWarp(p, network); err2 == nil {
@@ -95,9 +100,9 @@ func fetchIPMetadata(p Proxy, network string) (*x.IPMetadata, error) {
 	return meta, nil
 }
 
-// fetchTrace fetches the Cloudflare trace data via the given proxy.
+// fetchTrace fetches the Cloudflare trace data at traceURL via the given proxy.
 // fl=765f119
-// h=sky.rethinkdns.com
+// h=1.1.1.1
 // ip=dead:beef::dead:beef
 // ts=1766262434
 // visit_scheme=https
@@ -112,7 +117,7 @@ func fetchIPMetadata(p Proxy, network string) (*x.IPMetadata, error) {
 // gateway=off
 // rbi=off
 // kex=X25519
-func fetchTrace(p Proxy, network string) (map[string]string, error) {
+func fetchTrace(p Proxy, network, traceURL string) (map[string]string, error) {
 	if skipTraceForTesting {
 		return nil, errors.New("testing: trace skipped")
 	}

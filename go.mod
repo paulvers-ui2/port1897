@@ -2,7 +2,7 @@ module github.com/celzero/firestack
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/celzero/gotrie v0.0.0-20250314130138-a2756ab2f6bd
