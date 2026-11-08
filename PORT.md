@@ -80,3 +80,30 @@ Notes:
 This is an unofficial, community project. It is not affiliated with or endorsed by
 Celzero (Rethink), Cloudflare, or Microsoft. "WARP" and "Cloudflare" are trademarks
 of Cloudflare, Inc. Use at your own risk.
+
+## Sync with paulvers-ui2/firestack (n2)
+
+Merged `paulvers-ui2/firestack` `n2` (28 commits since the shared base `05a6645`):
+
+- **Local validating DNSSEC resolver**, `intra/dnssecv` + `intra/dnssec.go`
+  (`Intra.newDNSSECValidator`): resolves from the root and validates every answer up
+  to the IANA root keys (KSK-2017, KSK-2024), including NSEC/NSEC3 denial of
+  existence. It never trusts an upstream AD bit and fails closed. It vendors
+  github.com/nsmithuk/resolver with 10 security patches (`intra/dnssecv/PATCHES.md`),
+  among them fixes for a crash on unsupported DS digest types and for NSEC
+  canonical ordering. Its socket goes through `protect.MakeNsDialer`, so on Windows
+  it is bound like firestack's other sockets (`bind_windows.go`). It builds for
+  windows/amd64 and windows/arm64 (checked in `dnssec.yml`).
+- Upstream fix in `intra/ipn/pxclient.go` (proxies checked against Cloudflare's
+  trace endpoint by IP).
+- Kept from this repo: `go.mod` / `go.sum` (newer or equal versions:
+  x/net 0.62.0, miekg/dns 1.1.73, toolchain go1.26.9), `release-aar.yml` (attaches
+  the AAR to this repo's releases and pushes nowhere else) and the CI layout.
+  New: `dnssec.yml` (validator tests, patch markers, Android + Windows
+  cross-compile, live self-test). nilaway stays strict except for the vendored
+  resolver, which is report-only; golangci-lint skips the vendored paths.
+
+**Not wired in yet:** `fswin -dnssec` is still the DnsSecGuard port (blocks
+bogus/bogon answers, marks AD-verified ones). Using `dnssecv` for true local
+validation, or as a DNSSEC status line in the UI like the Android DNS card, is a
+follow-up.

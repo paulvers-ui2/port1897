@@ -1,0 +1,64 @@
+name: DNSSEC validator
+
+# Checks for intra/dnssecv (local validating DNSSEC resolver, synced from
+# paulvers-ui2/firestack). CodeQL, gosec/golangci-lint and govulncheck already
+# run in security.yml and go.yml; this adds only what is specific to dnssecv.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '29 5 * * 1' # weekly: catches broken probe zones or root-anchor changes
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dnssec-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: dnssecv tests (race) + cross-compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: '>=1.26'
+          check-latest: true
+      - name: vet + race tests
+        run: |
+          go vet ./intra/dnssecv/...
+          go test -race -count=1 ./intra/dnssecv/...
+      - name: Patch markers still present
+        # Re-vendoring must not silently drop the security patches (P1-P10).
+        run: |
+          n=$(grep -rn "FIRESTACK PATCH" intra/dnssecv/resolver | wc -l)
+          echo "patch markers: $n"
+          test "$n" -ge 8 || { echo "::error::vendored resolver lost FIRESTACK PATCH markers (see intra/dnssecv/PATCHES.md)"; exit 1; }
+      - name: Cross-compile (android/arm64, windows/amd64, windows/arm64)
+        run: |
+          CGO_ENABLED=0 GOOS=android GOARCH=arm64 go build ./intra/dnssecv/...
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./intra/dnssecv/...
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build ./intra/dnssecv/...
+
+  live:
+    name: Live DNSSEC self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Non-blocking: an outage of a probe zone must not block merges.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: '>=1.26'
+          check-latest: true
+      - run: DNSSECV_LIVE=1 go test -count=1 -v -run Live ./intra/dnssecv/

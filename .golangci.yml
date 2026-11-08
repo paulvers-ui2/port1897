@@ -38,6 +38,11 @@ linters:
       - legacy
       - std-error-handling
     generated: disable
+    # Vendored third-party code (github.com/nsmithuk/resolver + root anchors,
+    # MIT); local changes are documented in intra/dnssecv/PATCHES.md.
+    paths:
+      - intra/dnssecv/resolver
+      - intra/dnssecv/anchors
     rules:
       - path: '(.+)_test\.go'
         linters:
