@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//go:build windows
+//go:build windows || linux
 
 package main
 
@@ -20,11 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
-	"unsafe"
-
-	"golang.org/x/sys/windows"
 )
 
 // usque (github.com/paulvers-ui/usque, MIT) carries WARP over MASQUE. fswin
@@ -38,7 +34,7 @@ import (
 
 type usque struct {
 	cmd        *exec.Cmd
-	job        windows.Handle
+	job        procJob
 	url        string // socks5://user:pass@127.0.0.1:port
 	port       int
 	user, pass string
@@ -113,7 +109,7 @@ func startUsqueOn(s usqueSetup, port int, user, pass string) (*usque, error) {
 		// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- usque.exe is fswin's own fixed path; args are built here and user flags are validated by usqueFlags
 		cmd := exec.Command(s.exe, args...) //nolint:gosec // G204: usque.exe is fswin's own fixed path
 		cmd.Dir = s.dir
-		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: childFlags}
+		cmd.SysProcAttr = childAttr()
 		tok.unelevated(cmd)
 		out, err := cmd.StdoutPipe()
 		if err != nil {
@@ -189,10 +185,7 @@ func (u *usque) stop() {
 	case <-u.done:
 	case <-time.After(5 * time.Second):
 	}
-	if u.job != 0 {
-		_ = windows.CloseHandle(u.job)
-		u.job = 0
-	}
+	u.job.close()
 }
 
 // exited tells whether the process has ended.
@@ -205,15 +198,6 @@ func (u *usque) exited() bool {
 	}
 }
 
-// childFlags start usque with no console at all, in its own process group.
-// With CREATE_NO_WINDOW it got a hidden console: a console control event
-// (Ctrl+C, the console closing, a sign-out) killed it with 0xC000013A, and
-// started from the service into the user's session it could fail before
-// running any code with 0xC0000142, when Windows could not set that console
-// up there -- the two deaths in the 2026-10-11 debug zip that left the VPN
-// down. Its output still comes through the pipe.
-const childFlags = windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP
-
 // usqueRegister creates a free WARP MASQUE identity in cfg unless it exists.
 func usqueRegister(s usqueSetup, cfg string) error {
 	if statUserFile(cfg) == nil {
@@ -223,7 +207,7 @@ func usqueRegister(s usqueSetup, cfg string) error {
 	// usque.exe beside fswin.exe; argv only, no shell
 	cmd := exec.Command(s.exe, "-c", cfg, "register", "--accept-tos") //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd.Dir = s.dir
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: childFlags}
+	cmd.SysProcAttr = childAttr()
 	asUser.Load().unelevated(cmd)
 	b, err := cmd.CombinedOutput()
 	if err != nil {
@@ -319,36 +303,6 @@ func exitCode(st *os.ProcessState) string {
 		return fmt.Sprintf("0x%08X", c)
 	}
 	return fmt.Sprint(c)
-}
-
-// killOnCloseJob puts pid in a job object that kills it when the last handle
-// to the job closes, which happens when fswin exits for any reason.
-func killOnCloseJob(pid int) (windows.Handle, error) {
-	job, err := windows.CreateJobObject(nil, nil)
-	if err != nil {
-		return 0, err
-	}
-	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{
-		BasicLimitInformation: windows.JOBOBJECT_BASIC_LIMIT_INFORMATION{
-			LimitFlags: windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-		},
-	}
-	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
-		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
-		windows.CloseHandle(job)
-		return 0, err
-	}
-	p, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(pid))
-	if err != nil {
-		windows.CloseHandle(job)
-		return 0, err
-	}
-	defer windows.CloseHandle(p)
-	if err := windows.AssignProcessToJobObject(job, p); err != nil {
-		windows.CloseHandle(job)
-		return 0, err
-	}
-	return job, nil
 }
 
 // coreFlags belong to fswin: the proxy address and password, and the

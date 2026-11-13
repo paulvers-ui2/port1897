@@ -272,13 +272,18 @@ function cleanPatch(patch, keys) {
   return out;
 }
 
+// The app runs on Windows and on Linux (the .deb): the engine and usque are
+// fswin.exe and usque.exe on one, fswin and usque on the other.
+const IS_LINUX = process.platform === 'linux';
+const EXE = IS_LINUX ? '' : '.exe';
+
 function enginePath() {
-  if (app.isPackaged) return path.join(process.resourcesPath, 'engine', 'fswin.exe');
-  return process.env.FSWIN_PATH || path.join(__dirname, 'engine', 'fswin.exe');
+  if (app.isPackaged) return path.join(process.resourcesPath, 'engine', 'fswin' + EXE);
+  return process.env.FSWIN_PATH || path.join(__dirname, 'engine', 'fswin' + EXE);
 }
 
 function usquePath() {
-  return path.join(path.dirname(enginePath()), 'usque.exe');
+  return path.join(path.dirname(enginePath()), 'usque' + EXE);
 }
 
 // ---------- settings ----------
@@ -825,6 +830,9 @@ const psQuote = (s) => "'" + s.replace(/'/g, "''") + "'";
 // launchElevated starts exe as admin (a UAC prompt) and resolves with its
 // process id, so a caller can tell when it exits.
 function launchElevated(exe, args) {
+  // Linux: the engine starts only through AuroraVPN Service (auroravpn.service,
+  // installed by the .deb), which runs as root; there is no UAC to ask
+  if (IS_LINUX) return Promise.reject(new Error('AuroraVPN Service is not running. Start it with: sudo systemctl enable --now auroravpn'));
   const cmd = `(Start-Process -FilePath ${psQuote(exe)} -Verb RunAs -WindowStyle Hidden -PassThru -ArgumentList ${psQuote(args.map(winQuote).join(' '))}).Id`;
   return new Promise((resolve, reject) => {
     execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', cmd], { windowsHide: true }, (err, stdout, stderr) => {
@@ -843,7 +851,8 @@ function launchElevated(exe, args) {
 // older install) or when it refuses (a standard user), the engine starts
 // through a UAC prompt as before. Resolves with the service's reply, or null
 // when there is no service.
-const SERVICE_PIPE = String.raw`\\.\pipe\AuroraVPN`;
+// Linux: the unix socket of auroravpn.service (service_linux.go)
+const SERVICE_PIPE = IS_LINUX ? '/run/auroravpn/auroravpn.sock' : String.raw`\\.\pipe\AuroraVPN`;
 
 function serviceCallOnce(req, timeout) {
   return new Promise((resolve) => {
@@ -857,7 +866,7 @@ function serviceCallOnce(req, timeout) {
       resolve(v);
     };
     sock.setTimeout(timeout, () => done({ ok: false, error: 'AuroraVPN Service did not answer.' }));
-    sock.on('error', (e) => done(e.code === 'ENOENT' ? null : { ok: false, busy: e.code === 'EBUSY', error: `AuroraVPN Service: ${e.message}` }));
+    sock.on('error', (e) => done(e.code === 'ENOENT' || (IS_LINUX && e.code === 'ECONNREFUSED') ? null : { ok: false, busy: e.code === 'EBUSY', error: `AuroraVPN Service: ${e.message}` }));
     sock.on('connect', () => sock.write(JSON.stringify(req) + '\n'));
     sock.on('data', (d) => {
       buf += d;
@@ -975,6 +984,7 @@ async function startEngineOnce() {
     pid = svc.pid || 0;
     appLog(`engine ${pid} started by AuroraVPN Service`);
   } else {
+    if (svc && IS_LINUX) return { ok: false, error: svc.error || 'AuroraVPN Service did not start the engine.' };
     if (svc) appLog('AuroraVPN Service did not start the engine; asking through UAC:', svc.error);
     try {
       pid = await launchElevated(exe, args);
@@ -1944,6 +1954,7 @@ function psRun(script, timeout = 30000) {
 // What the network looks like: adapters, routes, DNS servers and the NRPT
 // rules other VPNs add. These show at once when two VPNs fight.
 async function systemReport() {
+  if (IS_LINUX) return systemReportLinux();
   const parts = [
     ['Windows', '[Environment]::OSVersion.VersionString; (Get-CimInstance Win32_OperatingSystem).Caption'],
     ['Adapters', 'Get-NetAdapter | Format-Table -AutoSize ifIndex,Name,InterfaceDescription,Status,LinkSpeed | Out-String -Width 220'],
@@ -1973,6 +1984,38 @@ async function systemReport() {
   ];
   for (const [title, cmd] of parts) out.push(`===== ${title} =====`, (await psRun(cmd)).text.trim(), '');
   return out.join('\r\n');
+}
+
+// shRun runs a shell command line (Linux).
+function shRun(cmd, timeout = 30000) {
+  return new Promise((resolve) => {
+    execFile('/bin/sh', ['-c', cmd], { timeout, maxBuffer: 8 << 20 }, (err, stdout, stderr) =>
+      resolve({ ok: !err, text: `${stdout || ''}${stderr || ''}${err && !stdout ? String(err.message) : ''}` })
+    );
+  });
+}
+
+// systemReportLinux is systemReport on Linux: interfaces, routes and rules,
+// DNS, nftables and other VPNs.
+async function systemReportLinux() {
+  const parts = [
+    ['System', 'cat /etc/os-release 2>/dev/null | head -4; uname -srm'],
+    ['AuroraVPN Service', 'systemctl status auroravpn --no-pager -n 30 2>&1 | head -40'],
+    ['Interfaces', 'ip -brief address 2>&1'],
+    ['Routes', 'ip route show table all 2>&1 | grep -v "^local\\|^broadcast" | head -80'],
+    ['Routing rules', 'ip rule 2>&1'],
+    ['DNS', 'resolvectl status 2>/dev/null | head -60 || true; echo; cat /etc/resolv.conf 2>&1'],
+    ['nftables tables', 'nft list tables 2>&1'],
+    ['VPN and tunnel programs running', "ps -eo pid,comm,args 2>/dev/null | grep -Ei 'vpn|proton|warp|wireguard|wg-quick|nord|mullvad|openvpn|usque|fswin|tailscale|zerotier' | grep -v grep"],
+  ];
+  const v = process.versions;
+  const out = [
+    `AuroraVPN ${app.getVersion()} debug report, ${new Date().toISOString()}`,
+    `Electron ${v.electron}, Chromium ${v.chrome}, Node ${v.node}; Linux ${os.release()} ${os.arch()}; engine ${fs.existsSync(enginePath()) ? enginePath() : 'missing'}`,
+    '',
+  ];
+  for (const [title, cmd] of parts) out.push(`===== ${title} =====`, (await shRun(cmd)).text.trim(), '');
+  return out.join('\n');
 }
 
 // crashDumpList names the crash dumps Electron keeps, with sizes and dates;
@@ -2111,7 +2154,13 @@ ipcMain.handle('debug:zip', async () => {
     // zip next to the temp folder, then copy over the chosen file: the user's
     // path never reaches PowerShell, and a failed zip leaves it untouched
     const tmpZip = tmp + '.zip';
-    const zip = await psRun(`$ErrorActionPreference = 'Stop'; Compress-Archive -Path ${psQuote(path.join(tmp, '*'))} -DestinationPath ${psQuote(tmpZip)} -Force`, 120000);
+    const zip = IS_LINUX
+      ? await new Promise((resolve) =>
+          execFile('python3', ['-c', 'import shutil,sys; shutil.make_archive(sys.argv[1][:-4], "zip", sys.argv[2])', tmpZip, tmp], { timeout: 120000 }, (err, so, se) =>
+            resolve({ ok: !err, text: `${se || ''}${err ? err.message : ''}` })
+          )
+        )
+      : await psRun(`$ErrorActionPreference = 'Stop'; Compress-Archive -Path ${psQuote(path.join(tmp, '*'))} -DestinationPath ${psQuote(tmpZip)} -Force`, 120000);
     if (!zip.ok || !fs.existsSync(tmpZip)) return { ok: false, error: zip.text.trim() || 'Could not write the zip.' };
     fs.copyFileSync(tmpZip, r.filePath);
     shell.showItemInFolder(r.filePath);
@@ -2214,7 +2263,7 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on('child-process-gone', (_e, d) => appLog('child process gone:', d.type, d.reason, 'exit code', d.exitCode));
   app.whenReady().then(async () => {
-    appLog(`AuroraVPN ${app.getVersion()} started (Electron ${process.versions.electron}, Windows ${os.release()})`);
+    appLog(`AuroraVPN ${app.getVersion()} started (Electron ${process.versions.electron}, ${IS_LINUX ? "Linux" : "Windows"} ${os.release()})`);
     Menu.setApplicationMenu(null);
     // the window needs no web permissions (notifications come from the main
     // process, the clipboard goes through IPC): refuse every request and check

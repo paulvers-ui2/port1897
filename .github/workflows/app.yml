@@ -149,6 +149,112 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
+  # The Linux app: the same engine and Electron app as a .deb for Debian 12
+  # and 13 and Ubuntu 22.04 and 24.04 (Debian 11 best effort). It is its own
+  # job: the Windows release never waits on it or fails with it.
+  linux:
+    name: Linux app (.deb, x64)
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: ${{ needs.version.outputs.tag == '' }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Engine
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: "0" # static: runs on any glibc, Debian 11 too
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          mkdir -p ui/engine
+          ver="${GITHUB_SHA:0:8}"
+          if [ -n "$TAG" ]; then ver="$TAG+$ver"; fi
+          go build -trimpath -ldflags="-checklinkname=0 -s -w -X main.version=$ver" -o ui/engine/fswin ./cmd/fswin
+          ui/engine/fswin -version
+      - name: usque (WARP over MASQUE)
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+          USQUE_REPO: https://github.com/paulvers-ui2/usque.git
+          USQUE_REF: a515ed69cd4c02a88c0c8d4753e5e540865a7fe0 # usque v0.1.7
+        run: |
+          git init -q usque-src
+          git -C usque-src fetch -q --depth 1 "$USQUE_REPO" "$USQUE_REF"
+          git -C usque-src checkout -q FETCH_HEAD
+          (cd usque-src && go build -trimpath -ldflags="-s -w" -o "$GITHUB_WORKSPACE/ui/engine/usque" .)
+          cp usque-src/LICENSE.md ui/engine/usque-LICENSE.md
+      - name: Version of the release
+        if: needs.version.outputs.tag != ''
+        working-directory: ui
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          v="${TAG#v}"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "not a version: $v"; exit 1; }
+          npm pkg set version="$v"
+      - name: Build the .deb
+        working-directory: ui
+        run: |
+          npm ci --no-audit --no-fund
+          npm run dist:linux
+          deb=$(ls dist/*.deb)
+          dpkg-deb -I "$deb"
+          dpkg-deb -c "$deb" | grep -E 'engine/(fswin|usque)$|auroravpn.service$'
+      # installed for real: postinst enables AuroraVPN Service under systemd,
+      # the packaged app passes its self-test, and the service answers only
+      # the installed app
+      - name: Install and start
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb ./ui/dist/*.deb
+          systemctl is-enabled auroravpn
+          for i in $(seq 1 20); do systemctl is-active -q auroravpn && break; sleep 0.5; done
+          systemctl status auroravpn --no-pager
+          test -S /run/auroravpn/auroravpn.sock
+          reply=$(python3 -c 'import socket;s=socket.socket(socket.AF_UNIX);s.connect("/run/auroravpn/auroravpn.sock");s.sendall(b"{\"cmd\":\"ping\"}\n");s.shutdown(socket.SHUT_WR);print(s.makefile().read())')
+          echo "$reply"
+          echo "$reply" | grep -q 'only /opt/AuroraVPN/auroravpn may use AuroraVPN Service'
+          timeout 120 xvfb-run -a auroravpn --self-test
+          tail -n 20 ~/.config/AuroraVPN/app.log
+      - name: Remove
+        run: |
+          sudo apt-get remove -y -q auroravpn
+          ! systemctl is-active -q auroravpn
+          test ! -e /usr/lib/systemd/system/auroravpn.service
+      # installs and its engine runs on each supported release
+      - name: Install on Debian and Ubuntu
+        run: |
+          deb=$(ls ui/dist/*.deb)
+          for img in debian:12 debian:13 ubuntu:22.04 ubuntu:24.04 debian:11; do
+            echo "::group::$img"
+            if docker run --rm -v "$PWD/ui/dist:/dist:ro" "$img" sh -c \
+                'export DEBIAN_FRONTEND=noninteractive; apt-get update -q >/dev/null && apt-get install -y -q /dist/*.deb >/dev/null && /opt/AuroraVPN/resources/engine/fswin -version && /opt/AuroraVPN/resources/engine/usque --help >/dev/null'; then
+              echo "$img: ok"
+            elif [ "$img" = debian:11 ]; then
+              echo "::warning::debian:11 (best effort): the .deb did not install"
+            else
+              echo "::error::$img: the .deb did not install"; exit 1
+            fi
+            echo "::endgroup::"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: auroravpn-deb-linux-x64
+          path: ui/dist/*.deb
+          compression-level: 0
+          if-no-files-found: error
+
   # Publishes the build as the latest GitHub release: on every merge to main,
   # and for a pushed vX.Y.Z tag. The app's update check reads it.
   release:
@@ -195,3 +301,32 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
         run: gh workflow run release-aar.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG" -f tag="$TAG"
+
+  # The .deb lands on the same release once it is out. Separate from the
+  # release job, so a Linux failure never holds back the Windows release.
+  release-linux:
+    name: GitHub release (.deb)
+    if: needs.version.outputs.tag != '' && needs.release.result == 'success' && needs.linux.result == 'success'
+    needs: [version, release, linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: auroravpn-deb-linux-x64
+          path: dist
+      - name: Checksums
+        run: cd dist && sha256sum *.deb > SHA256SUMS-linux.txt && cat SHA256SUMS-linux.txt
+      - name: Build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.deb
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
