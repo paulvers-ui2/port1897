@@ -214,6 +214,7 @@ func (ss *sockServer) startEngine(p peer, args []string) (int, error) {
 	if p.uid != 0 {
 		full = append(full, "-user-token", strconv.Itoa(p.uid))
 	}
+	// nosemgrep
 	cmd := exec.Command(ss.engine, full...) //nolint:gosec // G204: this fswin, flags checked above
 	cmd.Dir = "/"
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8"}
@@ -270,9 +271,10 @@ func (ss *sockServer) cleanup() error {
 	if running {
 		return errors.New("the engine is running: stop it first")
 	}
+	// nosemgrep
 	out, err := exec.Command(ss.engine, "-cleanup").CombinedOutput() //nolint:gosec // G204: this fswin
 	if err != nil {
-		return fmt.Errorf("cleanup: %v: %s", err, out)
+		return fmt.Errorf("cleanup: %w: %s", err, out)
 	}
 	return nil
 }

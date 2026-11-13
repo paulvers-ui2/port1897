@@ -55,7 +55,7 @@ func killOnCloseJob(pid int) (procJob, error) {
 		},
 	}
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
-		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil {
+		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))); err != nil { //nolint:gosec // G103: a job object's limits and their size, for Windows
 		windows.CloseHandle(job)
 		return 0, err
 	}

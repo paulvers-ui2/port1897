@@ -106,8 +106,10 @@ func startUsqueOn(s usqueSetup, port int, user, pass string) (*usque, error) {
 	// A SOCKS proxy and a QUIC client: no admin rights, so it runs with the
 	// user's token.
 	build := func(tok *userToken) (*exec.Cmd, io.ReadCloser, error) {
-		// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- usque.exe is fswin's own fixed path; args are built here and user flags are validated by usqueFlags
-		cmd := exec.Command(s.exe, args...) //nolint:gosec // G204: usque.exe is fswin's own fixed path
+		// usque is fswin's own fixed path; args are built here and user flags are
+		// validated by usqueFlags
+		// nosemgrep
+		cmd := exec.Command(s.exe, args...) //nolint:gosec // G204: usque is fswin's own fixed path
 		cmd.Dir = s.dir
 		cmd.SysProcAttr = childAttr()
 		tok.unelevated(cmd)
@@ -205,7 +207,8 @@ func usqueRegister(s usqueSetup, cfg string) error {
 	}
 	s.logf("usque: registering a free WARP identity in %s", cfg)
 	// usque.exe beside fswin.exe; argv only, no shell
-	cmd := exec.Command(s.exe, "-c", cfg, "register", "--accept-tos") //nolint:gosec // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
+	// nosemgrep
+	cmd := exec.Command(s.exe, "-c", cfg, "register", "--accept-tos") //nolint:gosec // G204: fswin's own usque
 	cmd.Dir = s.dir
 	cmd.SysProcAttr = childAttr()
 	asUser.Load().unelevated(cmd)

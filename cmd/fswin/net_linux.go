@@ -53,6 +53,7 @@ func sh(name string, args ...string) error {
 	if err != nil {
 		return err
 	}
+	// nosemgrep
 	out, err := exec.Command(p, args...).CombinedOutput() //nolint:gosec // G204: a system tool, plain arguments
 	if err != nil {
 		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, bytes.TrimSpace(out))

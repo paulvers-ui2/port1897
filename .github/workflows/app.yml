@@ -216,22 +216,27 @@ jobs:
       # the installed app
       - name: Install and start
         run: |
+          # each failure says why in an annotation, with the service's journal
+          fail() {
+            echo "::error::$1 | $(sudo journalctl -u auroravpn --no-pager -n 25 2>&1 | tr '\n' '|' | tail -c 3000)"
+            exit 1
+          }
           sudo apt-get update -q
-          sudo apt-get install -y -q xvfb ./ui/dist/*.deb
-          systemctl is-enabled auroravpn
-          for i in $(seq 1 20); do systemctl is-active -q auroravpn && break; sleep 0.5; done
-          systemctl status auroravpn --no-pager
-          test -S /run/auroravpn/auroravpn.sock
-          reply=$(python3 -c 'import socket;s=socket.socket(socket.AF_UNIX);s.connect("/run/auroravpn/auroravpn.sock");s.sendall(b"{\"cmd\":\"ping\"}\n");s.shutdown(socket.SHUT_WR);print(s.makefile().read())')
+          sudo apt-get install -y -q xvfb ./ui/dist/*.deb || fail "apt install"
+          systemctl is-enabled auroravpn || fail "auroravpn.service is not enabled"
+          for i in $(seq 1 30); do systemctl is-active -q auroravpn && break; sleep 0.5; done
+          systemctl is-active -q auroravpn || fail "auroravpn.service is not running: $(systemctl status auroravpn --no-pager 2>&1 | head -12 | tr '\n' '|')"
+          test -S /run/auroravpn/auroravpn.sock || fail "no socket: $(ls -la /run/auroravpn 2>&1 | tr '\n' '|')"
+          reply=$(python3 -c 'import socket;s=socket.socket(socket.AF_UNIX);s.connect("/run/auroravpn/auroravpn.sock");s.sendall(b"{\"cmd\":\"ping\"}\n");s.shutdown(socket.SHUT_WR);print(s.makefile().read())' 2>&1)
           echo "$reply"
-          echo "$reply" | grep -q 'only /opt/AuroraVPN/auroravpn may use AuroraVPN Service'
-          timeout 120 xvfb-run -a auroravpn --self-test
-          tail -n 20 ~/.config/AuroraVPN/app.log
+          echo "$reply" | grep -q 'only /opt/AuroraVPN/auroravpn may use AuroraVPN Service' || fail "the service answered another program: $reply"
+          out=$(timeout 120 xvfb-run -a auroravpn --self-test 2>&1) || fail "app self-test: $(echo "$out" | tail -n 15 | tr '\n' '|') app.log: $(tail -n 10 ~/.config/AuroraVPN/app.log 2>&1 | tr '\n' '|')"
+          tail -n 20 ~/.config/AuroraVPN/app.log || true
       - name: Remove
         run: |
           sudo apt-get remove -y -q auroravpn
-          ! systemctl is-active -q auroravpn
-          test ! -e /usr/lib/systemd/system/auroravpn.service
+          if systemctl is-active -q auroravpn; then echo "::error::auroravpn.service still runs after remove"; exit 1; fi
+          if [ -e /usr/lib/systemd/system/auroravpn.service ]; then echo "::error::the unit is left after remove"; exit 1; fi
       # installs and its engine runs on each supported release
       - name: Install on Debian and Ubuntu
         run: |
