@@ -221,13 +221,26 @@ jobs:
             echo "::error::$1 | $(sudo journalctl -u auroravpn --no-pager -n 25 2>&1 | tr '\n' '|' | tail -c 3000)"
             exit 1
           }
-          sudo apt-get update -q
+          sudo apt-get update -q || fail "apt update"
           sudo apt-get install -y -q xvfb ./ui/dist/*.deb || fail "apt install"
           systemctl is-enabled auroravpn || fail "auroravpn.service is not enabled"
           for i in $(seq 1 30); do systemctl is-active -q auroravpn && break; sleep 0.5; done
           systemctl is-active -q auroravpn || fail "auroravpn.service is not running: $(systemctl status auroravpn --no-pager 2>&1 | head -12 | tr '\n' '|')"
           test -S /run/auroravpn/auroravpn.sock || fail "no socket: $(ls -la /run/auroravpn 2>&1 | tr '\n' '|')"
-          reply=$(python3 -c 'import socket;s=socket.socket(socket.AF_UNIX);s.connect("/run/auroravpn/auroravpn.sock");s.sendall(b"{\"cmd\":\"ping\"}\n");s.shutdown(socket.SHUT_WR);print(s.makefile().read())' 2>&1)
+          # the service refuses this client (not the app) at once and may
+          # close before the request is sent: a failed send is fine
+          cat > /tmp/ping.py <<'PY'
+          import socket
+          s = socket.socket(socket.AF_UNIX)
+          s.connect("/run/auroravpn/auroravpn.sock")
+          try:
+              s.sendall(b'{"cmd":"ping"}\n')
+              s.shutdown(socket.SHUT_WR)
+          except OSError:
+              pass
+          print(s.makefile().read())
+          PY
+          reply=$(python3 /tmp/ping.py 2>&1) || fail "could not reach the service: $reply"
           echo "$reply"
           echo "$reply" | grep -q 'only /opt/AuroraVPN/auroravpn may use AuroraVPN Service' || fail "the service answered another program: $reply"
           out=$(timeout 120 xvfb-run -a auroravpn --self-test 2>&1) || fail "app self-test: $(echo "$out" | tail -n 15 | tr '\n' '|') app.log: $(tail -n 10 ~/.config/AuroraVPN/app.log 2>&1 | tr '\n' '|')"
