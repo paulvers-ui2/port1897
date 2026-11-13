@@ -239,6 +239,9 @@ func getJSON(ctx context.Context, url string, v any) error {
 	if err != nil {
 		return err
 	}
+	if res == nil {
+		return errASNReply
+	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("%w: %s", errASNReply, res.Status)

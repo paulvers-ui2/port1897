@@ -147,7 +147,7 @@ func serveAPI(addr, tokenFile string, b *bridge, info func() apiStatus, stop fun
 		return nil, err
 	}
 
-	a := &apiServer{b: b, token: tok, host: ln.Addr().String(), info: info, stop: stop}
+	a := &apiServer{b: b, token: tok, host: listenAddr(ln, addr), info: info, stop: stop}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/status", a.status)
 	mux.HandleFunc("GET /api/events", a.events)
@@ -355,4 +355,12 @@ func statusOf(b *bridge, o options, started time.Time, exitID, dnsLabel string) 
 		st.ExitRestarts, st.ExitIssue = sv.status()
 	}
 	return st
+}
+
+// listenAddr is where ln listens, or addr when it cannot say.
+func listenAddr(ln net.Listener, addr string) string {
+	if a := ln.Addr(); a != nil {
+		return a.String()
+	}
+	return addr
 }

@@ -257,7 +257,7 @@ jobs:
           for img in debian:12 debian:13 ubuntu:22.04 ubuntu:24.04 debian:11; do
             echo "::group::$img"
             if docker run --rm -v "$PWD/ui/dist:/dist:ro" "$img" sh -c \
-                'export DEBIAN_FRONTEND=noninteractive; apt-get update -q >/dev/null && apt-get install -y -q /dist/*.deb >/dev/null && /opt/AuroraVPN/resources/engine/fswin -version && /opt/AuroraVPN/resources/engine/usque --help >/dev/null'; then
+                'export DEBIAN_FRONTEND=noninteractive; { apt-get update -q >/dev/null 2>&1 || { sed -i "s#deb.debian.org#archive.debian.org#g; /security/d" /etc/apt/sources.list 2>/dev/null; apt-get update -q >/dev/null; }; } && apt-get install -y -q /dist/*.deb >/dev/null && /opt/AuroraVPN/resources/engine/fswin -version && /opt/AuroraVPN/resources/engine/usque --help >/dev/null'; then
               echo "$img: ok"
             elif [ "$img" = debian:11 ]; then
               echo "::warning::debian:11 (best effort): the .deb did not install"

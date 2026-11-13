@@ -137,6 +137,9 @@ func (ss *sockServer) identify(c *net.UnixConn) (peer, error) {
 	if cerr != nil {
 		return peer{}, cerr
 	}
+	if cred == nil {
+		return peer{}, errors.New("who is asking: no peer credentials")
+	}
 	p := peer{pid: int(cred.Pid), uid: int(cred.Uid)}
 	exe, err := os.Readlink("/proc/" + strconv.Itoa(p.pid) + "/exe")
 	if err != nil {
