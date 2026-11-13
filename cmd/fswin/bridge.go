@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//go:build windows
+//go:build windows || linux
 
 package main
 
@@ -26,7 +26,6 @@ import (
 	"github.com/celzero/firestack/win/ifbind"
 	"github.com/celzero/firestack/win/owner"
 	"github.com/miekg/dns"
-	"golang.org/x/sys/windows"
 )
 
 const unknownUID = -1
@@ -122,7 +121,7 @@ func newBridge(binder *ifbind.Binder, initial *rules, blockcsv string) *bridge {
 		apps:    newApps(),
 		conns:   newConnTable(),
 		dnsWhy:  newWhyCache(),
-		selfpid: windows.GetCurrentProcessId(),
+		selfpid: uint32(os.Getpid()), //nolint:gosec // G115: a pid
 		log:     newJournal(),
 	}
 	if initial == nil {
@@ -131,7 +130,7 @@ func newBridge(binder *ifbind.Binder, initial *rules, blockcsv string) *bridge {
 	b.rules.Store(initial)
 	self, err := os.Executable()
 	if err != nil {
-		self = "fswin.exe"
+		self = "fswin" + exeSuffix
 	}
 	b.selfuid = b.apps.uid(self)
 	for _, s := range strings.Split(blockcsv, ",") {

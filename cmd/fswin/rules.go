@@ -11,7 +11,7 @@
 //     Licensed under the Apache License, Version 2.0
 //     (the firewall in BraveVPNService.kt of the Rethink Android app)
 
-//go:build windows
+//go:build windows || linux
 
 package main
 

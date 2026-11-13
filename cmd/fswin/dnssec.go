@@ -11,7 +11,7 @@
 //     Licensed under the Apache License, Version 2.0
 //     (DnsSecGuard.kt in the Rethink / AuroraVPN Android app)
 
-//go:build windows
+//go:build windows || linux
 
 package main
 

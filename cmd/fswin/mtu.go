@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-//go:build windows
+//go:build windows || linux
 
 package main
 
@@ -50,7 +50,7 @@ type mtuPlan struct {
 	Exit    int    `json:"exit"`
 	Adapter int    `json:"adapter"`
 	Auto    bool   `json:"auto"` // false: the adapter's was set with -mtu
-	Why     string `json:"why"` // what it comes from: "Wi-Fi 1500, WireGuard 1420"
+	Why     string `json:"why"`  // what it comes from: "Wi-Fi 1500, WireGuard 1420"
 	exitWhy string // the exit's part of Why: ", WireGuard 1420"
 }
 

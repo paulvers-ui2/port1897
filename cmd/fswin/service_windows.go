@@ -257,24 +257,6 @@ func serviceLog(path string) func(string, ...any) {
 	}
 }
 
-// pipeRequest is one request to the service.
-type pipeRequest struct {
-	Cmd  string   `json:"cmd"`            // ping, start, stop, unkeep or cleanup
-	Args []string `json:"args,omitempty"` // start: the engine's flags
-	// start: keep the engine running until a stop or unkeep (keep_windows.go),
-	// and with Watch also restart it when the internet stays away (a VPN exit)
-	Keep  bool `json:"keep,omitempty"`
-	Watch bool `json:"watch,omitempty"`
-}
-
-// pipeReply is the service's answer.
-type pipeReply struct {
-	OK      bool   `json:"ok"`
-	Error   string `json:"error,omitempty"`
-	PID     uint32 `json:"pid,omitempty"`     // start: the engine's process
-	Version string `json:"version,omitempty"` // ping
-}
-
 type pipeServer struct {
 	app    string // the only program that may ask
 	engine string // fswin.exe
@@ -609,30 +591,6 @@ func userPrimary(t windows.Token) (windows.Token, error) {
 		return 0, fmt.Errorf("the user's token: %w", err)
 	}
 	return dup, nil
-}
-
-// refusedFlags pick a program for the engine to run, or one of fswin's own
-// modes, not a setting.
-var refusedFlags = map[string]bool{"service": true, "app": true, "stop-handle": true, "user-token": true, "usque": true}
-
-// checkEngineArgs refuses the flags a client may not pass.
-func checkEngineArgs(args []string) error {
-	if len(args) > 256 {
-		return errors.New("too many flags")
-	}
-	for _, a := range args {
-		if len(a) > 8192 || strings.ContainsRune(a, 0) {
-			return errors.New("a flag is too long")
-		}
-		if !strings.HasPrefix(a, "-") {
-			continue
-		}
-		name, _, _ := strings.Cut(strings.TrimLeft(a, "-"), "=")
-		if refusedFlags[strings.ToLower(name)] {
-			return fmt.Errorf("the flag -%s is not allowed through the service", name)
-		}
-	}
-	return nil
 }
 
 // engineProc is a process the service started: the engine, or fswin -cleanup.
