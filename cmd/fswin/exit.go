@@ -219,6 +219,9 @@ func registerWarp() (*warpAccount, error) {
 	if err != nil {
 		return nil, fmt.Errorf("warp: register: %w", err)
 	}
+	if res == nil {
+		return nil, errors.New("warp: register: no reply")
+	}
 	defer res.Body.Close()
 	rb, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if res.StatusCode != http.StatusOK {
