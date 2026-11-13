@@ -109,6 +109,10 @@ go1.26.10), which govulncheck (windows) reports as reachable from
 `ipn.sedialer.tlsVerify`. Every build here, including the Windows exe, takes its Go
 version from this line.
 
+**toolchain go1.26.10 → go1.26.11**, as usque: go1.26.10 has a `net/http`
+vulnerability (GO-2026-6859) that govulncheck (windows) reports as reachable
+from `ipn`, `doh`, `rpn` and `xdns`.
+
 **Not wired in yet:** `fswin -dnssec` is still the DnsSecGuard port (blocks
 bogus/bogon answers, marks AD-verified ones). Using `dnssecv` for true local
 validation, or as a DNSSEC status line in the UI like the Android DNS card, is a
