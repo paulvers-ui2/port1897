@@ -163,6 +163,11 @@ func (ss *sockServer) answer(c *net.UnixConn) {
 	p, err := ss.identify(c)
 	if err != nil {
 		ss.logf("refused: %v", err)
+		// read what it sent first (and ignore it): a unix socket closed with
+		// unread data resets the connection, and the caller would lose the
+		// reason
+		_ = c.SetReadDeadline(time.Now().Add(time.Second))
+		_, _ = io.Copy(io.Discard, io.LimitReader(c, 64<<10))
 		_ = json.NewEncoder(c).Encode(pipeReply{Error: err.Error()})
 		return
 	}

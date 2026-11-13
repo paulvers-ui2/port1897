@@ -218,7 +218,7 @@ jobs:
         run: |
           # each failure says why in an annotation, with the service's journal
           fail() {
-            echo "::error::$1 | $(sudo journalctl -u auroravpn --no-pager -n 25 2>&1 | tr '\n' '|' | tail -c 3000)"
+            echo "::error::$(printf '%s' "$1" | tr '\n' '|') | $(sudo journalctl -u auroravpn --no-pager -n 25 2>&1 | tr '\n' '|' | tail -c 3000)"
             exit 1
           }
           sudo apt-get update -q || fail "apt update"
