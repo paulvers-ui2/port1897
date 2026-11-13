@@ -1,0 +1,28 @@
+# AuroraVPN Service: starts the engine (fswin) for the AuroraVPN app, which
+# runs as the user; installed by the .deb. See cmd/fswin/service_linux.go.
+[Unit]
+Description=AuroraVPN Service
+Documentation=https://github.com/paulvers-ui2/port1897
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/AuroraVPN/resources/engine/fswin -service run -app /opt/AuroraVPN/auroravpn
+# what a killed engine left: its DNS setting, routing rules and kill switch
+ExecStopPost=/opt/AuroraVPN/resources/engine/fswin -cleanup
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=auroravpn
+RuntimeDirectoryMode=0755
+# the service stops the engine itself (SIGTERM, then SIGKILL after 15 s)
+KillMode=mixed
+TimeoutStopSec=25
+NoNewPrivileges=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target
