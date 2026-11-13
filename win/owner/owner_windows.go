@@ -57,6 +57,12 @@ type snapshot struct {
 
 var tcpSnap, udpSnap atomic.Pointer[snapshot]
 
+// selfPID is this process. The engine proxies every program's connection, so
+// it holds a socket on about as many local ports as all of them together: a
+// lookup that falls back to "some socket on that port" must not land on one
+// of the engine's own, or the logs name the engine instead of the program.
+var selfPID = windows.GetCurrentProcessId()
+
 // tableCopy returns a copy of the table no older than snapTTL, or a fresh one.
 func tableCopy(snap *atomic.Pointer[snapshot], proc *windows.LazyProc, class uintptr, fresh bool) ([]byte, error) {
 	if s := snap.Load(); !fresh && s != nil && time.Since(s.at) < snapTTL {
@@ -93,7 +99,8 @@ func TCP4(local, remote netip.AddrPort) (uint32, error) {
 }
 
 // tcpLookup finds local -> remote in a TCP table: its pid and true; else the
-// pid of a socket on local's port and false (0 if none).
+// pid of another program's socket on local's port and false (0 if none). Only
+// an exact match names this process (selfPID).
 func tcpLookup(buf []byte, local, remote netip.AddrPort) (pid uint32, exact bool) {
 	n := int(binary.LittleEndian.Uint32(buf))
 	rows := buf[4:]
@@ -102,7 +109,9 @@ func tcpLookup(buf []byte, local, remote netip.AddrPort) (pid uint32, exact bool
 		r := [tcpRowSize]byte(rows[i*tcpRowSize:])
 		if addrPort(r[4:8], r[8:12]) != local {
 			if port(r[8:12]) == local.Port() && portOnly == 0 {
-				portOnly = binary.LittleEndian.Uint32(r[20:24])
+				if pid := binary.LittleEndian.Uint32(r[20:24]); pid != selfPID {
+					portOnly = pid
+				}
 			}
 			continue
 		}
@@ -139,7 +148,9 @@ func UDP4(local netip.AddrPort) (uint32, error) {
 }
 
 // udpLookup finds the socket bound to local in a UDP table, or else the one
-// bound to the wildcard address on local's port: its pid, or 0.
+// bound to the wildcard address on local's port: its pid, or 0. When several
+// wildcard sockets share the port, another program's wins over this
+// process's (selfPID).
 func udpLookup(buf []byte, local netip.AddrPort) uint32 {
 	n := int(binary.LittleEndian.Uint32(buf))
 	rows := buf[4:]
@@ -154,7 +165,7 @@ func udpLookup(buf []byte, local netip.AddrPort) uint32 {
 		if ap.Addr() == local.Addr() {
 			return pid
 		}
-		if ap.Addr().IsUnspecified() && wildcard == 0 {
+		if ap.Addr().IsUnspecified() && (wildcard == 0 || (wildcard == selfPID && pid != selfPID)) {
 			wildcard = pid
 		}
 	}

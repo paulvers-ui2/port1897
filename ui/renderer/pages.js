@@ -1083,10 +1083,37 @@ PAGES.logs = () => {
       view.fill(search.input.value);
     } }))
   );
+  // The engine's own connections (fswin.exe: its DNS server, WARP sign-up and
+  // the like) can be left out. The choice is display only: no restart.
+  const engine =
+    logFilter === 'flow'
+      ? h(
+          'div',
+          { class: 'chips center' },
+          h('button', {
+            class: 'chip' + (App.settings.hideEngine ? ' on' : ''),
+            type: 'button',
+            text: 'Hide engine',
+            title: 'Leave out the connections AuroraVPN’s own engine (fswin.exe) makes',
+            onclick: async () => {
+              const banner = App.restartNeeded;
+              await App.save({ hideEngine: !App.settings.hideEngine });
+              App.restartNeeded = banner;
+              App.render();
+            },
+          })
+        )
+      : null;
   PAGE_TICK.logs = () => view.tick();
   view.fill('');
-  return screen('Logs', tabs, shows, h('div', { class: 'field-row' }, search), list, h('div', { class: 'actions' }, btn('Save debug zip', saveDebugZip)));
+  return screen('Logs', tabs, shows, engine, h('div', { class: 'field-row' }, search), list, h('div', { class: 'actions' }, btn('Save debug zip', saveDebugZip)));
 };
+
+// A log line or open connection of the engine itself: marked by the engine
+// ("self"), or by its program name in lines kept from older versions.
+function isEngine(e) {
+  return e.self === true || /^fswin(\.exe)?$/i.test(e.app || '');
+}
 
 // Website icon from DuckDuckGo when "Show website icon" is on; else the DNS
 // globe. Only well-formed host names go into the URL.
@@ -1156,7 +1183,7 @@ function flowRow(e) {
       'span',
       { class: 'row-text' },
       h('span', { class: 'row-title' }, flag(e.country), (e.domain || e.dst) + (e.blocked ? '  · blocked' : '')),
-      h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.app || '?'} · ${e.proto} ${e.dst}${e.country ? ' · ' + countryName(e.country) : ''}${e.via && e.via !== 'direct' && e.via !== 'blocked' ? ' · via ' + e.via : ''}${e.blocked && e.rule ? ' · ' + e.rule : ''}` }),
+      h('span', { class: 'row-sub', text: `${fmtTime(e.at)} · ${e.app || '?'}${isEngine(e) ? ' (engine)' : ''} · ${e.proto} ${e.dst}${e.country ? ' · ' + countryName(e.country) : ''}${e.via && e.via !== 'direct' && e.via !== 'blocked' ? ' · via ' + e.via : ''}${e.blocked && e.rule ? ' · ' + e.rule : ''}` }),
       pathLine(e.path)
     )
   );
@@ -1193,7 +1220,7 @@ function logView(list) {
   const act = activeList(list);
 
   const isActive = () => logFilter === 'flow' && logShow === 'active';
-  const keep = (e) => e.kind === logFilter && (logShow === 'all' || (logShow === 'blocked') === !!e.blocked) && (!q || logHay(e).includes(q));
+  const keep = (e) => e.kind === logFilter && (logShow === 'all' || (logShow === 'blocked') === !!e.blocked) && !(e.kind === 'flow' && App.settings.hideEngine && isEngine(e)) && (!q || logHay(e).includes(q));
 
   const setEmpty = () => {
     const text = App.status ? 'Nothing yet. Use the internet and connections show up here.' : 'Start protection to see connections.';
@@ -1289,7 +1316,7 @@ function activeList(list) {
   // At most LOG_CHUNK new rows a go (LOG_FIRST the first time); the rest
   // come in the next go, so a burst never holds the window up.
   function paint(conns, q, my) {
-    const match = conns.filter((c) => matches(q, [c.app, c.path, c.domain, c.dst], c.country));
+    const match = conns.filter((c) => !(App.settings.hideEngine && isEngine(c)) && matches(q, [c.app, c.path, c.domain, c.dst], c.country));
     if (!match.length) {
       rows = new Map();
       const text = !App.status ? 'Start protection to see connections.' : conns.length ? 'No active connections match.' : 'No active connections';

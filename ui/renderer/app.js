@@ -335,7 +335,7 @@ function demoPort() {
   let s = {
     dnsType: 'doh', doh: 'https://cloudflare-dns.com/dns-query', dohIps: '1.1.1.1,1.0.0.1', dohName: 'Cloudflare',
     dot: '', dotName: '', dnscrypt: '', dnscryptName: '', lastOtherType: 'doh', customDns: {},
-    dnsDirect: false, dnsCache: false, dnssec: true, favicons: false, undelegated: false, dnsFallback: false, nrpt: true,
+    dnsDirect: false, dnsCache: false, dnssec: true, favicons: false, hideEngine: false, undelegated: false, dnsFallback: false, nrpt: true,
     fallbackDoh: 'https://cloudflare-dns.com/dns-query', fallbackIps: '1.1.1.1,1.0.0.1', fallbackName: 'Cloudflare',
     exit: 'masque', wgActive: '', socks: { host: '127.0.0.1', port: 1080, user: '', pass: '' }, http: { host: '', port: 8080, user: '', pass: '' },
     warpSni: '', exitSni: '', masqueFlags: '', warp1Flags: '', wgFlags: '', warp2Flags: '', warpAutoDisable: false,

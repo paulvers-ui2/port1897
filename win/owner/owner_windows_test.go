@@ -9,6 +9,7 @@
 package owner
 
 import (
+	"encoding/binary"
 	"errors"
 	"net"
 	"net/netip"
@@ -84,5 +85,74 @@ func TestLookupsIgnoreShortOrTornTables(t *testing.T) {
 	}
 	if pid := udpLookup(buf, local); pid != 0 {
 		t.Fatalf("udp: %d", pid)
+	}
+}
+
+// tcpRow is one MIB_TCPROW_OWNER_PID row.
+func tcpRow(local, remote netip.AddrPort, pid uint32) []byte {
+	r := make([]byte, tcpRowSize)
+	la, ra := local.Addr().As4(), remote.Addr().As4()
+	copy(r[4:8], la[:])
+	binary.BigEndian.PutUint16(r[8:10], local.Port())
+	copy(r[12:16], ra[:])
+	binary.BigEndian.PutUint16(r[16:18], remote.Port())
+	binary.LittleEndian.PutUint32(r[20:24], pid)
+	return r
+}
+
+// udpRow is one MIB_UDPROW_OWNER_PID row.
+func udpRow(local netip.AddrPort, pid uint32) []byte {
+	r := make([]byte, udpRowSize)
+	la := local.Addr().As4()
+	copy(r[0:4], la[:])
+	binary.BigEndian.PutUint16(r[4:6], local.Port())
+	binary.LittleEndian.PutUint32(r[8:12], pid)
+	return r
+}
+
+func mibTable(rows ...[]byte) []byte {
+	buf := binary.LittleEndian.AppendUint32(nil, uint32(len(rows)))
+	for _, r := range rows {
+		buf = append(buf, r...)
+	}
+	return buf
+}
+
+// The engine's own sockets on the physical adapter share port numbers with
+// the programs it proxies: the port-only fallback must not name the engine.
+func TestFallbacksSkipSelf(t *testing.T) {
+	const other = 4242
+	self := selfPID
+	if self == other {
+		t.Skip("pid clash")
+	}
+	local := netip.MustParseAddrPort("10.111.222.1:50000")
+	remote := netip.MustParseAddrPort("93.184.215.14:443")
+	phys := netip.MustParseAddrPort("192.168.1.20:50000")
+	elsewhere := netip.MustParseAddrPort("1.1.1.1:443")
+
+	// only the engine has a socket on that port: unknown, not the engine
+	if pid, exact := tcpLookup(mibTable(tcpRow(phys, elsewhere, self)), local, remote); pid != 0 || exact {
+		t.Fatalf("tcp, self only: %d %v; want 0 false", pid, exact)
+	}
+	// the engine's row comes first: the other program's is still found
+	if pid, exact := tcpLookup(mibTable(tcpRow(phys, elsewhere, self), tcpRow(phys, remote, other)), local, remote); pid != other || exact {
+		t.Fatalf("tcp, self then other: %d %v; want %d false", pid, exact, other)
+	}
+	// an exact match is the engine's own connection, and says so
+	if pid, exact := tcpLookup(mibTable(tcpRow(local, remote, self)), local, remote); pid != self || !exact {
+		t.Fatalf("tcp, exact self: %d %v; want %d true", pid, exact, self)
+	}
+
+	wild := netip.MustParseAddrPort("0.0.0.0:50000")
+	if pid := udpLookup(mibTable(udpRow(wild, self), udpRow(wild, other)), local); pid != other {
+		t.Fatalf("udp, self then other: %d; want %d", pid, other)
+	}
+	if pid := udpLookup(mibTable(udpRow(wild, other), udpRow(wild, self)), local); pid != other {
+		t.Fatalf("udp, other then self: %d; want %d", pid, other)
+	}
+	// alone on the port, the engine's wildcard socket is the engine's
+	if pid := udpLookup(mibTable(udpRow(wild, self)), local); pid != self {
+		t.Fatalf("udp, self only: %d; want %d", pid, self)
 	}
 }

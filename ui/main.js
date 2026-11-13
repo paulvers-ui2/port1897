@@ -60,6 +60,7 @@ const DEFAULTS = {
   dnsCache: false, // "DNS booster"
   dnssec: true, // block bogus answers, as on Android
   favicons: false, // website icons in DNS logs, from DuckDuckGo
+  hideEngine: false, // Logs: leave out the engine's own connections (fswin.exe)
   undelegated: false,
   dnsFallback: false,
   nrpt: true,

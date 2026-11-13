@@ -433,7 +433,7 @@ func (b *bridge) Flow(protocol, uid int32, src, dst, origdsts, domains, probable
 		b.conns.add(cid, liveConn{uid: uid, proto: protocol, dst: dap, domains: doms, app: app,
 			path: b.appPath(uid), via: via, country: cc, at: time.Now().UnixMilli()})
 	}
-	b.log.add(event{Kind: "flow", App: app, Path: b.appPath(uid), Proto: proto(protocol), Dst: dst.V(),
+	b.log.add(event{Kind: "flow", App: app, Path: b.appPath(uid), Self: uid == b.selfuid, Proto: proto(protocol), Dst: dst.V(),
 		Domain: domain, Country: cc, Via: via, Blocked: d.block, Rule: d.why, CID: cid})
 	return &intra.Mark{PIDCSV: pid, CID: cid, UID: strconv.Itoa(int(uid))}
 }

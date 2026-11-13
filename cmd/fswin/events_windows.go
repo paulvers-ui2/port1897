@@ -23,6 +23,7 @@ type event struct {
 	Kind      string `json:"kind"` // "flow", "dns" or "close" (a connection ended)
 	App       string `json:"app,omitempty"`
 	Path      string `json:"path,omitempty"` // the program's full path, when Windows told it
+	Self      bool   `json:"self,omitempty"` // the engine's own connection, on "flow"
 	Proto     string `json:"proto,omitempty"`
 	Dst       string `json:"dst,omitempty"`
 	Domain    string `json:"domain,omitempty"`
