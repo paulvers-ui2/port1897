@@ -2176,7 +2176,7 @@ ipcMain.handle('debug:zip', async () => {
 });
 
 ipcMain.handle('app:setAutostart', (_e, on) => {
-  app.setLoginItemSettings({ openAtLogin: !!on, args: ['--autostart'] });
+  setAutostart(!!on);
 });
 ipcMain.handle('open:url', (_e, url) => {
   // only the project's GitHub pages (source, issues, the release download
@@ -2220,6 +2220,32 @@ async function automate(argv) {
   }
   if (!r.ok) notify(`${cmd} failed: ${r.error}`);
   return true;
+}
+
+// setAutostart starts the app at sign-in. Windows: the Run key (Electron).
+// Linux: ~/.config/autostart/auroravpn.desktop (XDG autostart, which GNOME,
+// KDE, XFCE and Cinnamon read); Electron's login items do nothing there.
+function setAutostart(on) {
+  if (!IS_LINUX) {
+    app.setLoginItemSettings({ openAtLogin: on, args: ['--autostart'] });
+    return;
+  }
+  const dir = path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'autostart');
+  const file = path.join(dir, 'auroravpn.desktop');
+  try {
+    if (!on) {
+      fs.rmSync(file, { force: true });
+      return;
+    }
+    fs.mkdirSync(dir, { recursive: true });
+    const exe = app.isPackaged ? process.execPath : '/usr/bin/auroravpn';
+    fs.writeFileSync(
+      file,
+      ['[Desktop Entry]', 'Type=Application', 'Name=AuroraVPN', 'Comment=Start AuroraVPN at sign-in', `Exec="${exe}" --autostart`, 'Icon=auroravpn', 'Terminal=false', 'X-GNOME-Autostart-enabled=true', ''].join('\n')
+    );
+  } catch (e) {
+    appLog(`autostart: ${e.message}`);
+  }
 }
 
 // ---------- startup and quit ----------
@@ -2275,8 +2301,9 @@ if (!app.requestSingleInstanceLock()) {
     // the start-at-login entry names the program's path, which moved with the
     // rename (port1897's entry goes, the new one points at this copy)
     // and the Tauri app's (AuroraVPN 0.2.10-0.2.4x), named AuroraVPN
-    app.setLoginItemSettings({ openAtLogin: false, name: 'AuroraVPN' });
-    if (readSettings().autostart) {
+    if (IS_LINUX) setAutostart(!!readSettings().autostart);
+    else app.setLoginItemSettings({ openAtLogin: false, name: 'AuroraVPN' });
+    if (!IS_LINUX && readSettings().autostart) {
       app.setLoginItemSettings({ openAtLogin: false, name: 'electron.app.port1897' });
       app.setLoginItemSettings({ openAtLogin: true, args: ['--autostart'] });
     }
