@@ -356,7 +356,7 @@ func run(o options) error {
 		if _, err := pxs.AddProxy(x.StrOf(exitID), x.StrOf(exitCfg)); err != nil {
 			return fmt.Errorf("add exit %s: %w", exitID, err)
 		}
-		if uq != nil {
+		if uq != nil && us != nil {
 			sup := supervise(*us, uq, tunIndex, func(url string) error {
 				_, err := pxs.AddProxy(x.StrOf(exitID), x.StrOf(url))
 				return err

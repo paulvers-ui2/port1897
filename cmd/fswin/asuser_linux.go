@@ -36,7 +36,7 @@ func newUserToken() (*userToken, error) {
 	uid, err1 := strconv.ParseUint(os.Getenv("SUDO_UID"), 10, 32)
 	gid, err2 := strconv.ParseUint(os.Getenv("SUDO_GID"), 10, 32)
 	if err1 != nil || err2 != nil || uid == 0 {
-		return nil, nil //nolint:nilnil // root itself
+		return nil, nil //nolint:nilnil,nilerr // no sudo user: root itself
 	}
 	return &userToken{uint32(uid), uint32(gid)}, nil
 }

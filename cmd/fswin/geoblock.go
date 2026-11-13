@@ -140,7 +140,14 @@ func compileGeo(u universalRules) (g geoBlock, errs []error) {
 	g.v4 = mergeRanges(g.v4, 4)
 	g.v6 = mergeRanges(g.v6, 16)
 	if n := len(errs); n > 20 {
-		errs = append(errs[:20], fmt.Errorf("and %d more", n-20))
+		kept := make([]error, 0, 21)
+		for _, e := range errs {
+			if len(kept) == 20 {
+				break
+			}
+			kept = append(kept, e)
+		}
+		errs = append(kept, fmt.Errorf("and %d more", n-20))
 	}
 	return g, errs
 }
@@ -173,7 +180,7 @@ func rangeOf(p netip.Prefix) (r ipRange) {
 // network names the joined range.
 func mergeRanges(rs []ipRange, n int) []ipRange {
 	slices.SortFunc(rs, func(a, b ipRange) int { return bytes.Compare(a.lo[:n], b.lo[:n]) })
-	out := rs[:0]
+	out := make([]ipRange, 0, len(rs))
 	for _, r := range rs {
 		if k := len(out) - 1; k >= 0 && bytes.Compare(r.lo[:n], out[k].hi[:n]) <= 0 {
 			if bytes.Compare(r.hi[:n], out[k].hi[:n]) > 0 {

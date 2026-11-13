@@ -118,7 +118,7 @@ func Disable() error {
 func Active() (bool, error) {
 	path, err := exec.LookPath("nft")
 	if err != nil {
-		return false, nil // no nftables: it cannot be on
+		return false, nil //nolint:nilerr // no nftables: it cannot be on
 	}
 	out, err := exec.Command(path, "list", "tables", "inet").CombinedOutput() //nolint:gosec // G204: nft
 	if err != nil {

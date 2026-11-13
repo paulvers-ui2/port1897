@@ -48,7 +48,7 @@ func country(ip netip.Addr) string {
 	i := sort.Search(len(db)/size, func(i int) bool {
 		return bytes.Compare(db[i*size:i*size+len(key)], key) > 0
 	})
-	if i == 0 {
+	if i == 0 || len(db) < i*size {
 		return ""
 	}
 	cc := db[i*size-2 : i*size]

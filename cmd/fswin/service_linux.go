@@ -137,6 +137,9 @@ func (ss *sockServer) identify(c *net.UnixConn) (peer, error) {
 	if cerr != nil {
 		return peer{}, cerr
 	}
+	if cred == nil {
+		return peer{}, errors.New("who is asking: no peer credentials")
+	}
 	p := peer{pid: int(cred.Pid), uid: int(cred.Uid)}
 	exe, err := os.Readlink("/proc/" + strconv.Itoa(p.pid) + "/exe")
 	if err != nil {
@@ -163,6 +166,11 @@ func (ss *sockServer) answer(c *net.UnixConn) {
 	p, err := ss.identify(c)
 	if err != nil {
 		ss.logf("refused: %v", err)
+		// read what it sent first (and ignore it): a unix socket closed with
+		// unread data resets the connection, and the caller would lose the
+		// reason
+		_ = c.SetReadDeadline(time.Now().Add(time.Second))
+		_, _ = io.Copy(io.Discard, io.LimitReader(c, 64<<10))
 		_ = json.NewEncoder(c).Encode(pipeReply{Error: err.Error()})
 		return
 	}
@@ -214,6 +222,7 @@ func (ss *sockServer) startEngine(p peer, args []string) (int, error) {
 	if p.uid != 0 {
 		full = append(full, "-user-token", strconv.Itoa(p.uid))
 	}
+	// nosemgrep
 	cmd := exec.Command(ss.engine, full...) //nolint:gosec // G204: this fswin, flags checked above
 	cmd.Dir = "/"
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8"}
@@ -270,9 +279,10 @@ func (ss *sockServer) cleanup() error {
 	if running {
 		return errors.New("the engine is running: stop it first")
 	}
+	// nosemgrep
 	out, err := exec.Command(ss.engine, "-cleanup").CombinedOutput() //nolint:gosec // G204: this fswin
 	if err != nil {
-		return fmt.Errorf("cleanup: %v: %s", err, out)
+		return fmt.Errorf("cleanup: %w: %s", err, out)
 	}
 	return nil
 }
