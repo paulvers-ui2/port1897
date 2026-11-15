@@ -10,6 +10,16 @@ An open-source effort to bring the engine behind the Android firewall
 encrypted DNS, per-app firewall rules, connection logs and WireGuard, in a free
 app for everyone.
 
+
+linux
+
+curl -fsSL https://github.com/paulvers-ui2/auroravpn-apt-repo/releases/latest/download/KEY.gpg | sudo gpg --dearmor -o /usr/share/keyrings/auroravpn.gpg
+
+echo "deb [signed-by=/usr/share/keyrings/auroravpn.gpg] https://github.com/paulvers-ui2/auroravpn-apt-repo/releases/latest/download/ ./" | sudo tee /etc/apt/sources.list.d/auroravpn.list
+
+sudo apt update && sudo apt install auroravpn
+
+
 > **Early test software.** Installing it needs administrator rights once;
 > after that, any Windows user turns protection on without an admin prompt
 > (through AuroraVPN Service, as with Proton VPN). The portable exe asks for
