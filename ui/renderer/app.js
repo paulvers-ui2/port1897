@@ -275,6 +275,8 @@ async function pollOnce() {
 // ---------- wiring ----------
 
 const KOFI_URL = 'https://ko-fi.com/creatoreprints';
+// the founders of the celzero project, who made Rethink and firestack
+const FOUNDERS_URL = 'https://donate.stripe.com/8wM7sUajiemkfK05kV?prefilled_email=anonymous.donor%40rethinkdns.com&locale=auto';
 
 async function main() {
   document.querySelectorAll('[data-icon]').forEach((e) => {
@@ -288,6 +290,7 @@ async function main() {
   $('kill-btn').addEventListener('click', () => setKillSwitch(!killSwitchOn()));
   $('auto-btn').addEventListener('click', () => setAutoConnect(!App.settings.autoConnect));
   // the heart, as on Android, is the way to support the project
+  $('founders-btn').addEventListener('click', () => App.port.openUrl(FOUNDERS_URL));
   $('heart-btn').addEventListener('click', () => App.port.openUrl(KOFI_URL));
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !document.querySelector('.modal-back')) App.back();

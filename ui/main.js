@@ -2180,14 +2180,19 @@ ipcMain.handle('app:setAutostart', (_e, on) => {
 });
 ipcMain.handle('open:url', (_e, url) => {
   // only the project's GitHub pages (source, issues, the release download
-  // page) and its Ko-fi page, behind the heart
+  // page), its Ko-fi page, behind the heart, and the celzero founders'
+  // Stripe donation page
   let u;
   try {
     u = new URL(String(url));
   } catch {
     return;
   }
-  const ok = u.protocol === 'https:' && (u.hostname === 'github.com' || (u.hostname === 'ko-fi.com' && u.pathname === '/creatoreprints'));
+  const ok =
+    u.protocol === 'https:' &&
+    (u.hostname === 'github.com' ||
+      (u.hostname === 'ko-fi.com' && u.pathname === '/creatoreprints') ||
+      (u.hostname === 'donate.stripe.com' && u.pathname === '/8wM7sUajiemkfK05kV'));
   if (ok) shell.openExternal(u.href); /* eng-disable OPEN_EXTERNAL_JS_CHECK */
 });
 ipcMain.handle('open:log', () => shell.openPath(logFile()));

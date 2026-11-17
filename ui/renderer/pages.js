@@ -1519,6 +1519,13 @@ PAGES.about = () =>
     h(
       'div',
       { class: 'group pad' },
+      h('h2', { class: 'modal-title', text: 'Support' }),
+      h('div', { class: 'actions' }, btn('Donate to the founders of the celzero project', () => App.port.openUrl(FOUNDERS_URL), { primary: true })),
+      h('div', { class: 'actions' }, btn('Support AuroraVPN on Ko-fi', () => App.port.openUrl(KOFI_URL)))
+    ),
+    h(
+      'div',
+      { class: 'group pad' },
       h('h2', { class: 'modal-title', text: 'Report a problem' }),
       h(
         'ol',
