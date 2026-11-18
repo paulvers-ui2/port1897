@@ -7,7 +7,7 @@ toolchain go1.26.11
 require (
 	github.com/celzero/gotrie v0.0.0-20250314130138-a2756ab2f6bd
 	github.com/jedisct1/go-dnsstamps v0.0.0-20200621175006-302248eecc94
-	github.com/jedisct1/xsecretbox v0.0.0-20190909160646-b731c21297f9
+	github.com/jedisct1/xsecretbox v1.0.5
 	github.com/k-sone/critbitgo v1.4.0
 	github.com/miekg/dns v1.1.73
 	golang.org/x/crypto v0.58.0
@@ -33,8 +33,6 @@ require (
 require (
 	git.schwanenlied.me/yawning/x448.git v0.0.0-20170617130356-01b048fb03d6 // indirect
 	github.com/Snawoot/go-http-digest-auth-client v1.1.3 // indirect
-	github.com/aead/chacha20 v0.0.0-20180709150244-8b13a72661da // indirect
-	github.com/aead/poly1305 v0.0.0-20180717145839-3fee0db0b635 // indirect
 	github.com/cisco/go-hpke v0.0.0-20210215210317-01c430f1f302 // indirect
 	github.com/cisco/go-tls-syntax v0.0.0-20200617162716-46b0cfb76b9b // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
